@@ -6,7 +6,7 @@
  * Alur aksi (sesuai mobile):
  * - "Mulai review" → markDisputeUnderReview (tersedia bila belum
  *   UNDER_REVIEW/RESOLVED).
- * - "Assign" → Dialog input ID admin → assignDispute.
+ * - "Assign" → Dialog dropdown admin (DISPUTE_ADMIN/SUPER_ADMIN aktif) → assignDispute.
  * - "Resolve" → Dialog: keputusan FULL_BUYER/FULL_SELLER/SPLIT (Select) +
  *   catatan wajib min 100 karakter + winnerId opsional — hanya bila status
  *   UNDER_REVIEW/ESCALATED/ASSIGNED.
@@ -38,8 +38,9 @@ import {
   type AdminDisputeItem,
   type DisputeMessage,
 } from "@/lib/api/admin/disputes"
+import { listAdmins } from "@/lib/api/admin/management"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB } from "@/lib/format"
+import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
 import { DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "../maps"
 
@@ -50,6 +51,61 @@ const RESOLUTION_OPTIONS = [
   { value: "FULL_SELLER", label: "Menangkan penjual" },
   { value: "SPLIT", label: "Bagi dua (split)" },
 ]
+
+/** "Rp1.234.567" — konsisten dengan halaman keuangan. */
+function formatIDR(n: unknown): string {
+  const v = typeof n === "string" ? Number(n) : typeof n === "number" ? n : NaN
+  if (!Number.isFinite(v)) return "—"
+  return `Rp${formatNumber(Math.round(v))}`
+}
+
+type DisputeParty = { userId?: string; fullName?: string; email?: string }
+type DisputeOrderInfo = {
+  buyerId?: string
+  sellerId?: string
+  orderValue?: string | number
+  buyerPayAmount?: string | number
+  sellerReceiveAmount?: string | number
+  status?: string
+}
+type DisputeEvidenceItem = {
+  id: string
+  submittedByRole?: string
+  description?: string
+  fileUrls?: string[]
+  /** URL unduh bertanda tangan dari backend admin (pengganti fileUrls mentah). */
+  fileDownloadUrls?: string[]
+  fileTypes?: string[]
+  createdAt?: string
+}
+
+/** Backend mengirim URL aman di `fileDownloadUrls`; `fileUrls` dikosongkan. */
+function evidenceUrls(e: Record<string, unknown>): string[] {
+  const pick = (v: unknown) => (Array.isArray(v) ? v.filter((u): u is string => typeof u === "string") : [])
+  const dl = pick(e.fileDownloadUrls)
+  return dl.length > 0 ? dl : pick(e.fileUrls)
+}
+
+/** Klasifikasi dari MIME (backend menyimpan `image/jpeg`, `video/mp4`, …). */
+function evidenceKind(mime?: string): "image" | "video" | "pdf" | "other" {
+  if (mime?.startsWith("image/")) return "image"
+  if (mime?.startsWith("video/")) return "video"
+  if (mime === "application/pdf") return "pdf"
+  return "other"
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  BUYER: "Pembeli",
+  SELLER: "Penjual",
+  ADMIN: "Admin",
+  SYSTEM: "Sistem",
+}
 
 function KeyValue({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
@@ -64,6 +120,222 @@ function KeyValue({ label, value, mono = false }: { label: string; value: ReactN
       >
         {value}
       </dd>
+    </div>
+  )
+}
+
+/**
+ * Pihak yang bersengketa, nominal order, dan bukti dari kedua belah pihak.
+ * Data sudah disediakan backend (`initiator`, `order`, `evidences`) — sebelumnya
+ * tidak ditampilkan sama sekali sehingga putusan dana diambil tanpa konteks.
+ */
+function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
+  const initiator = asRecord(dispute.initiator) as DisputeParty | null
+  const order = asRecord(dispute.order) as DisputeOrderInfo | null
+  const rawEvidences = Array.isArray(dispute.evidences) ? dispute.evidences : []
+  const evidences = rawEvidences
+    .map((e) => asRecord(e))
+    .filter((e): e is Record<string, unknown> => e !== null)
+    .map(
+      (e): DisputeEvidenceItem => ({
+        id: String(e.id ?? ""),
+        submittedByRole: typeof e.submittedByRole === "string" ? e.submittedByRole : undefined,
+        description: typeof e.description === "string" ? e.description : undefined,
+        fileUrls: evidenceUrls(e),
+        fileDownloadUrls: undefined,
+        fileTypes: Array.isArray(e.fileTypes)
+          ? e.fileTypes.filter((t): t is string => typeof t === "string")
+          : undefined,
+        createdAt: typeof e.createdAt === "string" ? e.createdAt : undefined,
+      }),
+    )
+
+  return (
+    <div className="flex flex-col gap-6">
+      <dl>
+        <KeyValue
+          label="Penggugat (initiator)"
+          value={
+            initiator
+              ? `${initiator.fullName ?? "—"}${initiator.email ? ` · ${initiator.email}` : ""}`
+              : "—"
+          }
+          mono
+        />
+        <KeyValue label="ID Pembeli" value={order?.buyerId ? String(order.buyerId) : "—"} mono />
+        <KeyValue label="ID Penjual" value={order?.sellerId ? String(order.sellerId) : "—"} mono />
+        <KeyValue label="Nilai order" value={formatIDR(order?.orderValue)} />
+        <KeyValue label="Dibayar pembeli" value={formatIDR(order?.buyerPayAmount)} />
+        <KeyValue label="Diterima penjual" value={formatIDR(order?.sellerReceiveAmount)} />
+        {order?.status ? <KeyValue label="Status order" value={String(order.status)} /> : null}
+      </dl>
+
+      <div>
+        <h3 className="mb-2 text-label font-semibold text-text-secondary">
+          Bukti ({evidences.length})
+        </h3>
+        {evidences.length === 0 ? (
+          <p className="text-body text-text-secondary">Belum ada bukti yang dilampirkan.</p>
+        ) : (
+          <ul className="space-y-3">
+            {evidences.map((ev) => (
+              <li key={ev.id} className="rounded-sm border border-border px-4 py-3">
+                <p className="text-caption text-text-secondary">
+                  {ROLE_LABEL[ev.submittedByRole ?? ""] ?? ev.submittedByRole ?? "—"}
+                  {ev.createdAt ? ` · ${formatDateTimeWIB(ev.createdAt)}` : ""}
+                </p>
+                {ev.description ? (
+                  <p className="mt-1 text-body text-text-primary">{ev.description}</p>
+                ) : null}
+                {ev.fileUrls && ev.fileUrls.length > 0 ? (
+                  <ul className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {ev.fileUrls.map((url, i) => {
+                      const kind = evidenceKind(ev.fileTypes?.[i])
+                      return (
+                        <li
+                          key={`${ev.id}-${i}`}
+                          className="overflow-hidden rounded-sm border border-border"
+                        >
+                          {kind === "image" ? (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Buka ukuran penuh"
+                            >
+                              <img
+                                src={url}
+                                alt={`Bukti ${i + 1}`}
+                                loading="lazy"
+                                className="h-32 w-full object-cover"
+                              />
+                            </a>
+                          ) : kind === "video" ? (
+                            <video
+                              src={url}
+                              controls
+                              preload="metadata"
+                              className="h-32 w-full bg-black object-contain"
+                            />
+                          ) : (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block px-3 py-6 text-center text-body text-primary underline"
+                            >
+                              {kind === "pdf" ? "Buka PDF" : "Buka dokumen"} {i + 1}
+                            </a>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+type MutualProposalItem = {
+  id: string
+  proposerName?: string
+  proposerRole?: string
+  buyerPercent?: number
+  sellerPercent?: number
+  status?: string
+  reason?: string
+  createdAt?: string
+}
+
+/** Klaim terstruktur + usulan penyelesaian bersama — bahan putusan mediator. */
+function ClaimsAndProposals({ dispute }: { dispute: AdminDisputeItem }) {
+  const str = (v: unknown) => (typeof v === "string" ? v : undefined)
+  const numOrUndef = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined)
+  const claims = [
+    { label: "Klaim pembeli", text: str(dispute.buyerClaim), at: str(dispute.buyerClaimedAt) },
+    { label: "Klaim penjual", text: str(dispute.sellerClaim), at: str(dispute.sellerClaimedAt) },
+  ]
+  const proposals: MutualProposalItem[] = (
+    Array.isArray(dispute.mutualProposals) ? dispute.mutualProposals : []
+  )
+    .map(asRecord)
+    .filter((p): p is Record<string, unknown> => p !== null)
+    .map((p) => ({
+      id: String(p.id ?? ""),
+      proposerName: str(p.proposerName),
+      proposerRole: str(p.proposerRole),
+      buyerPercent: numOrUndef(p.buyerPercent),
+      sellerPercent: numOrUndef(p.sellerPercent),
+      status: str(p.status),
+      reason: str(p.reason),
+      createdAt: str(p.createdAt),
+    }))
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h3 className="mb-2 text-label font-semibold text-text-secondary">Klaim para pihak</h3>
+        <div className="grid gap-3 md:grid-cols-2">
+          {claims.map((c) => (
+            <div key={c.label} className="rounded-sm border border-border px-4 py-3">
+              <p className="text-caption font-semibold text-text-secondary">
+                {c.label}
+                {c.at ? ` · ${formatDateTimeWIB(c.at)}` : ""}
+              </p>
+              <p className="mt-1 text-body text-text-primary">
+                {c.text?.trim() ? c.text : "Belum ada klaim."}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-label font-semibold text-text-secondary">
+          Usulan penyelesaian bersama ({proposals.length})
+        </h3>
+        {proposals.length === 0 ? (
+          <p className="text-body text-text-secondary">Belum ada usulan.</p>
+        ) : (
+          <ul className="space-y-3">
+            {proposals.map((p) => (
+              <li key={p.id} className="rounded-sm border border-border px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-body font-semibold text-text-primary">
+                    {p.proposerName ?? "—"}
+                  </p>
+                  {p.proposerRole ? (
+                    <span className="text-caption text-text-secondary">
+                      ({p.proposerRole === "BUYER" ? "Pembeli" : p.proposerRole === "SELLER" ? "Penjual" : p.proposerRole})
+                    </span>
+                  ) : null}
+                  {p.status ? (
+                    <Badge tone={p.status === "ACCEPTED" ? "success" : p.status === "REJECTED" || p.status === "EXPIRED" ? "neutral" : "info"}>
+                      {p.status}
+                    </Badge>
+                  ) : null}
+                  <span className="ml-auto text-caption tabular-nums text-text-secondary">
+                    {p.createdAt ? formatDateTimeWIB(p.createdAt) : ""}
+                  </span>
+                </div>
+                {p.buyerPercent != null && p.sellerPercent != null ? (
+                  <p className="mt-1 text-body text-text-primary">
+                    Pembeli {p.buyerPercent}% · Penjual {p.sellerPercent}%
+                  </p>
+                ) : null}
+                {p.reason ? (
+                  <p className="mt-1 text-body text-text-secondary">{p.reason}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }
@@ -86,6 +358,8 @@ export default function DisputeDetailPage() {
 
   const [assignOpen, setAssignOpen] = useState(false)
   const [adminId, setAdminId] = useState("")
+  const [adminOptions, setAdminOptions] = useState<{ value: string; label: string }[]>([])
+  const [adminsLoading, setAdminsLoading] = useState(false)
   const [resolveOpen, setResolveOpen] = useState(false)
   const [resolution, setResolution] = useState<Resolution>("FULL_BUYER")
   const [notes, setNotes] = useState("")
@@ -167,6 +441,27 @@ export default function DisputeDetailPage() {
     }
   }
 
+  const openAssign = useCallback(() => {
+    setAssignOpen(true)
+    setAdminsLoading(true)
+    // Dropdown admin yang boleh menangani sengketa — menggantikan ketik ID
+    // manual yang rawan salah ketik (sengketa bisa nyasar/tak bertuan).
+    listAdmins({ limit: 100 })
+      .then((page) => {
+        const items = Array.isArray(page?.data) ? page.data : []
+        setAdminOptions(
+          items
+            .filter((a) => a.isActive && (a.role === "DISPUTE_ADMIN" || a.role === "SUPER_ADMIN"))
+            .map((a) => ({
+              value: a.id,
+              label: `${a.fullName} · ${a.role === "SUPER_ADMIN" ? "Super Admin" : "Admin Sengketa"}`,
+            })),
+        )
+      })
+      .catch((e) => fail("Gagal memuat daftar admin", e))
+      .finally(() => setAdminsLoading(false))
+  }, [])
+
   const handleAssign = async () => {
     const target = adminId.trim()
     if (!target || acting) return
@@ -209,6 +504,19 @@ export default function DisputeDetailPage() {
   const canReview = status !== "" && status !== "UNDER_REVIEW" && status !== "RESOLVED"
   const canResolve =
     status === "UNDER_REVIEW" || status === "ESCALATED" || status === "ASSIGNED"
+
+  // Pilihan pemenang diambil dari pihak order — menggantikan input ID bebas
+  // yang rawan salah ketik (dana bisa terkirim ke pihak yang salah).
+  const disputeOrder = dispute ? (asRecord(dispute.order) as DisputeOrderInfo | null) : null
+  const winnerOptions = [
+    { value: "", label: "— Tidak menentukan —" },
+    ...(disputeOrder?.buyerId
+      ? [{ value: String(disputeOrder.buyerId), label: `Pembeli (${disputeOrder.buyerId})` }]
+      : []),
+    ...(disputeOrder?.sellerId
+      ? [{ value: String(disputeOrder.sellerId), label: `Penjual (${disputeOrder.sellerId})` }]
+      : []),
+  ]
 
   return (
     <RoleGate href="/disputes">
@@ -272,15 +580,34 @@ export default function DisputeDetailPage() {
                 <KeyValue label="ID Sengketa" value={dispute.id} mono />
                 <KeyValue label="ID Order" value={dispute.orderId} mono />
                 {dispute.reason ? <KeyValue label="Alasan" value={dispute.reason} /> : null}
+                {/* A9 (audit 2026-09-26): tampilkan nama admin pelaksana bila tersedia,
+                    bukan ID mentah. Backend menyertakan relasi assignedAdmin. */}
                 <KeyValue
                   label="Ditugaskan ke"
-                  value={dispute.assignedAdminId ? String(dispute.assignedAdminId) : "—"}
+                  value={
+                    (dispute.assignedAdmin as { fullName?: string } | undefined)?.fullName ||
+                    (dispute.assignedAdminId ? String(dispute.assignedAdminId) : "—")
+                  }
                 />
                 <KeyValue label="Dibuat" value={formatDateTimeWIB(dispute.createdAt)} />
                 {dispute.updatedAt ? (
                   <KeyValue label="Diperbarui" value={formatDateTimeWIB(dispute.updatedAt)} />
                 ) : null}
               </dl>
+            </CardBody>
+          </Card>
+
+          <Card padded={false} className="xl:col-span-2">
+            <CardHeader title="Pihak, nominal & bukti" />
+            <CardBody>
+              <PartiesAndEvidence dispute={dispute} />
+            </CardBody>
+          </Card>
+
+          <Card padded={false} className="xl:col-span-2">
+            <CardHeader title="Klaim & usulan penyelesaian" />
+            <CardBody>
+              <ClaimsAndProposals dispute={dispute} />
             </CardBody>
           </Card>
 
@@ -297,7 +624,7 @@ export default function DisputeDetailPage() {
                 >
                   Mulai review
                 </Button>
-                <Button variant="secondary" fullWidth={false} onClick={() => setAssignOpen(true)}>
+                <Button variant="secondary" fullWidth={false} onClick={openAssign}>
                   Assign
                 </Button>
                 <Button
@@ -338,14 +665,22 @@ export default function DisputeDetailPage() {
                 <p className="text-body text-text-secondary">Belum ada pesan.</p>
               ) : (
                 <ul className="space-y-3">
-                  {messages.map((m) => (
-                    <li key={m.id} className="rounded-sm bg-surface px-4 py-3">
-                      <p className="text-caption text-text-secondary">
-                        {m.senderId} · {formatDateTimeWIB(m.createdAt)}
-                      </p>
-                      <p className="mt-1 text-body text-text-primary">{m.message}</p>
-                    </li>
-                  ))}
+                  {messages.map((m) => {
+                    const senderLabel =
+                      disputeOrder?.buyerId && String(m.senderId) === String(disputeOrder.buyerId)
+                        ? "Pembeli"
+                        : disputeOrder?.sellerId && String(m.senderId) === String(disputeOrder.sellerId)
+                          ? "Penjual"
+                          : "Admin"
+                    return (
+                      <li key={m.id} className="rounded-sm bg-surface px-4 py-3">
+                        <p className="text-caption text-text-secondary">
+                          {senderLabel} · {formatDateTimeWIB(m.createdAt)}
+                        </p>
+                        <p className="mt-1 text-body text-text-primary">{m.message}</p>
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
 
@@ -378,7 +713,7 @@ export default function DisputeDetailPage() {
         open={assignOpen}
         onClose={() => setAssignOpen(false)}
         title="Assign sengketa"
-        description="Masukkan ID admin yang akan menangani sengketa ini."
+        description="Pilih admin yang akan menangani sengketa ini."
         footer={
           <div className="flex flex-col gap-2">
             <Button
@@ -399,11 +734,13 @@ export default function DisputeDetailPage() {
           </div>
         }
       >
-        <Input
-          label="ID Admin"
+        <Select
+          label="Admin penangan"
+          options={[{ value: "", label: adminsLoading ? "Memuat…" : "— Pilih admin —" }, ...adminOptions]}
           value={adminId}
           onChange={(e) => setAdminId(e.target.value)}
-          placeholder="cth: adm_123"
+          disabled={adminsLoading}
+          hint="Hanya admin sengketa & super admin yang aktif."
         />
       </Dialog>
 
@@ -450,11 +787,12 @@ export default function DisputeDetailPage() {
             maxLength={5000}
             hint={`${notes.trim().length} / 100 karakter minimum`}
           />
-          <Input
-            label="ID pemenang (opsional)"
+          <Select
+            label="Pemenang (opsional)"
+            hint="Pilih pihak penerima dana. Kosongkan bila keputusan tidak menentukan satu pemenang."
+            options={winnerOptions}
             value={winnerId}
             onChange={(e) => setWinnerId(e.target.value)}
-            placeholder="cth: usr_123"
           />
         </div>
       </Dialog>

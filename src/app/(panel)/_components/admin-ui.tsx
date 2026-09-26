@@ -14,40 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Spinner } from "@/components/ui/spinner"
-import { useAuth } from "@/lib/auth-context"
-import { canAccess } from "@/lib/rbac"
 import { cn } from "@/lib/cn"
-
-// ------------------------------------------------------------------
-// RoleGuard — tolak akses langsung via URL bila role tidak boleh.
-// Sidebar sudah difilter per role; ini pengaman untuk URL yang diketik
-// manual. Konsisten dengan `menuForRole` di src/lib/rbac.ts.
-// ------------------------------------------------------------------
-
-export function RoleGuard({ href, children }: { href: string; children: ReactNode }) {
-  const { state, role } = useAuth()
-
-  if (state.status === "loading") {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center">
-        <Spinner size="md" />
-      </div>
-    )
-  }
-
-  if (!canAccess(role, href)) {
-    return (
-      <Card>
-        <EmptyState
-          title="Akses ditolak"
-          description="Role admin Anda tidak memiliki izin untuk membuka halaman ini."
-        />
-      </Card>
-    )
-  }
-
-  return <>{children}</>
-}
 
 // ------------------------------------------------------------------
 // PageHeader — judul + deskripsi + tombol aksi kanan + tombol muat ulang

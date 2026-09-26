@@ -14,7 +14,7 @@
  */
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -35,6 +35,7 @@ import {
   getFinancialSummary,
   listPendingWithdrawals,
   listTransactions,
+  newIdempotencyKey,
   rejectWithdrawal,
   type AdminTransactionItem,
   type EscrowSummary,
@@ -248,6 +249,19 @@ export default function FinancePage() {
   const [note, setNote] = useState("")
   const [noteError, setNoteError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // Satu Idempotency-Key per sesi dialog (kind+txId): retry setelah timeout
+  // memakai kunci yang sama sehingga proteksi double-submit tetap berlaku.
+  // Kunci dihapus setelah sukses agar sesi berikutnya selalu dapat kunci baru.
+  const actionKeyRef = useRef(new Map<string, string>())
+  const actionKeyFor = (txId: string, kind: "approve" | "reject") => {
+    const mapKey = `${kind}:${txId}`
+    let key = actionKeyRef.current.get(mapKey)
+    if (!key) {
+      key = newIdempotencyKey()
+      actionKeyRef.current.set(mapKey, key)
+    }
+    return key
+  }
 
   const openAction = (tx: PendingWithdrawal, kind: "approve" | "reject") => {
     setActionTx(tx)
@@ -270,22 +284,24 @@ export default function FinancePage() {
       return
     }
     setSubmitting(true)
+    const mapKey = `${actionKind}:${actionTx.txId}`
     try {
       if (actionKind === "approve") {
-        await approveWithdrawal(actionTx.txId, trimmed || undefined)
+        await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
         toast.show({
           title: "Penarikan disetujui",
           description: formatRupiah(actionTx.amount),
           tone: "success",
         })
       } else {
-        await rejectWithdrawal(actionTx.txId, trimmed)
+        await rejectWithdrawal(actionTx.txId, trimmed, actionKeyFor(actionTx.txId, actionKind))
         toast.show({
           title: "Penarikan ditolak, saldo dikembalikan",
           description: formatRupiah(actionTx.amount),
           tone: "success",
         })
       }
+      actionKeyRef.current.delete(mapKey)
       setActionTx(null)
       setActionKind(null)
       setNote("")
@@ -478,7 +494,9 @@ export default function FinancePage() {
                     <div>
                       <p>
                         {r.bankAccount?.bankCode ?? "—"} ·{" "}
-                        {r.bankAccount?.accountNumber ?? "—"}
+                        {r.bankAccount?.accountNumber
+                          ? `••••${r.bankAccount.accountNumber.slice(-4)}`
+                          : "—"}
                       </p>
                       {r.bankAccount?.accountName ? (
                         <p className="text-caption text-text-secondary">
@@ -501,12 +519,20 @@ export default function FinancePage() {
                 {
                   key: "withdrawStatus",
                   header: "Status",
-                  render: (r) => (
-                    <Badge tone="warning">
-                      {WITHDRAW_STATUS_LABEL[String(r.withdrawStatus)] ??
-                        String(r.withdrawStatus)}
-                    </Badge>
-                  ),
+                  render: (r) => {
+                    const status = String(r.withdrawStatus)
+                    const tone =
+                      status === "PENDING_OTP" || status === "PENDING_PROCESS"
+                        ? "warning"
+                        : status === "PROCESSING" || status === "COMPLETED" || status === "SUCCESS"
+                          ? "success"
+                          : "danger"
+                    return (
+                      <Badge tone={tone}>
+                        {WITHDRAW_STATUS_LABEL[status] ?? status}
+                      </Badge>
+                    )
+                  },
                 },
                 {
                   key: "createdAt",
@@ -517,26 +543,32 @@ export default function FinancePage() {
                   key: "action",
                   header: "",
                   align: "right",
-                  render: (r) => (
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        fullWidth={false}
-                        onClick={() => openAction(r, "reject")}
-                      >
-                        Tolak
-                      </Button>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        fullWidth={false}
-                        onClick={() => openAction(r, "approve")}
-                      >
-                        Setujui
-                      </Button>
-                    </div>
-                  ),
+                  // Tombol aksi hanya untuk baris yang masih pending —
+                  // pertahanan UI agar baris non-pending tidak bisa di-aksi.
+                  render: (r) => {
+                    const status = String(r.withdrawStatus)
+                    if (status !== "PENDING_PROCESS" && status !== "PENDING_OTP") return null
+                    return (
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          fullWidth={false}
+                          onClick={() => openAction(r, "reject")}
+                        >
+                          Tolak
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          fullWidth={false}
+                          onClick={() => openAction(r, "approve")}
+                        >
+                          Setujui
+                        </Button>
+                      </div>
+                    )
+                  },
                 },
               ]}
               rows={pendingRows}

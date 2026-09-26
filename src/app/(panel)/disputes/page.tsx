@@ -23,11 +23,15 @@ import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import { listDisputes, type AdminDisputeItem } from "@/lib/api/admin/disputes"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB } from "@/lib/format"
+import { ageHours, formatAge, formatDateTimeWIB } from "@/lib/format"
+import { Input } from "@/components/ui/input"
 
 import { DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "./maps"
 
 const PAGE_SIZE = 20
+
+/** SLA mediasi sengketa — selaras DISPUTE_SLA_HOURS backend (72 jam). */
+const DISPUTE_SLA_HOURS = 72
 
 type Filter =
   | "ALL"
@@ -52,6 +56,8 @@ export default function DisputesListPage() {
   const toast = useToast()
 
   const [filter, setFilter] = useState<Filter>("ALL")
+  const [searchInput, setSearchInput] = useState("")
+  const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -61,7 +67,12 @@ export default function DisputesListPage() {
   const [totalPages, setTotalPages] = useState(1)
 
   const load = useCallback(
-    async (mode: "initial" | "refresh" = "initial", targetPage = page, targetFilter = filter) => {
+    async (
+      mode: "initial" | "refresh" = "initial",
+      targetPage = page,
+      targetFilter = filter,
+      targetSearch = search,
+    ) => {
       if (mode === "initial") setLoading(true)
       else setRefreshing(true)
       setError(null)
@@ -70,6 +81,7 @@ export default function DisputesListPage() {
           page: targetPage,
           limit: PAGE_SIZE,
           status: targetFilter === "ALL" ? undefined : targetFilter,
+          search: targetSearch.trim() || undefined,
         })
         setRows(res.data ?? [])
         const t = res.meta?.total ?? res.total ?? res.data?.length ?? 0
@@ -84,7 +96,7 @@ export default function DisputesListPage() {
         setRefreshing(false)
       }
     },
-    [page, filter, toast],
+    [page, filter, search, toast],
   )
 
   useEffect(() => {
@@ -94,12 +106,19 @@ export default function DisputesListPage() {
   const handleFilterChange = (f: Filter) => {
     setFilter(f)
     setPage(1)
-    void load("initial", 1, f)
+    void load("initial", 1, f, search)
+  }
+
+  const handleSearch = () => {
+    const q = searchInput.trim()
+    setSearch(q)
+    setPage(1)
+    void load("initial", 1, filter, q)
   }
 
   const handlePageChange = (p: number) => {
     setPage(p)
-    void load("initial", p, filter)
+    void load("initial", p, filter, search)
   }
 
   return (
@@ -130,6 +149,24 @@ export default function DisputesListPage() {
           onChange={(e) => handleFilterChange(e.target.value as Filter)}
           className="w-52"
         />
+        <form
+          className="flex flex-1 flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleSearch()
+          }}
+        >
+          <Input
+            label="Cari sengketa / order"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="ID sengketa atau ID order…"
+            className="min-w-52 flex-1"
+          />
+          <Button type="submit" variant="secondary" size="md" fullWidth={false}>
+            Cari
+          </Button>
+        </form>
       </div>
 
       {loading ? (
@@ -173,6 +210,24 @@ export default function DisputesListPage() {
                     {DISPUTE_STATUS_LABEL[r.status] ?? r.status}
                   </Badge>
                 ),
+              },
+              {
+                key: "age",
+                header: "Umur",
+                render: (r) => {
+                  const h = ageHours(r.createdAt)
+                  const breached =
+                    h != null &&
+                    h >= DISPUTE_SLA_HOURS &&
+                    r.status !== "RESOLVED" &&
+                    !String(r.status).startsWith("RESOLVED")
+                  return (
+                    <div className="flex flex-col gap-1">
+                      <span className="tabular-nums text-[13px]">{formatAge(r.createdAt)}</span>
+                      {breached ? <Badge tone="danger">Lewat SLA</Badge> : null}
+                    </div>
+                  )
+                },
               },
               {
                 key: "assignedAdminId",

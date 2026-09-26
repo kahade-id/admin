@@ -171,8 +171,12 @@ export type WithdrawalActionResult = {
  * UUID v4 sederhana untuk `Idempotency-Key`. Tidak memakai
  * `crypto.randomUUID` karena ketersediaannya di Hermes tidak dijamin;
  * keacakan di sini hanya untuk kunci idempotency, bukan keamanan.
+ *
+ * Diekspor agar pemanggil bisa memegang satu kunci per sesi aksi
+ * (mis. satu dialog Setujui/Tolak) dan memakainya ulang saat retry,
+ * sehingga proteksi double-submit tetap berlaku setelah timeout.
  */
-function newIdempotencyKey(): string {
+export function newIdempotencyKey(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = Math.floor(Math.random() * 16)
     const v = c === "x" ? r : (r & 0x3) | 0x8
@@ -277,11 +281,12 @@ export function listPendingWithdrawals(params?: {
 export function approveWithdrawal(
   txId: string,
   note?: string,
+  idempotencyKey?: string,
 ): Promise<WithdrawalActionResult> {
   return adminHttp.post<WithdrawalActionResult>(
     `/v1/admin/finance/withdrawals/${encodeURIComponent(txId)}/approve`,
     note ? { adminNote: note } : {},
-    { headers: idempotencyHeaders() },
+    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
   )
 }
 
@@ -292,11 +297,12 @@ export function approveWithdrawal(
 export function rejectWithdrawal(
   txId: string,
   reason: string,
+  idempotencyKey?: string,
 ): Promise<WithdrawalActionResult> {
   return adminHttp.post<WithdrawalActionResult>(
     `/v1/admin/finance/withdrawals/${encodeURIComponent(txId)}/reject`,
     { adminNote: reason },
-    { headers: idempotencyHeaders() },
+    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
   )
 }
 

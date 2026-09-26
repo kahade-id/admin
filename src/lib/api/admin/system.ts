@@ -99,6 +99,24 @@ export function listConfigs(): Promise<AdminSystemConfig[]> {
 }
 
 /**
+ * UUID v4 untuk `Idempotency-Key`. Backend mewajibkan header ini pada semua
+ * endpoint mutasi (`@Idempotency()`): update config, approve/reject config,
+ * broadcast, webhook retry/resolve — tanpa header, backend menolak dengan
+ * 400 IDEMPOTENCY_KEY_REQUIRED. Pola sama seperti `src/lib/api/admin/finance.ts`.
+ */
+function newIdempotencyKey(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16)
+    const v = c === "x" ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
+const idempotencyHeaders = (): Record<string, string> => ({
+  "Idempotency-Key": newIdempotencyKey(),
+})
+
+/**
  * PUT /v1/admin/system/configs/:key — ubah nilai config.
  * Untuk config finansial, perubahan disimpan sebagai pending dan butuh
  * persetujuan admin lain sebelum berlaku.
@@ -111,6 +129,7 @@ export function updateConfig(
   return adminHttp.put<AdminSystemConfig | PendingConfigChange>(
     `/v1/admin/system/configs/${encodeURIComponent(key)}`,
     description !== undefined ? { value, description } : { value },
+    { headers: idempotencyHeaders() },
   )
 }
 
@@ -127,6 +146,8 @@ export function approveConfigChange(
 ): Promise<AdminSystemConfig | { message: string }> {
   return adminHttp.post<AdminSystemConfig | { message: string }>(
     `/v1/admin/system/configs/${encodeURIComponent(key)}/approve`,
+    undefined,
+    { headers: idempotencyHeaders() },
   )
 }
 
@@ -134,12 +155,16 @@ export function approveConfigChange(
 export function rejectConfigChange(key: string): Promise<{ message: string }> {
   return adminHttp.post<{ message: string }>(
     `/v1/admin/system/configs/${encodeURIComponent(key)}/reject`,
+    undefined,
+    { headers: idempotencyHeaders() },
   )
 }
 
 /** POST /v1/admin/system/broadcast — kirim broadcast ke pengguna. */
 export function sendBroadcast(input: BroadcastInput): Promise<BroadcastResult> {
-  return adminHttp.post<BroadcastResult>("/v1/admin/system/broadcast", input)
+  return adminHttp.post<BroadcastResult>("/v1/admin/system/broadcast", input, {
+    headers: idempotencyHeaders(),
+  })
 }
 
 /** GET /v1/admin/system/audit-logs — daftar audit log admin (read-only). */
@@ -166,6 +191,8 @@ export function listWebhookLogs(
 export function retryWebhook(id: string): Promise<AdminWebhookLogItem> {
   return adminHttp.post<AdminWebhookLogItem>(
     `/v1/admin/system/webhook-logs/${encodeURIComponent(id)}/retry`,
+    undefined,
+    { headers: idempotencyHeaders() },
   )
 }
 
@@ -177,5 +204,6 @@ export function resolveWebhook(
   return adminHttp.post<AdminWebhookLogItem>(
     `/v1/admin/system/webhook-logs/${encodeURIComponent(id)}/resolve`,
     { resolution },
+    { headers: idempotencyHeaders() },
   )
 }

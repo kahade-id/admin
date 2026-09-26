@@ -28,6 +28,7 @@ import { useToast } from "@/components/ui/toast"
 
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useAuth } from "@/lib/auth-context"
 import { Select } from "@/components/admin/select"
 
 import {
@@ -152,6 +153,9 @@ function KeyValue({ label, value }: { label: string; value: string }) {
 
 export default function OrdersPage() {
   const toast = useToast()
+  // A5 (audit 2026-09-26): role dipakai untuk menyembunyikan tombol intervensi
+  // yang pasti ditolak backend (403) — backend tetap gate utama.
+  const { role } = useAuth()
 
   // ------------------------------------------------------------------
   // Daftar order
@@ -301,6 +305,13 @@ export default function OrdersPage() {
     detail != null && (CANCELLABLE as string[]).includes(detailStatus)
   const canComplete =
     detail != null && (COMPLETABLE as string[]).includes(detailStatus)
+  // A5 (audit 2026-09-26): backend membatasi force-cancel ke SUPER_ADMIN +
+  // DISPUTE_ADMIN dan force-complete ke SUPER_ADMIN saja. Sembunyikan tombol
+  // yang pasti 403 agar tidak menyesatkan (backend tetap memvalidasi).
+  const mayForceCancel = role === "SUPER_ADMIN" || role === "DISPUTE_ADMIN"
+  const mayForceComplete = role === "SUPER_ADMIN"
+  const showForceCancel = canCancel && mayForceCancel
+  const showForceComplete = canComplete && mayForceComplete
   const escrow = detail ? escrowStateOf(detail) : null
   const confirmTitle =
     forceAction === "cancel" ? "Paksa batalkan order?" : "Paksa selesaikan order?"
@@ -338,7 +349,7 @@ export default function OrdersPage() {
           <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
             <Input
               label="Cari"
-              placeholder="Cari orderId / judul…"
+              placeholder="Cari orderId / judul / nomor resi…"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value)
@@ -552,29 +563,32 @@ export default function OrdersPage() {
                   audit log.
                 </p>
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    fullWidth={false}
-                    disabled={!canCancel}
-                    onClick={() => setForceAction("cancel")}
-                  >
-                    Paksa batal
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    fullWidth={false}
-                    disabled={!canComplete}
-                    onClick={() => setForceAction("complete")}
-                  >
-                    Paksa selesai
-                  </Button>
+                  {showForceCancel ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      onClick={() => setForceAction("cancel")}
+                    >
+                      Paksa batal
+                    </Button>
+                  ) : null}
+                  {showForceComplete ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      onClick={() => setForceAction("complete")}
+                    >
+                      Paksa selesai
+                    </Button>
+                  ) : null}
                 </div>
-                {!canCancel && !canComplete ? (
+                {!showForceCancel && !showForceComplete ? (
                   <p className="mt-2 text-caption text-text-secondary">
-                    Order pada status ini tidak bisa diintervensi
-                    (selesai/dibatalkan).
+                    {canCancel || canComplete
+                      ? "Role admin Anda tidak memiliki izin intervensi darurat untuk order ini."
+                      : "Order pada status ini tidak bisa diintervensi (selesai/dibatalkan)."}
                   </p>
                 ) : null}
               </div>

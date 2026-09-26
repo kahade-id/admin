@@ -2,6 +2,24 @@
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
 
+/**
+ * UUID v4 untuk `Idempotency-Key`. Backend mewajibkan header ini pada
+ * endpoint mutasi (`@Idempotency()`): review moderation event — tanpa
+ * header, backend menolak dengan 400 IDEMPOTENCY_KEY_REQUIRED.
+ * Pola sama seperti `src/lib/api/admin/finance.ts`.
+ */
+function newIdempotencyKey(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16)
+    const v = c === "x" ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
+const idempotencyHeaders = (): Record<string, string> => ({
+  "Idempotency-Key": newIdempotencyKey(),
+})
+
 export type ModerationEvent = {
   id: string
   type: string
@@ -36,6 +54,7 @@ export function reviewModerationEvent(
   return adminHttp.post(
     `/v1/admin/chat/moderation-events/${encodeURIComponent(eventId)}/review`,
     input,
+    { headers: idempotencyHeaders() },
   )
 }
 

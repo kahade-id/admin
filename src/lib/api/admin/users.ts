@@ -313,6 +313,10 @@ export function adjustWallet(
   return adminHttp.post<WalletAdjustResult>(
     `/v1/admin/users/${encodeURIComponent(userId)}/wallet/adjust`,
     { amount: input.amount, type: input.type, reason: input.reason, idempotencyKey },
+    // Backend hanya membaca header `Idempotency-Key` (interceptor menolak
+    // 400 IDEMPOTENCY_KEY_REQUIRED bila absen); field body dipertahankan
+    // untuk kompatibilitas DTO.
+    { headers: { "Idempotency-Key": idempotencyKey } },
   )
 }
 
