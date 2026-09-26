@@ -50,14 +50,16 @@ const SEARCH_DEBOUNCE_MS = 400
 const USER_SEARCH_DEBOUNCE_MS = 300
 const USER_SEARCH_LIMIT = 8
 
-type StatusFilter = "all" | "ACTIVE" | "EXPIRED" | "CANCELED"
+type StatusFilter = "all" | "ACTIVE" | "EXPIRED" | "CANCELLED"
 type PlanFilter = "all" | "MONTHLY" | "YEARLY"
 
 const STATUS_OPTIONS = [
   { value: "all", label: "Semua status" },
   { value: "ACTIVE", label: "Aktif" },
   { value: "EXPIRED", label: "Kedaluwarsa" },
-  { value: "CANCELED", label: "Dibatalkan" },
+  // SP-026: backend hanya menerima enum Prisma `CANCELLED` (2 L) — nilai
+  // `CANCELED` (1 L) me-return 400 INVALID_STATUS. Pakai nilai kanonis.
+  { value: "CANCELLED", label: "Dibatalkan" },
 ]
 
 const PLAN_OPTIONS = [

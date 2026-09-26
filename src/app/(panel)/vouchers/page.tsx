@@ -190,6 +190,8 @@ function VoucherForm({
   const [validUntil, setValidUntil] = useState("")
   const [minOrderValue, setMinOrderValue] = useState("")
   const [applicableTo, setApplicableTo] = useState<AdminVoucherApplicability>("ALL")
+  // SP-043: voucher personal — hanya bisa ditebus user dengan ID ini.
+  const [assignedToUserId, setAssignedToUserId] = useState("")
   const [formError, setFormError] = useState<string | null>(null)
 
   async function handleSubmit() {
@@ -229,6 +231,8 @@ function VoucherForm({
     if (perUser !== undefined) input.maxUsagePerUser = perUser
     const minOrder = parseIntInput(minOrderValue)
     if (minOrder !== undefined) input.minOrderValue = minOrder
+    const assignee = assignedToUserId.trim()
+    if (assignee) input.assignedToUserId = assignee
     try {
       await onSubmit(input)
     } catch (e) {
@@ -346,6 +350,13 @@ function VoucherForm({
           required
         />
       </div>
+      <Input
+        label="ID pengguna (voucher personal)"
+        value={assignedToUserId}
+        onChange={(e) => setAssignedToUserId(e.target.value)}
+        placeholder="cth. usr_… — kosongkan untuk voucher umum"
+        hint="Bila diisi, hanya pengguna dengan ID ini yang bisa menebus. ID salah ditolak server."
+      />
       <Button loading={submitting} onClick={handleSubmit}>
         Buat voucher
       </Button>

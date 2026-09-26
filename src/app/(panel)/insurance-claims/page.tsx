@@ -84,11 +84,6 @@ function claimNote(c: InsuranceClaim): string {
   return String(c.note ?? c.notes ?? "—")
 }
 
-function claimAdminNote(c: InsuranceClaim): string | null {
-  const n = c.adminNote ?? c.reviewNote
-  return typeof n === "string" && n.trim() ? n : null
-}
-
 function claimUser(c: InsuranceClaim): string {
   return (
     c.user?.fullName ?? c.user?.username ?? c.user?.email ?? c.userId ?? "—"
@@ -431,23 +426,12 @@ export default function InsuranceClaimsPage() {
 
             <div>
               <p className="text-caption font-semibold text-text-secondary">
-                Catatan pengguna
+                Catatan review admin
               </p>
               <p className="mt-1 rounded-sm bg-surface px-4 py-3 text-body text-text-primary">
                 {claimNote(selected)}
               </p>
             </div>
-
-            {claimAdminNote(selected) ? (
-              <div>
-                <p className="text-caption font-semibold text-text-secondary">
-                  Catatan review admin
-                </p>
-                <p className="mt-1 rounded-sm bg-surface px-4 py-3 text-body text-text-primary">
-                  {claimAdminNote(selected)}
-                </p>
-              </div>
-            ) : null}
 
             {actions.length > 0 ? (
               <>

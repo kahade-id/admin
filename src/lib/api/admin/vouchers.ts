@@ -67,6 +67,8 @@ export interface CreateVoucherInput {
   validUntil: string
   minOrderValue?: number
   applicableTo?: AdminVoucherApplicability
+  /** ID user untuk voucher personal — backend memvalidasi keberadaan user (SP-048). */
+  assignedToUserId?: string
 }
 
 export interface VoucherListQuery {

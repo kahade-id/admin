@@ -12,9 +12,9 @@
  *   {userId, plan: 'MONTHLY'|'YEARLY', durationDays: number, reason: string}
  *
  * Catatan kontrak:
- * - Status valid: ACTIVE, EXPIRED, CANCELED; plan valid: MONTHLY, YEARLY.
- *   Ejaan lama backend (CANCELLED, ANNUAL, PENDING, SUSPENDED) tetap
- *   ditoleransi saat menampilkan agar drift respons tidak merusak UI.
+ * - Status valid: ACTIVE, EXPIRED, CANCELLED; plan valid: MONTHLY, YEARLY.
+ *   Ejaan lama (CANCELED) tetap ditoleransi saat menampilkan agar drift
+ *   respons tidak merusak UI.
  * - Harga dikembalikan sebagai rupiah (number).
  * - `cancelSubscription` hanya valid untuk status ACTIVE/PENDING;
  *   backend 400 untuk status lain.
@@ -115,7 +115,7 @@ export type GrantSubscriptionResult = {
 export function listSubscriptions(query?: {
   page?: number
   limit?: number
-  status?: "ACTIVE" | "EXPIRED" | "CANCELED"
+  status?: "ACTIVE" | "EXPIRED" | "CANCELLED"
   search?: string
 }): Promise<Paginated<SubscriptionItem>> {
   return adminHttp.get<Paginated<SubscriptionItem>>("/v1/admin/subscriptions", {
