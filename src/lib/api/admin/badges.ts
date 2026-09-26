@@ -1,8 +1,9 @@
 /**
- * Kahade admin — badge & award (termasuk centang EMAS eksklusif).
+ * Kahade admin — badge event/pencapaian.
  *
- * Centang emas = badge dengan tier "gold" yang di-award manual oleh admin
- * lewat `awardBadge`. Daftar badge yang tersedia dikelola di layar ini.
+ * Badge (Badge/UserBadge) HANYA untuk event/pencapaian — BUKAN verifikasi.
+ * Tier verifikasi 3 tingkat (abu/biru/emas) dikelola terpisah, lihat
+ * `verified.ts`. Model `Badge` di backend tidak punya field `tier`.
  */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
@@ -12,7 +13,6 @@ export type AdminBadge = {
   name: string
   iconUrl?: string | null
   description?: string | null
-  tier?: "gold" | "blue" | "gray" | string | null
   createdAt?: string
   holderCount?: number
   [key: string]: unknown
@@ -53,7 +53,7 @@ export function deleteBadge(badgeId: string): Promise<unknown> {
   return adminHttp.delete(`/v1/admin/badges/${encodeURIComponent(badgeId)}`)
 }
 
-/** Beri badge ke user — untuk centang emas, pilih badge tier gold. */
+/** Beri badge event ke user. */
 export function awardBadge(badgeId: string, userId: string): Promise<unknown> {
   return adminHttp.post(
     `/v1/admin/badges/${encodeURIComponent(badgeId)}/award/${encodeURIComponent(userId)}`,

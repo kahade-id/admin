@@ -46,6 +46,14 @@ import {
   type KycStatus,
   type WalletAdjustType,
 } from "@/lib/api/admin/users"
+import {
+  grantGoldVerified,
+  revokeGoldVerified,
+  revokeGrayVerified,
+  restoreGrayVerified,
+  getUserVerificationBadges,
+  type VerificationBadge,
+} from "@/lib/api/admin/verified"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
@@ -90,6 +98,10 @@ export default function UserDetailPage() {
   const [audit, setAudit] = useState<AdminUserAuditEntry[]>([])
   const [sectionError, setSectionError] = useState<Record<string, string>>({})
 
+  // Tier verifikasi aktif (dari endpoint badge publik; butuh username)
+  const [verifiedBadges, setVerifiedBadges] = useState<VerificationBadge[]>([])
+  const [verifiedError, setVerifiedError] = useState<string | null>(null)
+
   // Dialog / konfirmasi
   const [acting, setActing] = useState<string | null>(null)
   const [banOpen, setBanOpen] = useState(false)
@@ -100,6 +112,14 @@ export default function UserDetailPage() {
   const [resetPasswordOpen, setResetPasswordOpen] = useState(false)
   const [clearFlagOpen, setClearFlagOpen] = useState(false)
   const [revokeTarget, setRevokeTarget] = useState<AdminUserSession | null>(null)
+
+  // Verifikasi: beri/cabut emas, cabut/pulihkan abu
+  const [goldGrantOpen, setGoldGrantOpen] = useState(false)
+  const [goldRevokeOpen, setGoldRevokeOpen] = useState(false)
+  const [grayRevokeOpen, setGrayRevokeOpen] = useState(false)
+  const [grayRestoreOpen, setGrayRestoreOpen] = useState(false)
+  const [grayReason, setGrayReason] = useState("")
+  const [grayReasonError, setGrayReasonError] = useState<string | null>(null)
 
   // Sesuaikan saldo: form → konfirmasi ringkasan (konfirmasi ganda)
   const [adjustOpen, setAdjustOpen] = useState(false)
@@ -126,6 +146,20 @@ export default function UserDetailPage() {
       setError(userMessage(d.reason))
       setLoading(false)
       return
+    }
+    // Badge verifikasi aktif (butuh username; gagal diam-diam bila profil privat/diblokir)
+    setVerifiedError(null)
+    const username = d.status === "fulfilled" ? d.value.username : null
+    if (username) {
+      try {
+        const vb = await getUserVerificationBadges(username)
+        setVerifiedBadges(vb.badges ?? [])
+      } catch (e) {
+        setVerifiedBadges([])
+        setVerifiedError("Tidak dapat memuat tier verifikasi.")
+      }
+    } else {
+      setVerifiedBadges([])
     }
     const nextErrors: Record<string, string> = {}
     if (w.status === "fulfilled") setWallet(w.value)
@@ -216,6 +250,77 @@ export default function UserDetailPage() {
     } finally {
       setActing(null)
     }
+  }
+
+  // ---- Aksi verifikasi (tier abu/biru/emas) ----
+
+  const canManageGray = isSuperAdmin || role === "KYC_ADMIN"
+
+  const hasTier = (type: string) =>
+    verifiedBadges.some((b) => String(b.type).toUpperCase() === type)
+
+  const handleVerifiedAction = async (
+    label: string,
+    fn: () => Promise<{ message: string }>,
+    successTitle: string,
+  ) => {
+    setActing(label)
+    try {
+      const res = await fn()
+      await loadAll()
+      toast.show({
+        title: successTitle,
+        description: res.message || undefined,
+        tone: "success",
+      })
+    } catch (e) {
+      fail("Aksi verifikasi gagal", e)
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const handleGoldGrantConfirm = () => {
+    setGoldGrantOpen(false)
+    void handleVerifiedAction(
+      "gold-grant",
+      () => grantGoldVerified(userId),
+      "Tier emas diberikan",
+    )
+  }
+
+  const handleGoldRevokeConfirm = () => {
+    setGoldRevokeOpen(false)
+    void handleVerifiedAction(
+      "gold-revoke",
+      () => revokeGoldVerified(userId),
+      "Tier emas dicabut",
+    )
+  }
+
+  const handleGrayRevokeConfirm = () => {
+    const reason = grayReason.trim()
+    if (reason.length < 10) {
+      setGrayReasonError("Alasan pencabutan minimal 10 karakter.")
+      return
+    }
+    setGrayReasonError(null)
+    setGrayRevokeOpen(false)
+    setGrayReason("")
+    void handleVerifiedAction(
+      "gray-revoke",
+      () => revokeGrayVerified(userId, reason),
+      "Tier abu dicabut",
+    )
+  }
+
+  const handleGrayRestoreConfirm = () => {
+    setGrayRestoreOpen(false)
+    void handleVerifiedAction(
+      "gray-restore",
+      () => restoreGrayVerified(userId),
+      "Tier abu dipulihkan",
+    )
   }
 
   // ---- Render ----
@@ -325,6 +430,95 @@ export default function UserDetailPage() {
                 value={`${formatNumber(user.followersCount)} pengikut · ${formatNumber(user.followingCount)} mengikuti · ${formatNumber(user.reportsReceivedCount)} laporan diterima`}
               />
               {user.bio ? <KeyValue label="Bio" value={user.bio} /> : null}
+            </CardBody>
+          </Card>
+
+          {/* ---- Verifikasi (tier abu/biru/emas) ---- */}
+          <Card padded={false}>
+            <CardHeader title="Verifikasi" />
+            <CardBody>
+              {verifiedError ? (
+                <p className="text-body text-text-secondary">{verifiedError}</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {hasTier("TRUSTED_BY_KAHADE") ? (
+                    <Badge tone="warning">Emas — Dipercaya Kahade</Badge>
+                  ) : null}
+                  {hasTier("BUSINESS_VERIFIED") ? (
+                    <Badge tone="info">Biru — Bisnis Terverifikasi</Badge>
+                  ) : null}
+                  {hasTier("FULLY_VERIFIED") ? (
+                    <Badge tone="neutral">Abu — Terverifikasi Penuh</Badge>
+                  ) : null}
+                  {!hasTier("TRUSTED_BY_KAHADE") &&
+                  !hasTier("BUSINESS_VERIFIED") &&
+                  !hasTier("FULLY_VERIFIED") ? (
+                    <p className="text-body text-text-secondary">
+                      Pengguna belum memegang tier verifikasi.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+              <p className="mt-3 text-caption text-text-tertiary">
+                Abu: otomatis (email + KYC + HP + alamat + Kahade Plus) — dapat dicabut/dipulihkan.
+                Biru: verifikasi manual di halaman Verifikasi Bisnis. Emas: diberikan manual ke
+                customer pilihan.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {isSuperAdmin ? (
+                  <>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      fullWidth={false}
+                      loading={acting === "gold-grant"}
+                      onClick={() => setGoldGrantOpen(true)}
+                    >
+                      Beri emas
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      loading={acting === "gold-revoke"}
+                      onClick={() => setGoldRevokeOpen(true)}
+                    >
+                      Cabut emas
+                    </Button>
+                  </>
+                ) : null}
+                {canManageGray ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      loading={acting === "gray-revoke"}
+                      onClick={() => {
+                        setGrayReason("")
+                        setGrayReasonError(null)
+                        setGrayRevokeOpen(true)
+                      }}
+                    >
+                      Cabut abu
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      loading={acting === "gray-restore"}
+                      onClick={() => setGrayRestoreOpen(true)}
+                    >
+                      Pulihkan abu
+                    </Button>
+                  </>
+                ) : null}
+                {!isSuperAdmin && !canManageGray ? (
+                  <p className="text-caption text-text-tertiary">
+                    Role Anda tidak dapat mengelola tier verifikasi.
+                  </p>
+                ) : null}
+              </div>
             </CardBody>
           </Card>
 
@@ -871,6 +1065,70 @@ export default function UserDetailPage() {
         destructive={adjustType === "DEBIT"}
         loading={acting === "adjust"}
         onConfirm={() => void handleAdjustConfirm()}
+      />
+      {/* ---- Konfirmasi: beri tier emas ---- */}
+      <ConfirmDialog
+        open={goldGrantOpen}
+        onClose={() => setGoldGrantOpen(false)}
+        title="Beri tier emas?"
+        description={`Tier emas (Dipercaya Kahade) akan diberikan ke ${displayName}. Tier ini untuk customer pilihan.`}
+        confirmLabel="Beri emas"
+        loading={acting === "gold-grant"}
+        onConfirm={handleGoldGrantConfirm}
+      />
+
+      {/* ---- Konfirmasi: cabut tier emas ---- */}
+      <ConfirmDialog
+        open={goldRevokeOpen}
+        onClose={() => setGoldRevokeOpen(false)}
+        title="Cabut tier emas?"
+        description={`Tier emas akan dicabut dari ${displayName}.`}
+        confirmLabel="Cabut emas"
+        destructive
+        loading={acting === "gold-revoke"}
+        onConfirm={handleGoldRevokeConfirm}
+      />
+
+      {/* ---- Dialog: cabut tier abu (alasan wajib) ---- */}
+      <Dialog
+        open={grayRevokeOpen}
+        onClose={() => setGrayRevokeOpen(false)}
+        title="Cabut tier abu"
+        description={`Tier abu (Terverifikasi Penuh) ${displayName} akan dicabut. Badge hilang sampai dipulihkan.`}
+        footer={
+          <Button
+            variant="destructive"
+            loading={acting === "gray-revoke"}
+            onClick={handleGrayRevokeConfirm}
+          >
+            Cabut tier abu
+          </Button>
+        }
+      >
+        <TextArea
+          label="Alasan pencabutan"
+          required
+          rows={4}
+          placeholder="Minimal 10 karakter…"
+          value={grayReason}
+          onChange={(e) => {
+            setGrayReason(e.target.value)
+            setGrayReasonError(null)
+          }}
+          error={grayReasonError ?? undefined}
+          maxLength={1000}
+        />
+      </Dialog>
+
+      {/* ---- Konfirmasi: pulihkan tier abu ---- */}
+      <ConfirmDialog
+        open={grayRestoreOpen}
+        onClose={() => setGrayRestoreOpen(false)}
+        title="Pulihkan tier abu?"
+        description={`Tier abu (Terverifikasi Penuh) ${displayName} akan dipulihkan.`}
+        confirmLabel="Pulihkan"
+        loading={acting === "gray-restore"}
+        onConfirm={handleGrayRestoreConfirm}
       />
     </RoleGate>
   )
