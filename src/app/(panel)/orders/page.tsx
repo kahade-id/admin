@@ -1,0 +1,649 @@
+/**
+ * Admin — Order: daftar order + intervensi darurat escrow.
+ *
+ * - Tabel order: pencarian (debounce ~400ms) + filter status + Pagination.
+ * - Klik "Detail" pada baris → Dialog detail: pembeli, penjual, nominal,
+ *   status escrow (diturunkan dari transaksi ORDER_LOCK / ORDER_RELEASE /
+ *   ORDER_REFUND / DISPUTE_RELEASE), timeline dari riwayat status.
+ * - Aksi darurat "Paksa batal" / "Paksa selesai": KONFIRMASI GANDA —
+ *   Dialog pertama wajib alasan (min 10 karakter) → ConfirmDialog kedua
+ *   ("Tindakan ini tidak bisa dibatalkan"). Tombol hanya aktif untuk status
+ *   yang valid (batal: WAITING_CONFIRMATION / WAITING_PAYMENT / PROCESSING /
+ *   IN_DELIVERY / DISPUTED; selesai: PROCESSING / IN_DELIVERY).
+ * - forceCancelOrder / forceCompleteOrder sudah menyertakan header
+ *   `Idempotency-Key` per panggilan (lihat src/lib/api/admin/orders.ts).
+ */
+"use client"
+
+import { useCallback, useEffect, useState } from "react"
+
+import { Badge, type BadgeTone } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardBody, CardHeader } from "@/components/ui/card"
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
+import { Input, TextArea } from "@/components/ui/input"
+import { Spinner } from "@/components/ui/spinner"
+import { DataTable } from "@/components/ui/table"
+import { useToast } from "@/components/ui/toast"
+
+import { Pagination } from "@/components/admin/pagination"
+import { RoleGate } from "@/components/admin/role-gate"
+import { Select } from "@/components/admin/select"
+
+import {
+  forceCancelOrder,
+  forceCompleteOrder,
+  getAdminOrderDetail,
+  listAdminOrders,
+  type AdminOrderDetail,
+  type AdminOrderItem,
+  type AdminOrderStatus,
+} from "@/lib/api/admin/orders"
+import { userMessage } from "@/lib/api/response"
+import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+
+const PAGE_SIZE = 20
+
+/** "Rp1.234.567" — non-finite → "—". */
+function formatRupiah(n: unknown): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
+  return `Rp${formatNumber(n)}`
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(timer)
+  }, [value, delayMs])
+  return debounced
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  WAITING_CONFIRMATION: "Menunggu konfirmasi",
+  WAITING_PAYMENT: "Menunggu pembayaran",
+  PROCESSING: "Diproses",
+  IN_DELIVERY: "Dikirim",
+  COMPLETED: "Selesai",
+  DISPUTED: "Disengketakan",
+  CANCELLED: "Dibatalkan",
+}
+
+const STATUS_TONE: Record<string, BadgeTone> = {
+  WAITING_CONFIRMATION: "warning",
+  WAITING_PAYMENT: "warning",
+  PROCESSING: "info",
+  IN_DELIVERY: "info",
+  COMPLETED: "success",
+  DISPUTED: "danger",
+  CANCELLED: "neutral",
+}
+
+const STATUS_FILTERS: Array<{ value: AdminOrderStatus | ""; label: string }> = [
+  { value: "", label: "Semua status" },
+  { value: "PROCESSING", label: "Diproses" },
+  { value: "IN_DELIVERY", label: "Dikirim" },
+  { value: "DISPUTED", label: "Disengketakan" },
+  { value: "WAITING_PAYMENT", label: "Menunggu bayar" },
+  { value: "WAITING_CONFIRMATION", label: "Menunggu konfirmasi" },
+  { value: "COMPLETED", label: "Selesai" },
+  { value: "CANCELLED", label: "Dibatalkan" },
+]
+
+/** Status order yang masih boleh dibatalkan paksa. */
+const CANCELLABLE: AdminOrderStatus[] = [
+  "WAITING_CONFIRMATION",
+  "WAITING_PAYMENT",
+  "PROCESSING",
+  "IN_DELIVERY",
+  "DISPUTED",
+]
+
+/** Status order yang boleh diselesaikan paksa (DISPUTED wajib lewat alur sengketa). */
+const COMPLETABLE: AdminOrderStatus[] = ["PROCESSING", "IN_DELIVERY"]
+
+/** Status escrow diturunkan dari transaksi wallet order (yang terbaru relevan). */
+function escrowStateOf(detail: AdminOrderDetail): {
+  label: string
+  tone: BadgeTone
+} {
+  const txs = detail.walletTransactions ?? []
+  const relevant = txs.find((t) =>
+    ["ORDER_LOCK", "ORDER_RELEASE", "ORDER_REFUND", "DISPUTE_RELEASE"].includes(
+      String(t.type),
+    ),
+  )
+  switch (String(relevant?.type)) {
+    case "ORDER_LOCK":
+      return { label: "Escrow terkunci", tone: "warning" }
+    case "ORDER_RELEASE":
+      return { label: "Escrow cair", tone: "success" }
+    case "ORDER_REFUND":
+      return { label: "Escrow refund", tone: "info" }
+    case "DISPUTE_RELEASE":
+      return { label: "Cair via sengketa", tone: "info" }
+    default:
+      return { label: "Tanpa escrow", tone: "neutral" }
+  }
+}
+
+function partyName(
+  p: {
+    fullName?: string | null
+    username?: string | null
+    email?: string | null
+  } | null | undefined,
+): string {
+  return p?.fullName ?? p?.username ?? p?.email ?? "—"
+}
+
+function KeyValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border py-2.5 last:border-b-0">
+      <dt className="shrink-0 text-caption font-semibold text-text-secondary">
+        {label}
+      </dt>
+      <dd className="min-w-0 flex-1 text-right text-body text-text-primary">
+        {value}
+      </dd>
+    </div>
+  )
+}
+
+export default function OrdersPage() {
+  const toast = useToast()
+
+  // ------------------------------------------------------------------
+  // Daftar order
+  // ------------------------------------------------------------------
+  const [search, setSearch] = useState("")
+  const debouncedSearch = useDebouncedValue(search, 400)
+  const [statusFilter, setStatusFilter] = useState<AdminOrderStatus | "">("")
+
+  const [rows, setRows] = useState<AdminOrderItem[]>([])
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [loading, setLoading] = useState(true)
+
+  const loadOrders = useCallback(
+    async (targetPage: number) => {
+      setLoading(true)
+      try {
+        const res = await listAdminOrders({
+          page: targetPage,
+          limit: PAGE_SIZE,
+          status: statusFilter || undefined,
+          q: debouncedSearch.trim() || undefined,
+        })
+        setRows(res.data ?? [])
+        const t = res.meta?.total ?? res.total ?? res.data?.length ?? 0
+        setTotal(t)
+        setTotalPages(
+          res.meta?.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)),
+        )
+      } catch (e) {
+        toast.show({
+          title: "Gagal memuat order",
+          description: userMessage(e),
+          tone: "danger",
+        })
+      } finally {
+        setLoading(false)
+      }
+    },
+    [statusFilter, debouncedSearch, toast],
+  )
+
+  useEffect(() => {
+    void loadOrders(page)
+  }, [page, loadOrders])
+
+  const handleStatusChange = (value: string) => {
+    setStatusFilter(value as AdminOrderStatus | "")
+    setPage(1)
+  }
+
+  // ------------------------------------------------------------------
+  // Dialog detail
+  // ------------------------------------------------------------------
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [detail, setDetail] = useState<AdminOrderDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+
+  const openDetail = useCallback((order: AdminOrderItem) => {
+    setDetailOpen(true)
+    setDetail(null)
+    setDetailError(null)
+    setDetailLoading(true)
+    setForceAction(null)
+    setConfirmOpen(false)
+    setReason("")
+    setReasonError(null)
+    void (async () => {
+      try {
+        const d = await getAdminOrderDetail(order.orderId || order.id)
+        setDetail(d)
+      } catch (e) {
+        setDetailError(userMessage(e))
+      } finally {
+        setDetailLoading(false)
+      }
+    })()
+  }, [])
+
+  const closeDetail = () => {
+    if (submitting) return
+    setDetailOpen(false)
+    setDetail(null)
+    setForceAction(null)
+    setConfirmOpen(false)
+  }
+
+  // ------------------------------------------------------------------
+  // Intervensi darurat — konfirmasi ganda
+  // ------------------------------------------------------------------
+  const [forceAction, setForceAction] = useState<"cancel" | "complete" | null>(
+    null,
+  )
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [reason, setReason] = useState("")
+  const [reasonError, setReasonError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  /** Langkah 1: validasi alasan → buka ConfirmDialog kedua. */
+  const proceedToConfirm = () => {
+    if (reason.trim().length < 10) {
+      setReasonError("Alasan minimal 10 karakter.")
+      return
+    }
+    setConfirmOpen(true)
+  }
+
+  /** Langkah 2: eksekusi setelah konfirmasi kedua. */
+  const executeForceAction = useCallback(async () => {
+    if (!detail || !forceAction || submitting) return
+    setSubmitting(true)
+    try {
+      if (forceAction === "cancel") {
+        await forceCancelOrder(detail.orderId, reason.trim())
+        toast.show({
+          title: "Order dibatalkan",
+          description: detail.orderId,
+          tone: "success",
+        })
+      } else {
+        await forceCompleteOrder(detail.orderId, reason.trim())
+        toast.show({
+          title: "Order diselesaikan",
+          description: detail.orderId,
+          tone: "success",
+        })
+      }
+      setConfirmOpen(false)
+      closeDetail()
+      await loadOrders(page)
+    } catch (e) {
+      toast.show({
+        title: "Gagal memproses order",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setSubmitting(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, forceAction, submitting, reason, toast, loadOrders, page])
+
+  const detailStatus = detail ? String(detail.status) : ""
+  const canCancel =
+    detail != null && (CANCELLABLE as string[]).includes(detailStatus)
+  const canComplete =
+    detail != null && (COMPLETABLE as string[]).includes(detailStatus)
+  const escrow = detail ? escrowStateOf(detail) : null
+  const confirmTitle =
+    forceAction === "cancel" ? "Paksa batalkan order?" : "Paksa selesaikan order?"
+  const confirmDescription =
+    forceAction === "cancel"
+      ? "Order akan dibatalkan dan escrow (bila ada) dikembalikan ke pembeli. Tindakan ini tidak bisa dibatalkan."
+      : "Order akan diselesaikan dan escrow dicairkan ke penjual. Tindakan ini tidak bisa dibatalkan."
+
+  return (
+    <RoleGate href="/orders">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-h2 font-bold text-text-primary">Order</h1>
+          <p className="mt-1 text-body text-text-secondary">
+            Daftar semua order dan intervensi darurat escrow.
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          fullWidth={false}
+          loading={loading}
+          onClick={() => loadOrders(page)}
+        >
+          Muat ulang
+        </Button>
+      </div>
+
+      <Card>
+        <CardHeader
+          title="Daftar order"
+          subtitle="Klik Detail untuk melihat pihak, nominal, status escrow, dan timeline."
+        />
+        <CardBody>
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <Input
+              label="Cari"
+              placeholder="Cari orderId / judul…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
+            />
+            <Select
+              label="Status"
+              value={statusFilter}
+              onChange={(e) => handleStatusChange(e.target.value)}
+              options={STATUS_FILTERS}
+            />
+          </div>
+
+          <DataTable<AdminOrderItem>
+            columns={[
+              {
+                key: "orderId",
+                header: "Order",
+                render: (r) => (
+                  <div>
+                    <p className="font-semibold">{r.title ?? r.orderId}</p>
+                    <p className="break-all font-mono text-caption text-text-secondary">
+                      {r.orderId}
+                    </p>
+                  </div>
+                ),
+              },
+              {
+                key: "buyer",
+                header: "Pembeli",
+                render: (r) => partyName(r.buyer),
+              },
+              {
+                key: "seller",
+                header: "Penjual",
+                render: (r) => partyName(r.seller),
+              },
+              {
+                key: "orderValue",
+                header: "Nilai",
+                align: "right",
+                render: (r) => (
+                  <span className="font-semibold">
+                    {formatRupiah(r.orderValue)}
+                  </span>
+                ),
+              },
+              {
+                key: "status",
+                header: "Status",
+                render: (r) => (
+                  <Badge tone={STATUS_TONE[String(r.status)] ?? "neutral"}>
+                    {STATUS_LABEL[String(r.status)] ?? String(r.status)}
+                  </Badge>
+                ),
+              },
+              {
+                key: "createdAt",
+                header: "Dibuat",
+                render: (r) => formatDateTimeWIB(r.createdAt),
+              },
+              {
+                key: "action",
+                header: "",
+                align: "right",
+                render: (r) => (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    fullWidth={false}
+                    onClick={() => openDetail(r)}
+                  >
+                    Detail
+                  </Button>
+                ),
+              },
+            ]}
+            rows={rows}
+            rowKey={(r) => r.id}
+            loading={loading}
+            emptyText="Tidak ada order pada filter & pencarian ini."
+          />
+          <div className="mt-4">
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={total}
+              pageSize={PAGE_SIZE}
+              onPageChange={setPage}
+              disabled={loading}
+            />
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Dialog detail order */}
+      <Dialog
+        open={detailOpen}
+        onClose={closeDetail}
+        title="Detail order"
+        description={detail?.orderId}
+        className="max-w-2xl"
+      >
+        {detailLoading ? (
+          <div className="flex items-center justify-center gap-2 py-10 text-body text-text-secondary">
+            <Spinner size="sm" />
+            Memuat detail order…
+          </div>
+        ) : detailError ? (
+          <div className="py-6 text-center">
+            <p className="text-body font-semibold text-text-primary">
+              Gagal memuat detail
+            </p>
+            <p className="mt-1 text-body text-text-secondary">{detailError}</p>
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              className="mt-4"
+              onClick={() => detail && openDetail(detail)}
+            >
+              Coba lagi
+            </Button>
+          </div>
+        ) : detail ? (
+          <div className="space-y-5">
+            <div className="flex flex-wrap gap-2">
+              <Badge tone={STATUS_TONE[detailStatus] ?? "neutral"}>
+                {STATUS_LABEL[detailStatus] ?? detailStatus}
+              </Badge>
+              {escrow ? <Badge tone={escrow.tone}>{escrow.label}</Badge> : null}
+              {detail.dispute ? (
+                <Badge tone="danger">Ada sengketa</Badge>
+              ) : null}
+            </div>
+
+            <div>
+              <p className="text-h3 font-semibold text-text-primary">
+                {formatRupiah(detail.orderValue)}
+              </p>
+              <p className="mt-1 text-caption text-text-secondary">
+                Bayar pembeli: {formatRupiah(detail.buyerPayAmount)} · Terima
+                penjual: {formatRupiah(detail.sellerReceiveAmount)} · Fee:{" "}
+                {formatRupiah(detail.feeAmount)}
+              </p>
+            </div>
+
+            <dl>
+              <KeyValue label="Pembeli" value={partyName(detail.buyer)} />
+              {detail.buyer?.email ? (
+                <KeyValue label="Email pembeli" value={detail.buyer.email} />
+              ) : null}
+              <KeyValue label="Penjual" value={partyName(detail.seller)} />
+              {detail.seller?.email ? (
+                <KeyValue label="Email penjual" value={detail.seller.email} />
+              ) : null}
+              <KeyValue
+                label="Dibuat"
+                value={formatDateTimeWIB(detail.createdAt)}
+              />
+              {detail.completedAt ? (
+                <KeyValue
+                  label="Selesai"
+                  value={formatDateTimeWIB(detail.completedAt)}
+                />
+              ) : null}
+            </dl>
+
+            {(detail.statusHistories?.length ?? 0) > 0 ? (
+              <div>
+                <p className="mb-2 text-label font-semibold text-text-secondary">
+                  Timeline
+                </p>
+                <div className="space-y-2.5">
+                  {detail.statusHistories!.map((h, i) => (
+                    <div key={i} className="flex items-start gap-2.5">
+                      <span
+                        aria-hidden="true"
+                        className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-body text-text-primary">
+                          {STATUS_LABEL[String(h.status)] ??
+                            String(h.status ?? "—")}
+                        </p>
+                        {h.createdAt ? (
+                          <p className="text-caption text-text-secondary">
+                            {formatDateTimeWIB(String(h.createdAt))}
+                          </p>
+                        ) : null}
+                        {h.note ? (
+                          <p className="text-caption text-text-secondary">
+                            {h.note}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {!forceAction ? (
+              <div className="rounded-sm border border-danger bg-danger-soft p-4">
+                <p className="text-label font-semibold text-danger-text">
+                  Intervensi darurat
+                </p>
+                <p className="mt-1 text-caption text-text-secondary">
+                  Hanya dipakai saat alur normal macet. Setiap aksi tercatat di
+                  audit log.
+                </p>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    disabled={!canCancel}
+                    onClick={() => setForceAction("cancel")}
+                  >
+                    Paksa batal
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    disabled={!canComplete}
+                    onClick={() => setForceAction("complete")}
+                  >
+                    Paksa selesai
+                  </Button>
+                </div>
+                {!canCancel && !canComplete ? (
+                  <p className="mt-2 text-caption text-text-secondary">
+                    Order pada status ini tidak bisa diintervensi
+                    (selesai/dibatalkan).
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <div>
+                <p className="text-body font-semibold text-danger-text">
+                  {forceAction === "cancel"
+                    ? "Paksa batal — tulis alasan"
+                    : "Paksa selesai — tulis alasan"}
+                </p>
+                <div className="mt-3">
+                  <TextArea
+                    label="Alasan intervensi"
+                    required
+                    rows={3}
+                    value={reason}
+                    onChange={(e) => {
+                      setReason(e.target.value)
+                      if (reasonError) setReasonError(null)
+                    }}
+                    error={reasonError ?? undefined}
+                    hint="Setelah lanjut, akan ada dialog konfirmasi kedua."
+                    placeholder="Minimal 10 karakter, contoh: penjual tidak merespons 7 hari…"
+                  />
+                </div>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                  <Button
+                    variant="ghost"
+                    fullWidth={false}
+                    disabled={submitting}
+                    onClick={() => {
+                      setForceAction(null)
+                      setReason("")
+                      setReasonError(null)
+                    }}
+                  >
+                    Batal
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    fullWidth={false}
+                    loading={submitting}
+                    onClick={proceedToConfirm}
+                  >
+                    Lanjut
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </Dialog>
+
+      {/* Konfirmasi kedua — ganda */}
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => {
+          if (!submitting) setConfirmOpen(false)
+        }}
+        title={confirmTitle}
+        description={confirmDescription}
+        confirmLabel={
+          forceAction === "cancel" ? "Ya, batalkan" : "Ya, selesaikan"
+        }
+        cancelLabel="Batal"
+        destructive
+        loading={submitting}
+        onConfirm={() => void executeForceAction()}
+      />
+    </RoleGate>
+  )
+}

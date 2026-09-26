@@ -1,0 +1,26 @@
+@import "tailwindcss";
+@config "../../tailwind.config.ts";
+
+@import "./theme.css";
+
+/* Dark mode via class `.dark` (Tailwind v4) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Fokus keyboard yang terlihat (a11y) */
+:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+/* Scrollbar ramping untuk sidebar/tabel */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-default) transparent;
+}
