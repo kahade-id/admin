@@ -19,7 +19,8 @@ export type AdminProfile = {
 
 export type AdminLoginResult =
   | { requiresMfa: true; tempToken: string }
-  | { requiresMfa?: false; accessToken: string; admin: AdminProfile }
+  | { requiresMfaSetup: true; tempToken: string }
+  | { requiresMfa?: false; requiresMfaSetup?: false; accessToken: string; admin: AdminProfile }
 
 export async function adminLogin(
   email: string,
@@ -31,11 +32,33 @@ export async function adminLogin(
     password,
     totpToken: totpToken || undefined,
   })
-  if (!("requiresMfa" in res) || !res.requiresMfa) {
+  if (!("requiresMfa" in res) && !("requiresMfaSetup" in res)) {
     const token = (res as { accessToken: string }).accessToken
-    if (token) await setAdminAccessToken(token)
+    if (token) setAdminAccessToken(token)
   }
   return res
+}
+
+/**
+ * 03-#8: mulai enroll MFA — dipanggil dengan tempToken dari login yang
+ * mengembalikan requiresMfaSetup. Mengembalikan otpauthUrl + secret.
+ */
+export async function adminMfaSetup(tempToken: string): Promise<{ otpauthUrl: string; secret: string }> {
+  return adminHttp.post<{ otpauthUrl: string; secret: string }>("/v1/admin/auth/mfa/setup", {
+    tempToken,
+  })
+}
+
+/**
+ * 03-#8: selesaikan enroll MFA — verifikasi TOTP, aktifkan MFA, terima sesi.
+ */
+export async function adminMfaEnable(tempToken: string, totpToken: string): Promise<AdminProfile> {
+  const res = await adminHttp.post<{ accessToken: string; admin: AdminProfile }>(
+    "/v1/admin/auth/mfa/enable",
+    { tempToken, totpToken },
+  )
+  setAdminAccessToken(res.accessToken)
+  return res.admin
 }
 
 export async function adminVerify2fa(tempToken: string, totpToken: string): Promise<AdminProfile> {

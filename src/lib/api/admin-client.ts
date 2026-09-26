@@ -1,12 +1,12 @@
 /**
  * Kahade Admin Web — HTTP client (§admin).
  *
- * Port dari `frontend/lib/api/admin-client.ts` untuk web:
- * - access token disimpan di `localStorage` key `kahade.admin.accessToken`
- *   (bukan SecureStore)
+ * 03-#10: access token disimpan di MEMORI modul (bukan localStorage).
  * - refresh lewat `POST /v1/admin/auth/refresh` (cookie HttpOnly admin,
  *   `credentials: "include"`) — logika sama: 401 → refresh sekali →
  *   ulangi request; gagal → lempar `AdminAuthError`
+ * - `ensureAdminSession()` dipanggil saat boot untuk memulihkan sesi via
+ *   refresh cookie bila token memori kosong (mis. setelah reload).
  * - dukungan header `Idempotency-Key` per-request untuk endpoint
  *   idempoten (approve/reject withdrawal, force-cancel/force-complete order)
  *
@@ -21,6 +21,13 @@ import { unwrapResponse } from "@/lib/api/response"
 
 const ADMIN_TOKEN_KEY = "kahade.admin.accessToken"
 
+/**
+ * 03-#10/AW-017: access token disimpan di MEMORI modul (bukan localStorage).
+ * localStorage persisten dan dapat dibaca oleh skrip XSS; token di memori
+ * hilang saat reload — sesi dipulihkan via refresh cookie HttpOnly
+ * (POST /v1/admin/auth/refresh, `credentials: "include"`).
+ */
+
 /** Dilempar saat sesi admin tidak valid / kedaluwarsa dan refresh gagal. */
 export class AdminAuthError extends Error {
   constructor(message = "Sesi admin berakhir. Silakan login kembali.") {
@@ -29,24 +36,38 @@ export class AdminAuthError extends Error {
   }
 }
 
-function storage(): Storage | null {
-  try {
-    return typeof window !== "undefined" ? window.localStorage : null
-  } catch {
-    return null
-  }
-}
+/** Token hanya di memori — tidak pernah ditulis ke storage persisten. */
+let inMemoryAccessToken: string | null = null
 
 export function getAdminAccessToken(): string | null {
-  return storage()?.getItem(ADMIN_TOKEN_KEY) ?? null
+  return inMemoryAccessToken
 }
 
 export function setAdminAccessToken(token: string): void {
-  storage()?.setItem(ADMIN_TOKEN_KEY, token)
+  inMemoryAccessToken = token
 }
 
 export function clearAdminAccessToken(): void {
-  storage()?.removeItem(ADMIN_TOKEN_KEY)
+  inMemoryAccessToken = null
+  // Hapus sisa token lama bila pernah tersimpan di localStorage
+  // (migrasi dari perilaku sebelum 03-#10).
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("kahade.admin.accessToken")
+    }
+  } catch {
+    /* abaikan */
+  }
+}
+
+/**
+ * 03-#10: pulihkan sesi saat boot — coba refresh via HttpOnly cookie.
+ * Kembalikan true bila sesi aktif (token di memori), false bila harus login.
+ */
+export async function ensureAdminSession(): Promise<boolean> {
+  if (inMemoryAccessToken) return true
+  const token = await refreshAdminToken()
+  return token !== null
 }
 
 type AdminHttpOptions = {

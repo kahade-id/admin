@@ -19,7 +19,7 @@ import {
 
 import {
   clearAdminAccessToken,
-  getAdminAccessToken,
+  ensureAdminSession,
   AdminAuthError,
 } from "@/lib/api/admin-client"
 import {
@@ -50,7 +50,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading" })
 
   const refresh = useCallback(async () => {
-    if (!getAdminAccessToken()) {
+    // 03-#10: pulihkan sesi via refresh cookie HttpOnly bila token memori
+    // kosong (mis. setelah reload halaman).
+    const hasSession = await ensureAdminSession()
+    if (!hasSession) {
       setState({ status: "guest" })
       return
     }
