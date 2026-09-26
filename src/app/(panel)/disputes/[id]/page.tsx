@@ -411,7 +411,8 @@ export default function DisputeDetailPage() {
     setMsgError(null)
     try {
       const list = await getDisputeMessages(disputeId)
-      setMessages(Array.isArray(list) ? list : [])
+      // AW-021: adaptor sudah menjamin array.
+      setMessages(list)
     } catch (e) {
       setMsgError(userMessage(e))
     } finally {

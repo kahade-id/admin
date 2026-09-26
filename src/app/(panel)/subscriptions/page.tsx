@@ -41,6 +41,7 @@ import {
   type SubscriptionPlan,
 } from "@/lib/api/admin/subscriptions"
 import { listAdminUsers, type AdminUserSummary } from "@/lib/api/admin/users"
+import type { Paginated } from "@/lib/api/admin/kyc"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 
@@ -117,15 +118,11 @@ function periodLabel(s: SubscriptionItem): string {
 }
 
 function paginateTotal<T>(
-  res: { meta?: { total?: number; totalPages?: number }; pagination?: { total?: number; totalPages?: number }; total?: number; data?: T[] },
+  res: Paginated<T>,
   pageSize: number,
 ): { total: number; totalPages: number } {
-  const total =
-    res.meta?.total ?? res.pagination?.total ?? res.total ?? res.data?.length ?? 0
-  const totalPages =
-    res.meta?.totalPages ??
-    res.pagination?.totalPages ??
-    Math.max(1, Math.ceil(total / pageSize))
+  const total = res.total ?? res.data?.length ?? 0
+  const totalPages = res.totalPages ?? Math.max(1, Math.ceil(total / pageSize))
   return { total, totalPages }
 }
 

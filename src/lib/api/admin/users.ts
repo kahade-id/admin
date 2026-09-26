@@ -10,6 +10,7 @@ import {
   getAdminAccessToken,
 } from "@/lib/api/admin-client"
 import { API_BASE_URL } from "@/lib/api/config"
+import type { Paginated } from "@/lib/api/admin/kyc"
 
 /** Nilai `status` yang diterima `GET /v1/admin/users?status=…`. */
 export type AdminUserStatusFilter =
@@ -163,16 +164,8 @@ export type AdminUserWallet = {
   transactions: AdminUserWalletTransaction[]
 }
 
-/** Bentuk paginasi backend `createPaginatedResponse` (field di root, bukan `meta`). */
-export type AdminPaginated<T> = {
-  data: T[]
-  total: number
-  page: number
-  limit: number
-  totalPages: number
-  hasNext: boolean
-  hasPrev?: boolean
-}
+/** AW-019: alias — bentuk paginasi backend `createPaginatedResponse` (field di root). */
+export type AdminPaginated<T> = Paginated<T>
 
 export type ListAdminUsersQuery = {
   /** Istilah pencarian (nama, email, username, userId, atau nomor HP). */

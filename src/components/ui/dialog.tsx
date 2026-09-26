@@ -108,7 +108,16 @@ export function Dialog({
           className,
         )}
       >
-        <h3 className="text-h3 font-semibold text-text-primary">{title}</h3>
+        {/* AW-012: tombol tutup yang bisa difokus keyboard (selain Escape/overlay) */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Tutup dialog"
+          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-sm text-h3 leading-none text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus focus-visible:ring-offset-2 focus-visible:ring-offset-surface-elevated"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <h3 className="pr-10 text-h3 font-semibold text-text-primary">{title}</h3>
         {description ? (
           <p className="mt-2 text-body text-text-secondary">{description}</p>
         ) : null}

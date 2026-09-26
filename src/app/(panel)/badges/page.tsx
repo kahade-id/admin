@@ -7,7 +7,10 @@
  *
  * 1. "Tingkat Verifikasi" — 3 tier seal verified (abu/biru/emas):
  *    - Abu  (FULLY_VERIFIED)    : otomatis (email + KYC + HP + alamat + Kahade
- *      Plus). Admin bisa cabut (alasan min 10) / pulihkan. SUPER_ADMIN + KYC_ADMIN.
+ *      Plus). Admin bisa cabut (alasan min 10) / pulihkan — di halaman ini hanya
+ *      SUPER_ADMIN (halaman ini dibatasi RBAC ke SUPER_ADMIN; endpoint
+ *      verified-gray di users controller juga mengizinkan KYC_ADMIN,
+ *      tetapi tidak ada halaman badges untuk KYC_ADMIN).
  *    - Biru (BUSINESS_VERIFIED) : verifikasi manual di halaman Verifikasi Bisnis.
  *    - Emas (TRUSTED_BY_KAHADE) : diberikan manual ke customer pilihan, bisa
  *      dicabut kapan pun. Hanya SUPER_ADMIN.
@@ -67,8 +70,10 @@ function VerificationSection() {
   const toast = useToast()
   const { role } = useAuth()
   const isSuperAdmin = role === "SUPER_ADMIN"
-  // KYC_ADMIN juga boleh mengelola tier abu (sesuai kontrak backend).
-  const canManageGray = isSuperAdmin || role === "KYC_ADMIN"
+  // AW-009: halaman ini hanya untuk SUPER_ADMIN (MENU di src/lib/rbac.ts).
+  // KYC_ADMIN diizinkan backend pada endpoint verified-gray, namun tidak
+  // memiliki akses halaman badges — cabang KYC_ADMIN di sini mati dan dihapus.
+  const canManageGray = isSuperAdmin
 
   const [acting, setActing] = useState<string | null>(null)
 
@@ -398,9 +403,9 @@ function BadgeEventSection() {
       try {
         const res = await listBadges({ page: targetPage, limit: PAGE_SIZE })
         setRows(res.data ?? [])
-        const t = res.meta?.total ?? res.total ?? res.data?.length ?? 0
+        const t = res.total ?? res.data?.length ?? 0
         setTotal(t)
-        setTotalPages(res.meta?.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
+        setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
       } catch (e) {
         const msg = userMessage(e)
         setError(msg)

@@ -28,10 +28,13 @@ import {
   getDashboardOrderStats,
   getDashboardSummary,
   getRecentActivity,
+  type DashboardChartParams,
+  type DashboardChartPoint,
   type DashboardSummary,
   type OrderStats,
   type RecentActivityItem,
 } from "@/lib/api/admin/dashboard"
+import { getFinancialSummary } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { useAuth } from "@/lib/auth-context"
 import { formatDateTimeWIB, formatNumber, num } from "@/lib/format"
@@ -68,8 +71,6 @@ const CHART_PERIODS = [
   { value: "custom", label: "Rentang khusus" },
 ] as const
 
-type ChartPoint = { date: string; orders: number; revenue: number | string }
-
 const MENU_DESC: Record<string, string> = {
   "/kyc": "Antrean verifikasi identitas pengguna",
   "/business": "Antrean verifikasi badan usaha",
@@ -99,10 +100,13 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [orderStats, setOrderStats] = useState<OrderStats>([])
   const [activity, setActivity] = useState<RecentActivityItem[]>([])
+  // AW-001: summary dashboard backend tidak punya `pendingWithdrawals` —
+  // diambil dari GET /v1/admin/finance/summary (SUPER_ADMIN boleh keduanya).
+  const [pendingWithdrawals, setPendingWithdrawals] = useState<number | null>(null)
   const [chartPeriod, setChartPeriod] = useState<string>("30d")
   const [chartStart, setChartStart] = useState("")
   const [chartEnd, setChartEnd] = useState("")
-  const [chartData, setChartData] = useState<ChartPoint[]>([])
+  const [chartData, setChartData] = useState<DashboardChartPoint[]>([])
   const [chartLoading, setChartLoading] = useState(false)
 
   const load = useCallback(
@@ -117,8 +121,18 @@ export default function DashboardPage() {
           getRecentActivity({ limit: 10 }),
         ])
         setSummary(sum)
-        setOrderStats(Array.isArray(stats) ? stats : [])
+        setOrderStats(stats)
         setActivity(Array.isArray(act) ? act : [])
+        // Penarikan menunggu tidak ada di summary dashboard — ambil dari
+        // ringkasan keuangan. Gagal → null (tampil "—", bukan 0 palsu).
+        try {
+          const fin = await getFinancialSummary()
+          setPendingWithdrawals(
+            typeof fin?.pendingWithdrawals === "number" ? fin.pendingWithdrawals : null,
+          )
+        } catch {
+          setPendingWithdrawals(null)
+        }
       } catch (e) {
         const msg = userMessage(e)
         setError(msg)
@@ -139,16 +153,14 @@ export default function DashboardPage() {
     async (period: string, start: string, end: string) => {
       setChartLoading(true)
       try {
-        const params: { period?: string; startDate?: string; endDate?: string } =
+        const params: DashboardChartParams =
           period === "custom"
             ? {
                 ...(start ? { startDate: start } : {}),
                 ...(end ? { endDate: end } : {}),
               }
             : { period }
-        const res = (await getDashboardCharts(params)) as {
-          data?: ChartPoint[]
-        } | null
+        const res = await getDashboardCharts(params)
         setChartData(Array.isArray(res?.data) ? res.data : [])
       } catch (e) {
         toast.show({
@@ -223,17 +235,17 @@ export default function DashboardPage() {
           {summary ? (
             <section aria-label="Ringkasan">
               <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
-                <StatCard label="Total pengguna" value={formatNumber(num(summary.totalUsers))} />
-                <StatCard label="Total order" value={formatNumber(num(summary.totalOrders))} />
-                <StatCard label="Escrow aktif" value={formatNumber(num(summary.activeEscrow))} />
-                <StatCard label="KYC menunggu" value={formatNumber(num(summary.pendingKyc))} />
+                <StatCard label="Total pengguna" value={formatNumber(num(summary.users?.total))} />
+                <StatCard label="Total order" value={formatNumber(num(summary.orders?.total))} />
+                <StatCard label="Escrow aktif" value={formatNumber(num(summary.orders?.active))} />
+                <StatCard label="KYC menunggu" value={formatNumber(num(summary.kyc?.pending))} />
                 <StatCard
                   label="Sengketa menunggu"
-                  value={formatNumber(num(summary.pendingDisputes))}
+                  value={formatNumber(num(summary.disputes?.open))}
                 />
                 <StatCard
                   label="Penarikan menunggu"
-                  value={formatNumber(num(summary.pendingWithdrawals))}
+                  value={pendingWithdrawals == null ? "—" : formatNumber(pendingWithdrawals)}
                 />
               </div>
             </section>

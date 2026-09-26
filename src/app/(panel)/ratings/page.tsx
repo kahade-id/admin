@@ -126,10 +126,10 @@ export default function RatingsPage() {
             targetStatus === "all" ? undefined : targetStatus === "hidden",
         })
         setRows(res.data ?? [])
-        const t = res.meta?.total ?? res.total ?? res.data?.length ?? 0
+        const t = res.total ?? res.data?.length ?? 0
         setTotal(t)
         setTotalPages(
-          res.meta?.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)),
+          res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)),
         )
       } catch (e) {
         const msg = userMessage(e)

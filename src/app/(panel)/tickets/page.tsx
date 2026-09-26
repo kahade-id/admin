@@ -85,14 +85,9 @@ export default function TicketsListPage() {
           priority: targetQueue === "priority" ? true : undefined,
         })
         setRows(res.data ?? [])
-        const t =
-          res.meta?.total ?? res.pagination?.total ?? res.total ?? res.data?.length ?? 0
+        const t = res.total ?? res.data?.length ?? 0
         setTotal(t)
-        setTotalPages(
-          res.meta?.totalPages ??
-            res.pagination?.totalPages ??
-            Math.max(1, Math.ceil(t / PAGE_SIZE)),
-        )
+        setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
       } catch (e) {
         const msg = userMessage(e)
         setError(msg)

@@ -77,10 +77,27 @@ export function markDisputeUnderReview(disputeId: string): Promise<unknown> {
   )
 }
 
-export function getDisputeMessages(disputeId: string): Promise<DisputeMessage[]> {
-  return adminHttp.get<DisputeMessage[]>(
+/** Respons mentah backend `GET /v1/admin/disputes/:id/messages`. */
+export type DisputeMessagesResponse = {
+  messages: DisputeMessage[]
+  nextCursor: string | null
+  hasMore: boolean
+}
+
+/**
+ * Ambil pesan sengketa.
+ *
+ * AW-021 (2026-09-26): backend mengembalikan envelope
+ * `{ messages, nextCursor, hasMore }` — adaptor mengembalikan
+ * `response.messages` saja agar pemanggil lama tetap mendapat array.
+ */
+export async function getDisputeMessages(
+  disputeId: string,
+): Promise<DisputeMessage[]> {
+  const res = await adminHttp.get<DisputeMessagesResponse>(
     `/v1/admin/disputes/${encodeURIComponent(disputeId)}/messages`,
   )
+  return Array.isArray(res?.messages) ? res.messages : []
 }
 
 export function sendDisputeMessage(disputeId: string, message: string): Promise<unknown> {

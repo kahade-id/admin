@@ -204,9 +204,9 @@ function TeamPageContent() {
           search: query || undefined,
         })
         setRows(res.data ?? [])
-        const t = res.meta?.total ?? res.total ?? res.data?.length ?? 0
+        const t = res.total ?? res.data?.length ?? 0
         setTotal(t)
-        setTotalPages(res.meta?.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
+        setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
         setPage(targetPage)
       } catch (e) {
         const msg = userMessage(e)

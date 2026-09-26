@@ -28,17 +28,20 @@ export type KycDocumentUrls = {
   partialErrors?: string[]
 }
 
+/**
+ * AW-019: SATU konvensi paginasi — bentuk `createPaginatedResponse` backend
+ * (`{ data, total, page, limit, totalPages }` di root). Wrapper `meta?` /
+ * `pagination?` yang lama tidak pernah dikembalikan backend dan sudah dihapus;
+ * semua halaman membaca `res.total` / `res.totalPages` langsung.
+ */
 export type Paginated<T> = {
   data: T[]
-  meta?: { page: number; limit: number; total: number; totalPages?: number }
-  /** Bentuk respons kontrak Kahade+: { data, pagination }. */
-  pagination?: {
-    page: number
-    limit: number
-    total: number
-    totalPages?: number
-  }
-  total?: number
+  total: number
+  page: number
+  limit: number
+  totalPages: number
+  hasNext?: boolean
+  hasPrev?: boolean
 }
 
 export function getKycQueue(params?: {

@@ -163,6 +163,9 @@ export default function OrdersPage() {
   const [search, setSearch] = useState("")
   const debouncedSearch = useDebouncedValue(search, 400)
   const [statusFilter, setStatusFilter] = useState<AdminOrderStatus | "">("")
+  // AW-016: backend hanya menerapkan filter saat hasEscrow === true
+  // (admin-orders.service.ts) — UI berupa pilihan "Dengan escrow" saja.
+  const [escrowOnly, setEscrowOnly] = useState(false)
 
   const [rows, setRows] = useState<AdminOrderItem[]>([])
   const [page, setPage] = useState(1)
@@ -179,13 +182,12 @@ export default function OrdersPage() {
           limit: PAGE_SIZE,
           status: statusFilter || undefined,
           q: debouncedSearch.trim() || undefined,
+          hasEscrow: escrowOnly || undefined,
         })
         setRows(res.data ?? [])
-        const t = res.meta?.total ?? res.total ?? res.data?.length ?? 0
+        const t = res.total ?? res.data?.length ?? 0
         setTotal(t)
-        setTotalPages(
-          res.meta?.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)),
-        )
+        setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
       } catch (e) {
         toast.show({
           title: "Gagal memuat order",
@@ -196,7 +198,7 @@ export default function OrdersPage() {
         setLoading(false)
       }
     },
-    [statusFilter, debouncedSearch, toast],
+    [statusFilter, debouncedSearch, escrowOnly, toast],
   )
 
   useEffect(() => {
@@ -205,6 +207,11 @@ export default function OrdersPage() {
 
   const handleStatusChange = (value: string) => {
     setStatusFilter(value as AdminOrderStatus | "")
+    setPage(1)
+  }
+
+  const handleEscrowChange = (value: string) => {
+    setEscrowOnly(value === "yes")
     setPage(1)
   }
 
@@ -346,7 +353,7 @@ export default function OrdersPage() {
           subtitle="Klik Detail untuk melihat pihak, nominal, status escrow, dan timeline."
         />
         <CardBody>
-          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
             <Input
               label="Cari"
               placeholder="Cari orderId / judul / nomor resi…"
@@ -361,6 +368,15 @@ export default function OrdersPage() {
               value={statusFilter}
               onChange={(e) => handleStatusChange(e.target.value)}
               options={STATUS_FILTERS}
+            />
+            <Select
+              label="Escrow"
+              value={escrowOnly ? "yes" : ""}
+              onChange={(e) => handleEscrowChange(e.target.value)}
+              options={[
+                { value: "", label: "Semua order" },
+                { value: "yes", label: "Dengan escrow" },
+              ]}
             />
           </div>
 

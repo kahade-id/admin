@@ -34,6 +34,7 @@ import {
   approveWithdrawal,
   getEscrowSummary,
   getFinancialSummary,
+  getRevenue,
   listPendingWithdrawals,
   listTransactions,
   newIdempotencyKey,
@@ -42,6 +43,7 @@ import {
   type EscrowSummary,
   type FinancialSummary,
   type PendingWithdrawal,
+  type RevenueBreakdown,
   type WalletTransactionType,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
@@ -180,17 +182,21 @@ export default function FinancePage() {
   // ------------------------------------------------------------------
   const [summary, setSummary] = useState<FinancialSummary | null>(null)
   const [escrow, setEscrow] = useState<EscrowSummary | null>(null)
+  // AW-014: revenue breakdown (fee transaksi + pembayaran subscription).
+  const [revenue, setRevenue] = useState<RevenueBreakdown | null>(null)
   const [summaryLoading, setSummaryLoading] = useState(true)
 
   const loadSummary = useCallback(async () => {
     setSummaryLoading(true)
     try {
-      const [sum, esc] = await Promise.all([
+      const [sum, esc, rev] = await Promise.all([
         getFinancialSummary(),
         getEscrowSummary(),
+        getRevenue(),
       ])
       setSummary(sum)
       setEscrow(esc)
+      setRevenue(rev)
     } catch (e) {
       toast.show({
         title: "Gagal memuat ringkasan keuangan",
@@ -224,11 +230,10 @@ export default function FinancePage() {
           limit: PENDING_PAGE_SIZE,
         })
         setPendingRows(res.data ?? [])
-        const total = res.meta?.total ?? res.total ?? res.data?.length ?? 0
+        const total = res.total ?? res.data?.length ?? 0
         setPendingTotal(total)
         setPendingTotalPages(
-          res.meta?.totalPages ??
-            Math.max(1, Math.ceil(total / PENDING_PAGE_SIZE)),
+          res.totalPages ?? Math.max(1, Math.ceil(total / PENDING_PAGE_SIZE)),
         )
       } catch (e) {
         toast.show({
@@ -353,10 +358,10 @@ export default function FinancePage() {
           endDate: range.end,
         })
         setTxRows(res.data ?? [])
-        const total = res.meta?.total ?? res.total ?? res.data?.length ?? 0
+        const total = res.total ?? res.data?.length ?? 0
         setTxTotal(total)
         setTxTotalPages(
-          res.meta?.totalPages ?? Math.max(1, Math.ceil(total / PAGE_SIZE)),
+          res.totalPages ?? Math.max(1, Math.ceil(total / PAGE_SIZE)),
         )
       } catch (e) {
         toast.show({
@@ -484,6 +489,82 @@ export default function FinancePage() {
               hint={`${formatNumber(summary?.pendingWithdrawals ?? 0)} menunggu persetujuan`}
             />
           </div>
+        )}
+      </section>
+
+      {/* (a2) Revenue platform — AW-014: getRevenue() sebelumnya tidak dipakai */}
+      <section aria-label="Revenue platform" className="mt-8">
+        <h2 className="mb-3 text-h3 font-semibold text-text-primary">Revenue platform</h2>
+        {summaryLoading && !revenue ? (
+          <div className="flex items-center gap-2 py-6 text-body text-text-secondary">
+            <Spinner size="sm" />
+            Memuat revenue…
+          </div>
+        ) : revenue ? (
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StatCard
+                label="Total revenue"
+                value={formatRupiah(revenue.totalRevenue)}
+                hint="Fee transaksi + subscription"
+              />
+              <StatCard
+                label="Fee transaksi"
+                value={formatRupiah(revenue.breakdown?.transactionFees?.total)}
+                hint={`${formatNumber(revenue.breakdown?.transactionFees?.count ?? 0)} order selesai`}
+              />
+              <StatCard
+                label="Pembayaran subscription"
+                value={formatRupiah(revenue.breakdown?.subscriptionPayments?.total)}
+                hint={`${formatNumber(revenue.breakdown?.subscriptionPayments?.count ?? 0)} pembayaran`}
+              />
+            </div>
+            {revenue.monthlyRevenue && revenue.monthlyRevenue.length > 0 ? (
+              <Card className="mt-4">
+                <CardHeader title="Revenue per bulan" />
+                <CardBody>
+                  <DataTable<{ month: string; total: number; count: number; source: string }>
+                    columns={[
+                      {
+                        key: "month",
+                        header: "Bulan",
+                        render: (r) => String(r.month).slice(0, 7),
+                      },
+                      {
+                        key: "total",
+                        header: "Total",
+                        align: "right",
+                        render: (r) => (
+                          <span className="font-semibold">{formatRupiah(r.total)}</span>
+                        ),
+                      },
+                      {
+                        key: "count",
+                        header: "Transaksi",
+                        align: "right",
+                        render: (r) => formatNumber(r.count),
+                      },
+                      {
+                        key: "source",
+                        header: "Sumber",
+                        render: (r) => (
+                          <Badge tone={r.source === "subscription" ? "info" : "neutral"}>
+                            {r.source === "subscription" ? "Subscription" : "Fee transaksi"}
+                          </Badge>
+                        ),
+                      },
+                    ]}
+                    rows={revenue.monthlyRevenue}
+                    rowKey={(r, i) => `${r.month}-${r.source}-${i}`}
+                  />
+                </CardBody>
+              </Card>
+            ) : null}
+          </>
+        ) : (
+          <p className="py-4 text-body text-text-secondary">
+            Data revenue tidak tersedia.
+          </p>
         )}
       </section>
 

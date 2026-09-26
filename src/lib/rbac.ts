@@ -4,9 +4,26 @@
  * Role persis dari backend (`AdminRole`):
  *   SUPER_ADMIN, DISPUTE_ADMIN, KYC_ADMIN, FINANCE_ADMIN, CUSTOMER_SUPPORT.
  *
- * SUPER_ADMIN melihat semua menu. Role lain hanya menu sesuai tugasnya —
- * sidebar difilter lewat `menuForRole()`, dan guard halaman memakai
- * `canAccess(role, href)`.
+ * AW-004 s/d AW-010 (batch 6, 2026-09-26): matriks menu DISELARASKAN dengan
+ * `@AdminRoles` di tiap controller backend (backend = otoritas; diverifikasi
+ * per controller). Menu yang lebih longgar dari backend hanya menghasilkan
+ * halaman 403 — menu yang lebih ketat menyembunyikan fitur yang sebenarnya
+ * diizinkan.
+ *
+ * Backend per controller (class-level; method-level dapat menyempitkan lagi,
+ * mis. aksi destruktif users hanya SUPER_ADMIN):
+ * - dashboard.controller.ts:13        → SUPER_ADMIN
+ * - admin-users.controller.ts:25      → SUPER_ADMIN, CUSTOMER_SUPPORT
+ * - admin-orders.controller.ts:19     → SUPER_ADMIN, DISPUTE_ADMIN
+ * - admin-badges.controller.ts:18     → SUPER_ADMIN
+ * - admin-campaigns.controller.ts:26  → SUPER_ADMIN
+ * - admin-insurance-claims.controller.ts:18 → SUPER_ADMIN, FINANCE_ADMIN, CUSTOMER_SUPPORT
+ * - admin-support.controller.ts:19    → SUPER_ADMIN, CUSTOMER_SUPPORT
+ *
+ * Catatan: KYC_ADMIN boleh revoke/restore tier abu via endpoint users
+ * (method-level `@AdminRoles('SUPER_ADMIN','KYC_ADMIN')` di
+ * admin-users.controller.ts:223,240) — belum ada entry UI khusus; gunakan
+ * halaman detail pengguna sebagai SUPER_ADMIN bila perlu.
  */
 
 export type AdminRole =
@@ -26,24 +43,24 @@ export type MenuItem = {
 }
 
 export const MENU: MenuItem[] = [
-  { label: "Dasbor", href: "/", roles: ["*"] },
-  { label: "Pengguna", href: "/users", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "CUSTOMER_SUPPORT"] },
+  { label: "Dasbor", href: "/", roles: ["SUPER_ADMIN"] },
+  { label: "Pengguna", href: "/users", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Antrean KYC", href: "/kyc", roles: ["SUPER_ADMIN", "KYC_ADMIN"] },
   { label: "Verifikasi Bisnis", href: "/business", roles: ["SUPER_ADMIN", "KYC_ADMIN"] },
   { label: "Sengketa", href: "/disputes", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
-  { label: "Tiket Bantuan", href: "/tickets", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT", "DISPUTE_ADMIN"] },
+  { label: "Tiket Bantuan", href: "/tickets", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Laporan Pengguna", href: "/reports", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Laporan Etalase", href: "/reports/showcase", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
-  { label: "Moderasi Chat", href: "/chat", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
-  { label: "Badge & Verifikasi", href: "/badges", roles: ["SUPER_ADMIN", "KYC_ADMIN"] },
+  { label: "Moderasi Chat", href: "/chat", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
+  { label: "Badge & Verifikasi", href: "/badges", roles: ["SUPER_ADMIN"] },
   { label: "Keuangan & Escrow", href: "/finance", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
-  { label: "Pesanan", href: "/orders", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "DISPUTE_ADMIN"] },
+  { label: "Pesanan", href: "/orders", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
   { label: "Voucher", href: "/vouchers", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
-  { label: "Kampanye", href: "/campaigns", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
+  { label: "Kampanye", href: "/campaigns", roles: ["SUPER_ADMIN"] },
   { label: "Ulasan", href: "/ratings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Referral", href: "/referral", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Langganan", href: "/subscriptions", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
-  { label: "Klaim Asuransi", href: "/insurance-claims", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "DISPUTE_ADMIN"] },
+  { label: "Klaim Asuransi", href: "/insurance-claims", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Analitik", href: "/analytics", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Sistem & Konfigurasi", href: "/system", roles: ["SUPER_ADMIN"] },
   { label: "Tim Admin", href: "/team", roles: ["SUPER_ADMIN"] },
