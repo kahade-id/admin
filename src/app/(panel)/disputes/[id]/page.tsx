@@ -8,9 +8,11 @@
  *   UNDER_REVIEW/RESOLVED).
  * - "Assign" → Dialog dropdown admin (DISPUTE_ADMIN/SUPER_ADMIN aktif) → assignDispute.
  * - "Resolve" → Dialog: keputusan FULL_BUYER/FULL_SELLER/SPLIT (Select) +
- *   catatan wajib min 100 karakter + winnerId opsional — hanya bila status
- *   UNDER_REVIEW/ESCALATED/ASSIGNED.
- * - Riwayat pesan + kirim pesan sebagai admin.
+ *   catatan wajib min 100 karakter + persen SPLIT (1–99, jumlah 100, hanya
+ *   saat SPLIT) — hanya bila status UNDER_REVIEW/ESCALATED (DP-007).
+ *   Payload persis DisputeDecisionDto backend (DP-001).
+ * - Riwayat pesan + kirim pesan sebagai admin (DP-002: field `content`).
+ * - Polling ringan 20 dtk saat tab aktif + indikator kesegaran (DP-021).
  *
  * Port dari frontend/app/admin/(panel)/disputes/[id].tsx → web desktop.
  */
@@ -36,6 +38,7 @@ import {
   resolveDispute,
   sendDisputeMessage,
   type AdminDisputeItem,
+  type DisputeDecision,
   type DisputeMessage,
 } from "@/lib/api/admin/disputes"
 import { listAdmins } from "@/lib/api/admin/management"
@@ -44,7 +47,7 @@ import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
 import { DISPUTE_CATEGORY_LABEL, DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "../maps"
 
-type Resolution = "FULL_BUYER" | "FULL_SELLER" | "SPLIT"
+type Resolution = DisputeDecision
 
 const RESOLUTION_OPTIONS = [
   { value: "FULL_BUYER", label: "Menangkan pembeli" },
@@ -196,7 +199,15 @@ function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
                 {ev.fileUrls && ev.fileUrls.length > 0 ? (
                   <ul className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {ev.fileUrls.map((url, i) => {
-                      const kind = evidenceKind(ev.fileTypes?.[i])
+                      // DP-009: backend membuang signed URL yang gagal generate
+                      // (.filter(Boolean)) tanpa menyesuaikan fileTypes, sehingga
+                      // pairing by-index bisa bergeser. Hanya percaya pairing
+                      // bila panjangnya sama; bila tidak, tampilkan sebagai
+                      // dokumen generik tanpa tebakan tipe.
+                      const typesAligned =
+                        Array.isArray(ev.fileTypes) &&
+                        ev.fileTypes.length === ev.fileUrls?.length
+                      const kind = typesAligned ? evidenceKind(ev.fileTypes?.[i]) : "other"
                       return (
                         <li
                           key={`${ev.id}-${i}`}
@@ -369,8 +380,12 @@ export default function DisputeDetailPage() {
   const [resolveOpen, setResolveOpen] = useState(false)
   const [resolution, setResolution] = useState<Resolution>("FULL_BUYER")
   const [notes, setNotes] = useState("")
-  const [winnerId, setWinnerId] = useState("")
+  // DP-008: persen SPLIT — hanya dipakai bila keputusan SPLIT.
+  const [buyerPercent, setBuyerPercent] = useState("")
+  const [sellerPercent, setSellerPercent] = useState("")
   const [acting, setActing] = useState<string | null>(null)
+  // DP-021: kapan data terakhir disegarkan (polling otomatis).
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null)
 
   const load = useCallback(
     async (mode: "initial" | "refresh" = "initial") => {
@@ -379,6 +394,8 @@ export default function DisputeDetailPage() {
       setError(null)
       try {
         setDispute(await getDisputeDetail(disputeId))
+        // DP-021: penanda kesegaran data untuk indikator di header.
+        setLastUpdated(new Date().toISOString())
       } catch (e) {
         setError(userMessage(e))
       } finally {
@@ -407,6 +424,20 @@ export default function DisputeDetailPage() {
       void load("initial")
       void loadMessages()
     }
+  }, [disputeId, load, loadMessages])
+
+  // DP-021: polling ringan tiap 20 detik, hanya saat tab aktif, agar admin
+  // tahu bila ada bukti/klaim/pesan baru tanpa refresh manual. Interval
+  // disengaja tidak agresif; tombol "Muat ulang" tetap tersedia.
+  useEffect(() => {
+    if (!disputeId) return
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void load("refresh")
+        void loadMessages()
+      }
+    }, 20_000)
+    return () => clearInterval(timer)
   }, [disputeId, load, loadMessages])
 
   const reloadAll = () => {
@@ -485,18 +516,37 @@ export default function DisputeDetailPage() {
     }
   }
 
+  // DP-001/DP-008: validasi client sebelum submit — backend menolak 400
+  // bila catatan < 100 char atau persen SPLIT tak berjumlah 100.
+  const isSplit = resolution === "SPLIT"
+  const buyerPct = Number.parseInt(buyerPercent, 10)
+  const sellerPct = Number.parseInt(sellerPercent, 10)
+  const splitValid =
+    !isSplit ||
+    (Number.isInteger(buyerPct) &&
+      Number.isInteger(sellerPct) &&
+      buyerPct >= 1 &&
+      buyerPct <= 99 &&
+      sellerPct >= 1 &&
+      sellerPct <= 99 &&
+      buyerPct + sellerPct === 100)
+  const notesValid = notes.trim().length >= 100
+
   const handleResolve = async () => {
-    if (notes.trim().length < 100 || acting) return
+    if (!notesValid || !splitValid || acting) return
     setActing("resolve")
     try {
+      // DP-001: payload persis DisputeDecisionDto {decision, decisionNotes, ...}.
+      // winnerId dihapus — backend tidak mengenalnya.
       await resolveDispute(disputeId, {
-        resolution,
-        notes: notes.trim(),
-        winnerId: winnerId.trim() || undefined,
+        decision: resolution,
+        decisionNotes: notes.trim(),
+        ...(isSplit ? { buyerPercent: buyerPct, sellerPercent: sellerPct } : {}),
       })
       setResolveOpen(false)
       setNotes("")
-      setWinnerId("")
+      setBuyerPercent("")
+      setSellerPercent("")
       await load("refresh")
       toast.show({ title: "Sengketa diselesaikan", tone: "success" })
     } catch (e) {
@@ -508,21 +558,12 @@ export default function DisputeDetailPage() {
 
   const status = dispute ? String(dispute.status) : ""
   const canReview = status !== "" && status !== "UNDER_REVIEW" && status !== "RESOLVED"
-  const canResolve =
-    status === "UNDER_REVIEW" || status === "ESCALATED" || status === "ASSIGNED"
+  // DP-007: backend hanya menerima resolve dari UNDER_REVIEW/ESCALATED.
+  // ASSIGNED diarahkan lewat "Mulai review" (markDisputeUnderReview).
+  const canResolve = status === "UNDER_REVIEW" || status === "ESCALATED"
 
-  // Pilihan pemenang diambil dari pihak order — menggantikan input ID bebas
-  // yang rawan salah ketik (dana bisa terkirim ke pihak yang salah).
+  // Info order untuk label pengirim di riwayat pesan (pembeli/penjual/admin).
   const disputeOrder = dispute ? (asRecord(dispute.order) as DisputeOrderInfo | null) : null
-  const winnerOptions = [
-    { value: "", label: "— Tidak menentukan —" },
-    ...(disputeOrder?.buyerId
-      ? [{ value: String(disputeOrder.buyerId), label: `Pembeli (${disputeOrder.buyerId})` }]
-      : []),
-    ...(disputeOrder?.sellerId
-      ? [{ value: String(disputeOrder.sellerId), label: `Penjual (${disputeOrder.sellerId})` }]
-      : []),
-  ]
 
   return (
     <RoleGate href="/disputes">
@@ -535,15 +576,23 @@ export default function DisputeDetailPage() {
             {dispute ? `ID: ${dispute.id}` : "Info sengketa, pesan, dan aksi putusan."}
           </p>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          fullWidth={false}
-          loading={refreshing}
-          onClick={reloadAll}
-        >
-          Muat ulang
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* DP-021: indikator kesegaran data dari polling otomatis 20 dtk. */}
+          {lastUpdated ? (
+            <p className="text-caption text-text-secondary">
+              Diperbarui {formatDateTimeWIB(lastUpdated)} · refresh otomatis tiap 20 dtk
+            </p>
+          ) : null}
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth={false}
+            loading={refreshing}
+            onClick={reloadAll}
+          >
+            Muat ulang
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -644,7 +693,10 @@ export default function DisputeDetailPage() {
               </div>
               {!canResolve ? (
                 <p className="mt-3 text-caption text-text-secondary">
-                  Resolve tersedia setelah sengketa ditugaskan dan ditandai under review.
+                  {status === "ASSIGNED"
+                    ? // DP-007: backend menolak resolve dari ASSIGNED — arahkan lewat "Mulai review".
+                      "Tekan “Mulai review” terlebih dahulu — tombol Resolve aktif setelah sengketa under review."
+                    : "Resolve tersedia setelah sengketa ditugaskan dan ditandai under review."}
                 </p>
               ) : null}
             </CardBody>
@@ -761,7 +813,7 @@ export default function DisputeDetailPage() {
             <Button
               variant="primary"
               loading={acting === "resolve"}
-              disabled={notes.trim().length < 100}
+              disabled={!notesValid || !splitValid}
               onClick={handleResolve}
             >
               Selesaikan sengketa
@@ -793,13 +845,56 @@ export default function DisputeDetailPage() {
             maxLength={5000}
             hint={`${notes.trim().length} / 100 karakter minimum`}
           />
-          <Select
-            label="Pemenang (opsional)"
-            hint="Pilih pihak penerima dana. Kosongkan bila keputusan tidak menentukan satu pemenang."
-            options={winnerOptions}
-            value={winnerId}
-            onChange={(e) => setWinnerId(e.target.value)}
-          />
+          {/* DP-008: persen SPLIT wajib backend (1–99, jumlah 100). Hanya
+              tampil bila keputusan SPLIT dipilih. */}
+          {isSplit ? (
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                label="Pembeli (%)"
+                required
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={99}
+                value={buyerPercent}
+                onChange={(e) => setBuyerPercent(e.target.value)}
+                error={
+                  buyerPercent !== "" && (!Number.isInteger(buyerPct) || buyerPct < 1 || buyerPct > 99)
+                    ? "Isi 1–99"
+                    : undefined
+                }
+              />
+              <Input
+                label="Penjual (%)"
+                required
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={99}
+                value={sellerPercent}
+                onChange={(e) => setSellerPercent(e.target.value)}
+                error={
+                  sellerPercent !== "" && (!Number.isInteger(sellerPct) || sellerPct < 1 || sellerPct > 99)
+                    ? "Isi 1–99"
+                    : undefined
+                }
+              />
+            </div>
+          ) : null}
+          {isSplit ? (
+            <p
+              role={splitValid ? undefined : "alert"}
+              className={
+                splitValid
+                  ? "text-caption text-text-secondary"
+                  : "text-caption text-danger-text"
+              }
+            >
+              {splitValid
+                ? `Pembagian: pembeli ${buyerPct}% · penjual ${sellerPct}%`
+                : "Jumlah persen pembeli + penjual harus tepat 100."}
+            </p>
+          ) : null}
         </div>
       </Dialog>
     </RoleGate>

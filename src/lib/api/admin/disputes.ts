@@ -84,17 +84,34 @@ export function getDisputeMessages(disputeId: string): Promise<DisputeMessage[]>
 }
 
 export function sendDisputeMessage(disputeId: string, message: string): Promise<unknown> {
+  // DP-002: backend SendDisputeMessageDto mewajibkan field `content`
+  // (bukan `message`) — kontrak diselaraskan di sini agar pemanggil
+  // tetap memakai string pesan biasa.
   return adminHttp.post(
     `/v1/admin/disputes/${encodeURIComponent(disputeId)}/messages`,
-    { message },
+    { content: message },
     { headers: idempotencyHeaders() },
   )
 }
 
+export type DisputeDecision = "FULL_BUYER" | "FULL_SELLER" | "SPLIT"
+
 export function resolveDispute(
   disputeId: string,
-  input: { resolution: string; notes?: string; winnerId?: string },
+  input: {
+    /** Wajib: enum backend DisputeDecisionDto. */
+    decision: DisputeDecision
+    /** Wajib: min 100 karakter (dokumentasi audit). */
+    decisionNotes: string
+    /** Wajib bila decision === 'SPLIT': int 1–99, jumlah dengan sellerPercent = 100. */
+    buyerPercent?: number
+    /** Wajib bila decision === 'SPLIT': int 1–99, jumlah dengan buyerPercent = 100. */
+    sellerPercent?: number
+  },
 ): Promise<unknown> {
+  // DP-001: payload persis kontrak backend DisputeDecisionDto.
+  // Field lama {resolution, notes, winnerId} tidak dikenal backend dan
+  // selalu menghasilkan 400.
   return adminHttp.post(
     `/v1/admin/disputes/${encodeURIComponent(disputeId)}/resolve`,
     input,
