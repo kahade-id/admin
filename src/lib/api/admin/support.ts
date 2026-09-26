@@ -11,6 +11,8 @@ export type SupportTicket = {
   message: string
   category?: string
   status: TicketStatus
+  /** Tandai tiket prioritas (dari subscriber Kahade+ aktif). */
+  isPriority?: boolean
   createdAt: string
   updatedAt?: string
   user?: { userId: string; email: string; fullName: string | null }
@@ -30,6 +32,8 @@ export function listTickets(params?: {
   page?: number
   limit?: number
   status?: string
+  /** true = hanya tiket prioritas dari subscriber Kahade+ aktif. */
+  priority?: boolean
 }): Promise<Paginated<SupportTicket>> {
   return adminHttp.get<Paginated<SupportTicket>>("/v1/admin/support/tickets", { query: params })
 }

@@ -43,6 +43,7 @@ export const MENU: MenuItem[] = [
   { label: "Ulasan", href: "/ratings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Referral", href: "/referral", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Langganan", href: "/subscriptions", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
+  { label: "Klaim Asuransi", href: "/insurance-claims", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "DISPUTE_ADMIN"] },
   { label: "Analitik", href: "/analytics", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Sistem & Konfigurasi", href: "/system", roles: ["SUPER_ADMIN"] },
   { label: "Tim Admin", href: "/team", roles: ["SUPER_ADMIN"] },

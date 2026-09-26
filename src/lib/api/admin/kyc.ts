@@ -31,6 +31,13 @@ export type KycDocumentUrls = {
 export type Paginated<T> = {
   data: T[]
   meta?: { page: number; limit: number; total: number; totalPages?: number }
+  /** Bentuk respons kontrak Kahade+: { data, pagination }. */
+  pagination?: {
+    page: number
+    limit: number
+    total: number
+    totalPages?: number
+  }
   total?: number
 }
 

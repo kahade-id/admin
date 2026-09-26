@@ -19,6 +19,8 @@ export * from "@/lib/api/admin/management"
 export * from "@/lib/api/admin/ratings"
 export * from "@/lib/api/admin/referral"
 export * from "@/lib/api/admin/subscriptions"
+/** Klaim asuransi Kahade+: nama disambiguasi dari modul finance (tak ada bentrok). */
+export * from "@/lib/api/admin/insurance-claims"
 /**
  * Analytics diekspor eksplisit (bukan `export *`) karena `getUserGrowth`
  * juga diekspor `dashboard` — dialiaskan agar keduanya tetap tersedia.
