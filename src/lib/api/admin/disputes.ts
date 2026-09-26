@@ -26,6 +26,8 @@ export type AdminDisputeItem = {
   id: string
   orderId: string
   status: DisputeStatus
+  /** Kategori sengketa (enum backend DisputeCategory) — nullable untuk data lama. */
+  category?: string | null
   reason?: string
   assignedAdminId?: string | null
   createdAt: string
@@ -45,6 +47,8 @@ export function listDisputes(params?: {
   page?: number
   limit?: number
   status?: string
+  /** Filter kategori sengketa (enum backend DisputeCategory). */
+  category?: string
   /** Cari berdasarkan ID sengketa atau ID order (didukung backend). */
   search?: string
 }): Promise<Paginated<AdminDisputeItem>> {

@@ -156,6 +156,8 @@ export type AdminUserWallet = {
   isLocked: boolean
   lockedAt: string | null
   lockReason: string | null
+  /** Kode stabil alasan penguncian (i18n di bawah); null untuk data lama. */
+  lockReasonCode: string | null
   createdAt: string
   updatedAt: string
   transactions: AdminUserWalletTransaction[]

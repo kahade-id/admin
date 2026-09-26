@@ -42,7 +42,7 @@ import { listAdmins } from "@/lib/api/admin/management"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
-import { DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "../maps"
+import { DISPUTE_CATEGORY_LABEL, DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "../maps"
 
 type Resolution = "FULL_BUYER" | "FULL_SELLER" | "SPLIT"
 
@@ -165,6 +165,12 @@ function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
         <KeyValue label="ID Pembeli" value={order?.buyerId ? String(order.buyerId) : "—"} mono />
         <KeyValue label="ID Penjual" value={order?.sellerId ? String(order.sellerId) : "—"} mono />
         <KeyValue label="Nilai order" value={formatIDR(order?.orderValue)} />
+        {dispute.category ? (
+          <KeyValue
+            label="Kategori sengketa"
+            value={DISPUTE_CATEGORY_LABEL[String(dispute.category)] ?? String(dispute.category)}
+          />
+        ) : null}
         <KeyValue label="Dibayar pembeli" value={formatIDR(order?.buyerPayAmount)} />
         <KeyValue label="Diterima penjual" value={formatIDR(order?.sellerReceiveAmount)} />
         {order?.status ? <KeyValue label="Status order" value={String(order.status)} /> : null}

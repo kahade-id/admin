@@ -1,12 +1,10 @@
 "use client"
 
 /**
- * Admin — Antrean KYC: daftar pengajuan verifikasi identitas.
+ * Admin — Daftar laporan etalase (moderasi showcase).
  *
- * Filter status (Semua/Menunggu/Disetujui/Ditolak/Dicabut), tabel dengan
- * paginasi bernomor, klik "Tinjau" → detail.
- *
- * Port dari frontend/app/admin/(panel)/kyc/index.tsx → web desktop.
+ * Filter status (5 enum ReportStatus), tabel dengan paginasi bernomor,
+ * kolom pelapor, item, alasan, umur laporan, status, aksi "Tinjau" → detail.
  */
 
 import Link from "next/link"
@@ -23,31 +21,38 @@ import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import {
-  getKycQueue,
-  type KycQueueItem,
-  type KycStatus,
-} from "@/lib/api/admin/kyc"
+  listShowcaseReports,
+  type ShowcaseReport,
+  type ShowcaseReportStatus,
+} from "@/lib/api/admin/showcase-reports"
 import { userMessage } from "@/lib/api/response"
-import { ageHours, formatAge, formatDateTimeWIB } from "@/lib/format"
+import { formatAge, formatDateTimeWIB } from "@/lib/format"
 
-import { KYC_STATUS_LABEL, KYC_STATUS_TONE } from "./maps"
-
-/** SLA tinjauan KYC (jam) — konvensi UI; belum ada konstanta backend. */
-const KYC_SLA_HOURS = 48
+import {
+  SHOWCASE_REPORT_STATUS_LABEL,
+  SHOWCASE_REPORT_STATUS_TONE,
+} from "./maps"
 
 const PAGE_SIZE = 20
 
-type Filter = "ALL" | KycStatus
+type Filter = "ALL" | ShowcaseReportStatus
 
 const FILTER_OPTIONS = [
   { value: "ALL", label: "Semua" },
   { value: "PENDING", label: "Menunggu" },
-  { value: "APPROVED", label: "Disetujui" },
-  { value: "REJECTED", label: "Ditolak" },
-  { value: "REVOKED", label: "Dicabut" },
+  { value: "UNDER_REVIEW", label: "Ditinjau" },
+  { value: "RESOLVED_ACTION_TAKEN", label: "Selesai (ditindak)" },
+  { value: "RESOLVED_NO_ACTION", label: "Selesai (tanpa tindakan)" },
+  { value: "DISMISSED", label: "Ditolak" },
 ]
 
-export default function KycListPage() {
+function displayName(fullName?: string | null, username?: string | null): string {
+  if (fullName && fullName.trim()) return fullName
+  if (username && username.trim()) return `@${username}`
+  return "—"
+}
+
+export default function ShowcaseReportsListPage() {
   const toast = useToast()
 
   const [filter, setFilter] = useState<Filter>("PENDING")
@@ -55,7 +60,7 @@ export default function KycListPage() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [rows, setRows] = useState<KycQueueItem[]>([])
+  const [rows, setRows] = useState<ShowcaseReport[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
 
@@ -65,7 +70,7 @@ export default function KycListPage() {
       else setRefreshing(true)
       setError(null)
       try {
-        const res = await getKycQueue({
+        const res = await listShowcaseReports({
           page: targetPage,
           limit: PAGE_SIZE,
           status: targetFilter === "ALL" ? undefined : targetFilter,
@@ -77,7 +82,7 @@ export default function KycListPage() {
       } catch (e) {
         const msg = userMessage(e)
         setError(msg)
-        toast.show({ title: "Gagal memuat antrean KYC", description: msg, tone: "danger" })
+        toast.show({ title: "Gagal memuat laporan etalase", description: msg, tone: "danger" })
       } finally {
         setLoading(false)
         setRefreshing(false)
@@ -102,12 +107,12 @@ export default function KycListPage() {
   }
 
   return (
-    <RoleGate href="/kyc">
+    <RoleGate href="/reports/showcase">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-h2 font-bold text-text-primary">Antrean KYC</h1>
+          <h1 className="text-h2 font-bold text-text-primary">Laporan Etalase</h1>
           <p className="mt-1 text-body text-text-secondary">
-            Tinjau pengajuan verifikasi identitas pengguna.
+            Moderasi laporan pengguna terhadap item etalase.
           </p>
         </div>
         <Button
@@ -127,19 +132,19 @@ export default function KycListPage() {
           options={FILTER_OPTIONS}
           value={filter}
           onChange={(e) => handleFilterChange(e.target.value as Filter)}
-          className="w-52"
+          className="w-64"
         />
       </div>
 
       {loading ? (
         <div className="flex min-h-[40vh] items-center justify-center gap-2">
           <Spinner size="md" />
-          <p className="text-body text-text-secondary">Memuat antrean KYC…</p>
+          <p className="text-body text-text-secondary">Memuat laporan etalase…</p>
         </div>
       ) : error ? (
         <Card>
           <EmptyState
-            title="Gagal memuat antrean KYC"
+            title="Gagal memuat laporan etalase"
             description={error}
             action={
               <Button variant="secondary" fullWidth={false} onClick={() => load("initial")}>
@@ -150,59 +155,73 @@ export default function KycListPage() {
         </Card>
       ) : (
         <>
-          <DataTable<KycQueueItem>
+          <DataTable<ShowcaseReport>
             columns={[
               {
-                key: "user",
-                header: "Pengguna",
+                key: "showcase",
+                header: "Item",
                 render: (r) => (
                   <div>
-                    <p className="font-semibold">{r.user?.fullName ?? "—"}</p>
-                    <p className="text-caption text-text-secondary">{r.user?.email}</p>
+                    <p className="font-semibold">
+                      {r.showcase?.title ?? "—"}
+                    </p>
+                    <p className="text-caption text-text-secondary">
+                      {r.showcase?.user
+                        ? `oleh ${displayName(r.showcase.user.fullName, r.showcase.user.username)}`
+                        : ""}
+                      {r.showcase?.isActive === false ? " · nonaktif" : ""}
+                    </p>
                   </div>
                 ),
               },
               {
-                key: "userId",
-                header: "ID Pengguna",
+                key: "reporter",
+                header: "Pelapor",
                 render: (r) => (
-                  <span className="break-all font-mono text-[13px]">{r.userId}</span>
+                  <div>
+                    <p className="font-semibold">
+                      {displayName(r.reporter?.fullName, r.reporter?.username)}
+                    </p>
+                    <p className="text-caption text-text-secondary">
+                      {r.reporter?.username ? `@${r.reporter.username}` : "—"}
+                    </p>
+                  </div>
+                ),
+              },
+              {
+                key: "reason",
+                header: "Alasan",
+                render: (r) => (
+                  <div>
+                    <p className="font-semibold">{r.reason}</p>
+                    {r.description ? (
+                      <p className="max-w-64 truncate text-caption text-text-secondary">
+                        {r.description}
+                      </p>
+                    ) : null}
+                  </div>
+                ),
+              },
+              {
+                key: "age",
+                header: "Umur laporan",
+                render: (r) => (
+                  <div className="flex flex-col gap-1">
+                    <span className="tabular-nums text-[13px]">{formatAge(r.createdAt)}</span>
+                    <span className="text-caption text-text-tertiary">
+                      {formatDateTimeWIB(r.createdAt)}
+                    </span>
+                  </div>
                 ),
               },
               {
                 key: "status",
                 header: "Status",
                 render: (r) => (
-                  <Badge tone={KYC_STATUS_TONE[r.status] ?? "neutral"}>
-                    {KYC_STATUS_LABEL[r.status] ?? r.status}
+                  <Badge tone={SHOWCASE_REPORT_STATUS_TONE[r.status] ?? "neutral"}>
+                    {SHOWCASE_REPORT_STATUS_LABEL[r.status] ?? r.status}
                   </Badge>
                 ),
-              },
-              {
-                key: "attemptNumber",
-                header: "Percobaan",
-                render: (r) => String(r.attemptNumber ?? "—"),
-              },
-              {
-                key: "createdAt",
-                header: "Diajukan",
-                render: (r) => formatDateTimeWIB(r.createdAt),
-              },
-              {
-                key: "age",
-                header: "Umur",
-                render: (r) => {
-                  const h = ageHours(r.createdAt)
-                  if (h === null) return "—"
-                  const breached =
-                    r.status === "PENDING" && h >= KYC_SLA_HOURS
-                  return (
-                    <span className="inline-flex items-center gap-2">
-                      <span className="tabular-nums text-[13px]">{formatAge(r.createdAt)}</span>
-                      {breached ? <Badge tone="danger">Lewat SLA</Badge> : null}
-                    </span>
-                  )
-                },
               },
               {
                 key: "action",
@@ -210,7 +229,7 @@ export default function KycListPage() {
                 align: "right",
                 render: (r) => (
                   <Link
-                    href={`/kyc/${r.kycId}`}
+                    href={`/reports/showcase/${r.id}`}
                     className="font-semibold text-info-text hover:underline"
                   >
                     Tinjau
@@ -220,7 +239,7 @@ export default function KycListPage() {
             ]}
             rows={rows}
             rowKey={(r) => r.id}
-            emptyText="Tidak ada pengajuan pada filter ini."
+            emptyText="Tidak ada laporan pada filter ini."
           />
           <Pagination
             page={page}

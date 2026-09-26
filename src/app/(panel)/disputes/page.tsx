@@ -26,7 +26,7 @@ import { userMessage } from "@/lib/api/response"
 import { ageHours, formatAge, formatDateTimeWIB } from "@/lib/format"
 import { Input } from "@/components/ui/input"
 
-import { DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "./maps"
+import { DISPUTE_CATEGORY_LABEL, DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "./maps"
 
 const PAGE_SIZE = 20
 
@@ -52,10 +52,18 @@ const FILTER_OPTIONS = [
   { value: "RESOLVED", label: "Selesai" },
 ]
 
+type CategoryFilter = "ALL" | keyof typeof DISPUTE_CATEGORY_LABEL
+
+const CATEGORY_FILTER_OPTIONS = [
+  { value: "ALL", label: "Semua kategori" },
+  ...Object.entries(DISPUTE_CATEGORY_LABEL).map(([value, label]) => ({ value, label })),
+]
+
 export default function DisputesListPage() {
   const toast = useToast()
 
   const [filter, setFilter] = useState<Filter>("ALL")
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ALL")
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
@@ -72,6 +80,7 @@ export default function DisputesListPage() {
       targetPage = page,
       targetFilter = filter,
       targetSearch = search,
+      targetCategory = categoryFilter,
     ) => {
       if (mode === "initial") setLoading(true)
       else setRefreshing(true)
@@ -81,6 +90,7 @@ export default function DisputesListPage() {
           page: targetPage,
           limit: PAGE_SIZE,
           status: targetFilter === "ALL" ? undefined : targetFilter,
+          category: targetCategory === "ALL" ? undefined : targetCategory,
           search: targetSearch.trim() || undefined,
         })
         setRows(res.data ?? [])
@@ -96,7 +106,7 @@ export default function DisputesListPage() {
         setRefreshing(false)
       }
     },
-    [page, filter, search, toast],
+    [page, filter, categoryFilter, search, toast],
   )
 
   useEffect(() => {
@@ -106,19 +116,25 @@ export default function DisputesListPage() {
   const handleFilterChange = (f: Filter) => {
     setFilter(f)
     setPage(1)
-    void load("initial", 1, f, search)
+    void load("initial", 1, f, search, categoryFilter)
+  }
+
+  const handleCategoryChange = (c: CategoryFilter) => {
+    setCategoryFilter(c)
+    setPage(1)
+    void load("initial", 1, filter, search, c)
   }
 
   const handleSearch = () => {
     const q = searchInput.trim()
     setSearch(q)
     setPage(1)
-    void load("initial", 1, filter, q)
+    void load("initial", 1, filter, q, categoryFilter)
   }
 
   const handlePageChange = (p: number) => {
     setPage(p)
-    void load("initial", p, filter, search)
+    void load("initial", p, filter, search, categoryFilter)
   }
 
   return (
@@ -147,6 +163,13 @@ export default function DisputesListPage() {
           options={FILTER_OPTIONS}
           value={filter}
           onChange={(e) => handleFilterChange(e.target.value as Filter)}
+          className="w-52"
+        />
+        <Select
+          label="Kategori"
+          options={CATEGORY_FILTER_OPTIONS}
+          value={categoryFilter}
+          onChange={(e) => handleCategoryChange(e.target.value as CategoryFilter)}
           className="w-52"
         />
         <form
@@ -210,6 +233,16 @@ export default function DisputesListPage() {
                     {DISPUTE_STATUS_LABEL[r.status] ?? r.status}
                   </Badge>
                 ),
+              },
+              {
+                key: "category",
+                header: "Kategori",
+                render: (r) =>
+                  r.category ? (
+                    <Badge tone="info">{DISPUTE_CATEGORY_LABEL[r.category] ?? r.category}</Badge>
+                  ) : (
+                    <span className="text-caption text-text-secondary">—</span>
+                  ),
               },
               {
                 key: "age",

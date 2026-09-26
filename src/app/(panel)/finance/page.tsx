@@ -28,6 +28,7 @@ import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
+import { AuditTrailPanel } from "./audit-trail-panel"
 
 import {
   approveWithdrawal,
@@ -170,6 +171,9 @@ function withdrawUserName(tx: PendingWithdrawal): string {
 
 export default function FinancePage() {
   const toast = useToast()
+
+  // Tab: ringkasan+antrean+transaksi vs jejak audit (read-only, deferred #5).
+  const [activeTab, setActiveTab] = useState<"overview" | "audit">("overview")
 
   // ------------------------------------------------------------------
   // (a) Ringkasan
@@ -425,6 +429,30 @@ export default function FinancePage() {
         </Button>
       </div>
 
+      {/* Tab navigasi */}
+      <div className="mb-6 flex gap-2" role="tablist" aria-label="Navigasi keuangan">
+        {(
+          [
+            { id: "overview", label: "Ringkasan & Transaksi" },
+            { id: "audit", label: "Jejak Audit" },
+          ] as const
+        ).map((tab) => (
+          <Button
+            key={tab.id}
+            variant={activeTab === tab.id ? "primary" : "secondary"}
+            size="sm"
+            fullWidth={false}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </Button>
+        ))}
+      </div>
+
+      {activeTab === "audit" ? (
+        <AuditTrailPanel />
+      ) : (
+        <>
       {/* (a) Ringkasan */}
       <section aria-label="Ringkasan keuangan">
         <h2 className="mb-3 text-h3 font-semibold text-text-primary">Ringkasan</h2>
@@ -726,6 +754,8 @@ export default function FinancePage() {
           </CardBody>
         </Card>
       </section>
+        </>
+      )}
 
       {/* Dialog Setujui / Tolak penarikan */}
       <Dialog

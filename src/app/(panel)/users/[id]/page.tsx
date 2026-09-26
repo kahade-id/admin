@@ -65,6 +65,31 @@ function rp(n: number | null | undefined): string {
   return typeof n === "number" ? `Rp ${formatNumber(n)}` : "—"
 }
 
+/**
+ * Label Bahasa Indonesia untuk kode alasan penguncian wallet (deferred #2).
+ * `lockReason` mentah (EN, berisi detail operasional) hanya dipakai sebagai
+ * fallback untuk data lama yang belum punya kode.
+ */
+function walletLockReasonLabel(
+  code: string | null | undefined,
+  raw: string | null | undefined,
+): string | null {
+  const LABELS: Record<string, string> = {
+    REVERSAL_VERSION_CONFLICT:
+      "Terkunci otomatis: konflik versi saat reversal pasca-settlement",
+    REVERSAL_INSUFFICIENT_BALANCE:
+      "Terkunci otomatis: saldo tidak cukup saat reversal — perlu rekonsiliasi manual",
+  }
+  if (code && LABELS[code]) return LABELS[code]
+  if (!raw) return null
+  const lower = raw.toLowerCase()
+  if (lower.includes("version conflict"))
+    return "Terkunci otomatis: konflik versi saat reversal pasca-settlement"
+  if (lower.includes("insufficient balance"))
+    return "Terkunci otomatis: saldo tidak cukup saat reversal — perlu rekonsiliasi manual"
+  return raw
+}
+
 function KycBadge({ status }: { status: KycStatus }) {
   if (!status) return <Badge tone="neutral">—</Badge>
   const upper = status.toUpperCase()
@@ -562,7 +587,14 @@ export default function UserDetailPage() {
                     value={
                       wallet.isLocked ? (
                         <Badge tone="danger">
-                          Terkunci{wallet.lockReason ? ` · ${wallet.lockReason}` : ""}
+                          Terkunci
+                          {(() => {
+                            const label = walletLockReasonLabel(
+                              wallet.lockReasonCode,
+                              wallet.lockReason,
+                            )
+                            return label ? ` · ${label}` : ""
+                          })()}
                         </Badge>
                       ) : (
                         <Badge tone="success">Aktif</Badge>

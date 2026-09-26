@@ -20,3 +20,15 @@ export const DISPUTE_STATUS_TONE: Record<
   ESCALATED: "danger",
   RESOLVED: "success",
 }
+
+/** Label kategori sengketa (enum backend DisputeCategory) — selaras frontend mobile. */
+export const DISPUTE_CATEGORY_LABEL: Record<string, string> = {
+  ITEM_NOT_RECEIVED: "Barang tidak diterima",
+  ITEM_NOT_AS_DESCRIBED: "Tidak sesuai deskripsi",
+  DAMAGED_ITEM: "Barang rusak",
+  WRONG_ITEM: "Barang salah",
+  SERVICE_NOT_RENDERED: "Jasa tidak dijalankan",
+  PAYMENT_ISSUE: "Masalah pembayaran",
+  FRAUD: "Indikasi penipuan",
+  OTHER: "Lainnya",
+}

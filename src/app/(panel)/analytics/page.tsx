@@ -38,6 +38,11 @@ import { formatDateTimeWIB, formatNumber, num } from "@/lib/format"
 
 const PAGE_SIZE = 20
 
+/** Batas rentang kustom (hari). Backend tidak membatasi rentang maksimum
+ * (`assertDateRange` hanya menolak startDate > endDate), jadi batas 365 hari
+ * ditegakkan di UI agar query tetap wajar. */
+const MAX_CUSTOM_RANGE_DAYS = 365
+
 const RANGE_OPTIONS = [
   { value: "7", label: "7 hari terakhir" },
   { value: "30", label: "30 hari terakhir" },
@@ -72,6 +77,35 @@ function rangeDates(days: number): { startDate: string; endDate: string } {
   return { startDate: toISODate(start), endDate: toISODate(end) }
 }
 
+/** "1 Sep 2026 – 26 Sep 2026". */
+function formatRangeLabel(range: {
+  startDate: string
+  endDate: string
+}): string {
+  const fmt = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString("id-ID", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    })
+  return `${fmt(range.startDate)} – ${fmt(range.endDate)}`
+}
+
+/** Validasi input kustom. Mengembalikan pesan error, atau null bila valid. */
+function validateCustomRange(start: string, end: string): string | null {
+  if (!start || !end) return "Isi tanggal mulai dan tanggal akhir."
+  const s = new Date(`${start}T00:00:00`)
+  const e = new Date(`${end}T00:00:00`)
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime()))
+    return "Format tanggal tidak valid."
+  if (s.getTime() > e.getTime())
+    return "Tanggal mulai tidak boleh lebih besar dari tanggal akhir."
+  const days = Math.floor((e.getTime() - s.getTime()) / 86_400_000) + 1
+  if (days > MAX_CUSTOM_RANGE_DAYS)
+    return `Rentang maksimal ${MAX_CUSTOM_RANGE_DAYS} hari.`
+  return null
+}
+
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
     <Card>
@@ -100,6 +134,20 @@ export default function AnalyticsPage() {
   const [groupBy, setGroupBy] = useState<OrderStatsGroupBy>("day")
   const [metric, setMetric] = useState<TopUserMetric>("orders")
 
+  // Mode rentang: bila `customRange` terisi, rentang kustom aktif dan preset
+  // 7/30/90 dinonaktifkan. Bila null, rentang berasal dari preset `rangeDays`.
+  const [customStart, setCustomStart] = useState("")
+  const [customEnd, setCustomEnd] = useState("")
+  const [customError, setCustomError] = useState<string | null>(null)
+  const [customRange, setCustomRange] = useState<{
+    startDate: string
+    endDate: string
+  } | null>(null)
+  const activeRange = useMemo(
+    () => customRange ?? rangeDates(Number(rangeDays)),
+    [customRange, rangeDays],
+  )
+
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null)
   const [orderStats, setOrderStats] = useState<OrderStatRow[]>([])
   const [topUsers, setTopUsers] = useState<TopUser[]>([])
@@ -111,7 +159,7 @@ export default function AnalyticsPage() {
   const load = useCallback(
     async (
       mode: "initial" | "refresh" = "initial",
-      targetDays = rangeDays,
+      targetRange: { startDate: string; endDate: string },
       targetGroupBy = groupBy,
       targetMetric = metric,
     ) => {
@@ -119,7 +167,9 @@ export default function AnalyticsPage() {
       else setRefreshing(true)
       setError(null)
       try {
-        const { startDate, endDate } = rangeDates(Number(targetDays))
+        const { startDate, endDate } = targetRange
+        // NB: `top-users` tidak menerima startDate/endDate di backend
+        // (dihitung dari counter all-time), sehingga tetap tanpa rentang.
         const [ov, os, tu, ug] = await Promise.all([
           getAnalyticsOverview({ startDate, endDate }),
           getOrderStats({
@@ -149,27 +199,51 @@ export default function AnalyticsPage() {
         setRefreshing(false)
       }
     },
-    [rangeDays, groupBy, metric, toast],
+    [groupBy, metric, toast],
   )
 
   useEffect(() => {
-    void load("initial")
-  }, [load])
+    void load("initial", activeRange)
+  }, [load, activeRange])
 
   const handleRangeChange = (v: string) => {
+    // Pemuatan dipicu oleh useEffect lewat perubahan `activeRange`.
     setRangeDays(v)
-    void load("initial", v, groupBy, metric)
   }
 
   const handleGroupByChange = (v: OrderStatsGroupBy) => {
     setGroupBy(v)
     setStatsPage(1)
-    void load("initial", rangeDays, v, metric)
+    void load("initial", activeRange, v, metric)
   }
 
   const handleMetricChange = (v: TopUserMetric) => {
     setMetric(v)
-    void load("initial", rangeDays, groupBy, v)
+    void load("initial", activeRange, groupBy, v)
+  }
+
+  const handleCustomApply = () => {
+    const err = validateCustomRange(customStart, customEnd)
+    setCustomError(err)
+    if (err) {
+      toast.show({
+        title: "Rentang tanggal tidak valid",
+        description: err,
+        tone: "danger",
+      })
+      return
+    }
+    const range = { startDate: customStart, endDate: customEnd }
+    setCustomRange(range)
+    void load("initial", range, groupBy, metric)
+  }
+
+  const handleCustomReset = () => {
+    setCustomStart("")
+    setCustomEnd("")
+    setCustomError(null)
+    setCustomRange(null)
+    // Kembali ke preset: pemuatan dipicu oleh useEffect.
   }
 
   // API mengembalikan array tanpa paginasi — paginasi di sisi klien.
@@ -196,31 +270,117 @@ export default function AnalyticsPage() {
 
   return (
     <RoleGate href="/analytics">
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-h2 font-bold text-text-primary">Analitik</h1>
-          <p className="mt-1 text-body text-text-secondary">
-            Ringkasan platform — baca-saja, tanpa aksi perubahan data.
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Select
-            options={RANGE_OPTIONS}
-            value={rangeDays}
-            onChange={(e) => handleRangeChange(e.target.value)}
-            className="w-48"
-            aria-label="Rentang tanggal"
-          />
+      <div className="mb-6 flex flex-col gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-h2 font-bold text-text-primary">Analitik</h1>
+            <p className="mt-1 text-body text-text-secondary">
+              Ringkasan platform — baca-saja, tanpa aksi perubahan data.
+            </p>
+          </div>
           <Button
             variant="secondary"
             size="sm"
             fullWidth={false}
             loading={refreshing}
-            onClick={() => load("refresh")}
+            onClick={() => load("refresh", activeRange)}
           >
             Muat ulang
           </Button>
         </div>
+        <Card>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className={customRange ? "opacity-50" : ""}>
+              <label
+                htmlFor="analytics-preset"
+                className="mb-1 block text-caption font-semibold text-text-secondary"
+              >
+                Preset
+              </label>
+              <Select
+                id="analytics-preset"
+                options={RANGE_OPTIONS}
+                value={rangeDays}
+                onChange={(e) => handleRangeChange(e.target.value)}
+                className="w-48"
+                aria-label="Rentang tanggal preset"
+                disabled={customRange !== null}
+              />
+            </div>
+            <span
+              className="pb-2 text-caption text-text-tertiary"
+              aria-hidden="true"
+            >
+              atau
+            </span>
+            <div>
+              <label
+                htmlFor="analytics-start"
+                className="mb-1 block text-caption font-semibold text-text-secondary"
+              >
+                Dari
+              </label>
+              <input
+                id="analytics-start"
+                type="date"
+                value={customStart}
+                onChange={(e) => {
+                  setCustomStart(e.target.value)
+                  setCustomError(null)
+                }}
+                className="rounded-sm border border-border bg-surface px-2.5 py-1.5 text-body text-text-primary"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="analytics-end"
+                className="mb-1 block text-caption font-semibold text-text-secondary"
+              >
+                Sampai
+              </label>
+              <input
+                id="analytics-end"
+                type="date"
+                value={customEnd}
+                onChange={(e) => {
+                  setCustomEnd(e.target.value)
+                  setCustomError(null)
+                }}
+                className="rounded-sm border border-border bg-surface px-2.5 py-1.5 text-body text-text-primary"
+              />
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              fullWidth={false}
+              onClick={handleCustomApply}
+            >
+              Terapkan
+            </Button>
+            {customRange ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                fullWidth={false}
+                onClick={handleCustomReset}
+              >
+                Reset
+              </Button>
+            ) : null}
+          </div>
+          {customError ? (
+            <p className="mt-2 text-caption text-danger-text">{customError}</p>
+          ) : null}
+          <p className="mt-2 text-caption text-text-secondary">
+            Rentang aktif:{" "}
+            <span className="font-semibold text-text-primary">
+              {customRange ? "Kustom" : "Preset"}{" "}
+              {formatRangeLabel(activeRange)}
+            </span>
+            {customRange ? " · preset dinonaktifkan" : ""}
+            {" · "}pengguna teratas selalu dihitung sepanjang waktu.
+          </p>
+        </Card>
       </div>
 
       {loading ? (
@@ -237,7 +397,7 @@ export default function AnalyticsPage() {
               <Button
                 variant="secondary"
                 fullWidth={false}
-                onClick={() => load("initial")}
+                onClick={() => load("initial", activeRange)}
               >
                 Coba lagi
               </Button>
@@ -294,7 +454,7 @@ export default function AnalyticsPage() {
           <Card padded={false}>
             <CardHeader
               title="Statistik order"
-              subtitle={`Periode ${RANGE_OPTIONS.find((o) => o.value === rangeDays)?.label ?? ""}`}
+              subtitle={`Periode ${formatRangeLabel(activeRange)}`}
               action={
                 <Select
                   options={GROUP_BY_OPTIONS}
@@ -383,6 +543,7 @@ export default function AnalyticsPage() {
           <Card padded={false}>
             <CardHeader
               title="Pengguna teratas"
+              subtitle="Sepanjang waktu — tidak terpengaruh rentang tanggal"
               action={
                 <Select
                   options={METRIC_OPTIONS}

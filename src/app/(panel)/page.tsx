@@ -22,7 +22,9 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
+import { Select } from "@/components/admin/select"
 import {
+  getDashboardCharts,
   getDashboardOrderStats,
   getDashboardSummary,
   getRecentActivity,
@@ -58,6 +60,16 @@ const ORDER_TONE: Record<
   CANCELLED: "neutral",
 }
 
+const CHART_PERIODS = [
+  { value: "7d", label: "7 hari" },
+  { value: "30d", label: "30 hari" },
+  { value: "90d", label: "90 hari" },
+  { value: "1y", label: "1 tahun" },
+  { value: "custom", label: "Rentang khusus" },
+] as const
+
+type ChartPoint = { date: string; orders: number; revenue: number | string }
+
 const MENU_DESC: Record<string, string> = {
   "/kyc": "Antrean verifikasi identitas pengguna",
   "/business": "Antrean verifikasi badan usaha",
@@ -87,6 +99,11 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [orderStats, setOrderStats] = useState<OrderStats>([])
   const [activity, setActivity] = useState<RecentActivityItem[]>([])
+  const [chartPeriod, setChartPeriod] = useState<string>("30d")
+  const [chartStart, setChartStart] = useState("")
+  const [chartEnd, setChartEnd] = useState("")
+  const [chartData, setChartData] = useState<ChartPoint[]>([])
+  const [chartLoading, setChartLoading] = useState(false)
 
   const load = useCallback(
     async (mode: "initial" | "refresh" = "initial") => {
@@ -117,6 +134,50 @@ export default function DashboardPage() {
   useEffect(() => {
     void load("initial")
   }, [load])
+
+  const loadCharts = useCallback(
+    async (period: string, start: string, end: string) => {
+      setChartLoading(true)
+      try {
+        const params: { period?: string; startDate?: string; endDate?: string } =
+          period === "custom"
+            ? {
+                ...(start ? { startDate: start } : {}),
+                ...(end ? { endDate: end } : {}),
+              }
+            : { period }
+        const res = (await getDashboardCharts(params)) as {
+          data?: ChartPoint[]
+        } | null
+        setChartData(Array.isArray(res?.data) ? res.data : [])
+      } catch (e) {
+        toast.show({
+          title: "Gagal memuat tren",
+          description: userMessage(e),
+          tone: "danger",
+        })
+        setChartData([])
+      } finally {
+        setChartLoading(false)
+      }
+    },
+    [toast],
+  )
+
+  useEffect(() => {
+    void loadCharts(chartPeriod, chartStart, chartEnd)
+  }, [loadCharts, chartPeriod])
+
+  const handleChartPeriodChange = (p: string) => {
+    setChartPeriod(p)
+    if (p !== "custom") void loadCharts(p, "", "")
+  }
+
+  const handleCustomRangeApply = () => {
+    if (chartPeriod === "custom") void loadCharts("custom", chartStart, chartEnd)
+  }
+
+  const maxOrders = Math.max(1, ...chartData.map((d) => d.orders))
 
   const menu = menuForRole(role).filter((m) => m.href !== "/")
 
@@ -199,6 +260,90 @@ export default function DashboardPage() {
                       </Badge>
                       <span className="text-body font-bold text-text-primary">
                         {formatNumber(typeof s.count === "number" ? s.count : 0)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card padded={false}>
+            <CardHeader title="Tren order & pendapatan" />
+            <CardBody>
+              <div className="mb-4 flex flex-wrap items-end gap-3">
+                <Select
+                  label="Periode"
+                  options={CHART_PERIODS.map((p) => ({ value: p.value, label: p.label }))}
+                  value={chartPeriod}
+                  onChange={(e) => handleChartPeriodChange(e.target.value)}
+                  className="w-44"
+                />
+                {chartPeriod === "custom" ? (
+                  <>
+                    <label className="flex flex-col gap-1 text-caption text-text-secondary">
+                      Dari tanggal
+                      <input
+                        type="date"
+                        value={chartStart}
+                        max={chartEnd || undefined}
+                        onChange={(e) => setChartStart(e.target.value)}
+                        className="rounded-sm border border-border bg-surface px-3 py-2 text-body text-text-primary"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-caption text-text-secondary">
+                      Sampai tanggal
+                      <input
+                        type="date"
+                        value={chartEnd}
+                        min={chartStart || undefined}
+                        onChange={(e) => setChartEnd(e.target.value)}
+                        className="rounded-sm border border-border bg-surface px-3 py-2 text-body text-text-primary"
+                      />
+                    </label>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      onClick={handleCustomRangeApply}
+                      disabled={!chartStart && !chartEnd}
+                    >
+                      Terapkan
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+              {chartLoading ? (
+                <div className="flex items-center justify-center gap-2 py-8">
+                  <Spinner size="md" />
+                  <p className="text-body text-text-secondary">Memuat tren…</p>
+                </div>
+              ) : chartData.length === 0 ? (
+                <EmptyState
+                  compact
+                  title="Belum ada data"
+                  description="Tidak ada order pada periode ini."
+                />
+              ) : (
+                <div
+                  className="flex items-end gap-1 overflow-x-auto pb-2"
+                  role="img"
+                  aria-label={`Grafik order per hari, ${chartData.length} hari`}
+                >
+                  {chartData.map((d) => (
+                    <div
+                      key={d.date}
+                      className="flex min-w-[28px] flex-1 flex-col items-center gap-1"
+                      title={`${d.date}: ${d.orders} order`}
+                    >
+                      <div className="flex h-32 w-full items-end justify-center rounded-sm bg-surface">
+                        <div
+                          className="w-3/5 rounded-sm bg-info"
+                          style={{ height: `${Math.max(4, (d.orders / maxOrders) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-caption tabular-nums text-text-tertiary">
+                        {d.date.slice(5)}
                       </span>
                     </div>
                   ))}
