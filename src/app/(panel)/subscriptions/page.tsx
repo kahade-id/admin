@@ -24,7 +24,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Dialog } from "@/components/ui/dialog"
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
@@ -566,14 +566,25 @@ function GrantForm({ onDone }: { onDone: () => void }) {
   }, [debouncedQuery])
 
   const duration = Number.parseInt(durationDays, 10)
+  // ADM-224: batas UI 730 hari mengikuti @Max(730) backend; pratinjau wajib
+  // sebelum eksekusi agar admin tidak mengisi 1000 hari lalu baru tahu saat 400.
+  const durationTooLong = Number.isFinite(duration) && duration > 730
   const valid =
     userId.trim().length > 0 &&
     Number.isFinite(duration) &&
     duration >= 1 &&
+    !durationTooLong &&
     reason.trim().length > 0
+
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const selectedUserLabel =
+    candidates.find((u) => u.userId === userId)?.fullName?.trim() ||
+    candidates.find((u) => u.userId === userId)?.username ||
+    userId
 
   const handleSubmit = async () => {
     if (!valid || submitting) return
+    setConfirmOpen(false)
     setSubmitting(true)
     try {
       await grantSubscription({
@@ -649,9 +660,11 @@ function GrantForm({ onDone }: { onDone: () => void }) {
           label="Durasi (hari)"
           type="number"
           min={1}
+          max={730}
           value={durationDays}
           onChange={(e) => setDurationDays(e.target.value)}
           disabled={submitting}
+          hint="Maksimal 730 hari (2 tahun)."
         />
       </div>
 
@@ -670,16 +683,32 @@ function GrantForm({ onDone }: { onDone: () => void }) {
           variant="primary"
           loading={submitting}
           disabled={!valid}
-          onClick={handleSubmit}
+          onClick={() => setConfirmOpen(true)}
         >
-          Berikan subscription
+          Pratinjau & berikan
         </Button>
       </div>
-      {!valid ? (
+      {durationTooLong ? (
+        <p className="text-caption text-danger-text">
+          Durasi maksimal 730 hari — backend menolak nilai lebih besar.
+        </p>
+      ) : !valid ? (
         <p className="text-caption text-text-secondary">
-          Lengkapi: pengguna terpilih, durasi minimal 1 hari, dan alasan.
+          Lengkapi: pengguna terpilih, durasi 1–730 hari, dan alasan.
         </p>
       ) : null}
+
+      {/* ADM-224: pratinjau eksplisit sebelum grant dieksekusi */}
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Berikan subscription?"
+        description={`Pengguna: ${selectedUserLabel}. Plan ${PLAN_LABEL[plan]} selama ${Number.isFinite(duration) ? duration : "—"} hari. Alasan: ${reason.trim() || "—"}`}
+        confirmLabel="Ya, berikan"
+        cancelLabel="Batal"
+        loading={submitting}
+        onConfirm={() => void handleSubmit()}
+      />
     </div>
   )
 }

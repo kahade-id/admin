@@ -47,17 +47,19 @@ export function getReferralStats(): Promise<ReferralStats> {
   return adminHttp.get<ReferralStats>("/v1/admin/referral/stats")
 }
 
-/** Daftar kode referral; `active=true/false` filter status aktif. */
+/** Daftar kode referral; `active=true/false` filter status aktif; `q` pencarian server-side (ADM-221). */
 export function listReferralCodes(query?: {
   page?: number
   limit?: number
   active?: boolean
+  q?: string
 }): Promise<Paginated<ReferralCodeItem>> {
   return adminHttp.get<Paginated<ReferralCodeItem>>("/v1/admin/referral/codes", {
     query: {
       page: query?.page,
       limit: query?.limit,
       isActive: query?.active === undefined ? undefined : String(query.active),
+      q: query?.q?.trim() ? query.q.trim() : undefined,
     },
   })
 }

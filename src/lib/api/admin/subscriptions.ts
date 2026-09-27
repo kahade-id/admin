@@ -105,10 +105,22 @@ export type GrantSubscriptionInput = {
   reason: string
 }
 
+/**
+ * ADM-225: bentuk aktual respons backend grantSubscription — objek
+ * subscription ({...subscription, price, feeSavingsUsed, feeSavingsLimit}),
+ * BUKAN envelope {message, subscriptionId, status}.
+ */
 export type GrantSubscriptionResult = {
-  message: string
-  subscriptionId: string
+  id: string
+  userId: string
+  plan: string
   status: string
+  price: string
+  feeSavingsUsed: string
+  feeSavingsLimit: string
+  startDate?: string | null
+  endDate?: string | null
+  [key: string]: unknown
 }
 
 /** Daftar subscription Kahade+; filter status & pencarian pengguna. */

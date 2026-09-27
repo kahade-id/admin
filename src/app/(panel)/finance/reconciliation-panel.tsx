@@ -82,12 +82,18 @@ const STATUS_FILTERS: Array<{ value: FindingStatus | ""; label: string }> = [
   { value: "ACCEPTED", label: "Diterima" },
 ]
 
+// ADM-228: RESOLVED/ACCEPTED boleh dibuka kembali ke INVESTIGATING
+// (catatan wajib — divalidasi backend), agar salah tandai selesai tidak permanen.
 const ALLOWED_TRANSITIONS: Record<FindingStatus, Array<"INVESTIGATING" | "RESOLVED" | "ACCEPTED">> = {
   NEW: ["INVESTIGATING", "RESOLVED", "ACCEPTED"],
   INVESTIGATING: ["RESOLVED", "ACCEPTED"],
-  RESOLVED: [],
-  ACCEPTED: [],
+  RESOLVED: ["INVESTIGATING"],
+  ACCEPTED: ["INVESTIGATING"],
 }
+
+const isReopenTarget = (f: ReconciliationFinding): boolean =>
+  (f.status === "RESOLVED" || f.status === "ACCEPTED") &&
+  ALLOWED_TRANSITIONS[f.status].includes("INVESTIGATING")
 
 function FindingsSection() {
   const { show } = useToast()
@@ -277,7 +283,7 @@ function FindingsSection() {
                 render: (r) =>
                   ALLOWED_TRANSITIONS[r.status].length > 0 ? (
                     <Button variant="secondary" size="sm" fullWidth={false} onClick={() => openAck(r)}>
-                      Tindak lanjuti
+                      {isReopenTarget(r) ? "Buka kembali" : "Tindak lanjuti"}
                     </Button>
                   ) : (
                     <span className="text-caption text-text-secondary">—</span>
@@ -298,10 +304,14 @@ function FindingsSection() {
       <Dialog
         open={ackTarget !== null}
         onClose={() => setAckTarget(null)}
-        title="Tindak lanjuti temuan"
+        title={ackTarget && isReopenTarget(ackTarget) ? "Buka kembali temuan" : "Tindak lanjuti temuan"}
         description={
           ackTarget
-            ? `Selisih ${formatRupiah(Math.abs(ackTarget.differenceIdr))} • invariant: ${ackTarget.violatedInvariants.join(", ") || "—"}`
+            ? `Selisih ${formatRupiah(Math.abs(ackTarget.differenceIdr))} • invariant: ${ackTarget.violatedInvariants.join(", ") || "—"}${
+                isReopenTarget(ackTarget)
+                  ? " • Temuan yang dibuka kembali wajib diberi catatan alasan."
+                  : ""
+              }`
             : undefined
         }
         footer={
@@ -759,7 +769,8 @@ function CorrectionsSection() {
                 align: "right",
                 render: (r) => (
                   <span>
-                    <Badge tone={r.type === "CREDIT" ? "success" : "danger"}>{r.type}</Badge>{" "}
+                    {/* ADM-230: label Indonesia, bukan raw enum */}
+                    <Badge tone={r.type === "CREDIT" ? "success" : "danger"}>{r.type === "CREDIT" ? "Kredit" : r.type === "DEBIT" ? "Debit" : String(r.type)}</Badge>{" "}
                     <span className="font-semibold">{formatRupiah(r.amountIdr)}</span>
                   </span>
                 ),
@@ -842,7 +853,7 @@ function CorrectionsSection() {
         title={decision === "APPROVE" ? "Setujui koreksi" : "Tolak koreksi"}
         description={
           decideTarget
-            ? `${decideTarget.type} ${formatRupiah(decideTarget.amountIdr)} untuk ${decideTarget.userId}`
+            ? `${decideTarget.type === "CREDIT" ? "Kredit" : decideTarget.type === "DEBIT" ? "Debit" : decideTarget.type} ${formatRupiah(decideTarget.amountIdr)} untuk ${decideTarget.userId}`
             : undefined
         }
         footer={
@@ -1101,6 +1112,12 @@ function BatchesSection() {
 
 type SimulatedRole = "SUPER_ADMIN" | "FINANCE_ADMIN" | "DISPUTE_ADMIN" | "KYC_ADMIN" | "CUSTOMER_SUPPORT"
 
+// ADM-229: matriks ini adalah PERKIRAAN yang ditulis manual (hard-coded) dari
+// guard backend (@AdminRoles) per 2026-09-27 — BUKAN turunan otomatis dari
+// kode backend. Bila guard backend berubah, matriks ini bisa drift; perbarui
+// tanggal verifikasi di bawah setiap kali dicocokkan ulang dengan backend.
+const ACTION_MATRIX_VERIFIED_AT = "2026-09-27"
+
 const ACTION_MATRIX: Array<{
   action: string
   allowed: SimulatedRole[]
@@ -1156,8 +1173,8 @@ function RoleTestPanel() {
     <section aria-label="Uji akses peran">
       <Card>
         <CardHeader
-          title="Uji akses sebagai peran"
-          subtitle="Simulasi read-only: aksi apa yang diizinkan/ditolak untuk tiap peran. Tidak mengubah akses sungguhan."
+          title="Uji akses sebagai peran (perkiraan)"
+          subtitle={`Simulasi read-only berdasarkan perkiraan manual guard backend — diverifikasi ${ACTION_MATRIX_VERIFIED_AT}. Bukan sumber kebenaran akses; guard backend yang menentukan. Tidak mengubah akses sungguhan.`}
         />
         <CardBody>
           <div className="mb-4 sm:w-72">

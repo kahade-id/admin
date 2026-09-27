@@ -34,6 +34,7 @@ import {
   type InsuranceClaim,
   type InsuranceClaimStatus,
 } from "@/lib/api/admin/insurance-claims"
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 
@@ -214,10 +215,13 @@ export default function InsuranceClaimsPage() {
     void load("initial", p, statusFilter)
   }
 
+  const [reviewKey, setReviewKey] = useState<string | null>(null)
   const openReview = (claim: InsuranceClaim) => {
     setSelected(claim)
     setNote("")
     setActing(null)
+    // ADM-227: satu kunci idempotency per sesi dialog; retry memakai kunci sama.
+    setReviewKey(newIdempotencyKey())
   }
 
   const closeReview = () => {
@@ -230,10 +234,14 @@ export default function InsuranceClaimsPage() {
     if (!selected || acting) return
     setActing(action)
     try {
-      await updateInsuranceClaimStatus(selected.id, {
-        status: action,
-        note: note.trim() || undefined,
-      })
+      await updateInsuranceClaimStatus(
+        selected.id,
+        {
+          status: action,
+          note: note.trim() || undefined,
+        },
+        reviewKey ?? undefined,
+      )
       toast.show({
         title: ACTION_META[action].label,
         description: `Klaim ${selected.id} → ${STATUS_LABEL[action]}.`,
@@ -241,6 +249,7 @@ export default function InsuranceClaimsPage() {
       })
       setSelected(null)
       setNote("")
+      setReviewKey(null)
       await load("refresh")
     } catch (e) {
       toast.show({

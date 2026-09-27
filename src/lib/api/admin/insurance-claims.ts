@@ -11,6 +11,7 @@
  * Status klaim: DRAFT, SUBMITTED, APPROVED, REJECTED, PAID.
  * Alur review normal: SUBMITTED → APPROVED/REJECTED → PAID.
  */
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
 
@@ -96,10 +97,13 @@ export function listInsuranceClaims(query?: {
 
 /**
  * Ubah status klaim (setujui / tolak / tandai dibayar) + catatan opsional.
+ * ADM-227: idempoten — backend @Idempotency(); satu kunci stabil per sesi
+ * dialog review agar retry tidak mengeksekusi payout ganda.
  */
 export function updateInsuranceClaimStatus(
   claimId: string,
   input: UpdateInsuranceClaimInput,
+  idempotencyKey?: string,
 ): Promise<UpdateInsuranceClaimResult> {
   const body: { status: string; note?: string } = { status: input.status }
   const note = input.note?.trim()
@@ -107,5 +111,6 @@ export function updateInsuranceClaimStatus(
   return adminHttp.patch<UpdateInsuranceClaimResult>(
     `/v1/admin/insurance-claims/${encodeURIComponent(claimId)}`,
     body,
+    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
   )
 }

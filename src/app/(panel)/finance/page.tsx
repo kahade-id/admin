@@ -53,6 +53,7 @@ import {
   type WithdrawalRecheckResult,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
+import { TX_META, txLabel } from "@/lib/tx-labels"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
 const PAGE_SIZE = 20
@@ -75,25 +76,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced
 }
 
-type TxMeta = { label: string; sign: "+" | "−" | "" }
-
-const TX_META: Record<string, TxMeta> = {
-  TOP_UP: { label: "Top up", sign: "+" },
-  WITHDRAW: { label: "Penarikan", sign: "−" },
-  ORDER_LOCK: { label: "Escrow dikunci", sign: "−" },
-  ORDER_RELEASE: { label: "Escrow cair", sign: "+" },
-  ORDER_REFUND: { label: "Refund order", sign: "+" },
-  FEE_DEDUCT: { label: "Fee platform", sign: "−" },
-  REFERRAL_REWARD: { label: "Reward referral", sign: "+" },
-  SUBSCRIPTION_PAYMENT: { label: "Langganan", sign: "−" },
-  ADMIN_CREDIT: { label: "Kredit admin", sign: "+" },
-  ADMIN_DEBIT: { label: "Debit admin", sign: "−" },
-  DISPUTE_RELEASE: { label: "Cair sengketa", sign: "+" },
-  TRANSFER_SENT: { label: "Transfer keluar", sign: "−" },
-  TRANSFER_RECEIVED: { label: "Transfer masuk", sign: "+" },
-  CAMPAIGN_CASHBACK: { label: "Cashback", sign: "+" },
-  TOPUP_BONUS: { label: "Bonus top up", sign: "+" },
-}
 
 const TX_STATUS_TONE: Record<string, BadgeTone> = {
   SUCCESS: "success",
