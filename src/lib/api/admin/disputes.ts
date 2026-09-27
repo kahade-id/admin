@@ -89,8 +89,7 @@ export type DisputeMessagesResponse = {
  *
  * ADM-127: backend mengembalikan envelope `{ messages, nextCursor, hasMore }`
  * (limit 50) — adaptor mengembalikan envelope utuh agar riwayat >50 pesan
- * bisa dimuat ("Muat pesan lama"). Pemanggil lama yang butuh array saja
- * memakai `getDisputeMessagesFlat`.
+ * bisa dimuat ("Muat pesan lama").
  */
 export async function getDisputeMessages(
   disputeId: string,
@@ -105,12 +104,6 @@ export async function getDisputeMessages(
     nextCursor: res?.nextCursor ?? null,
     hasMore: res?.hasMore === true,
   }
-}
-
-/** Kompat: array pesan saja (tanpa paginasi). */
-export async function getDisputeMessagesFlat(disputeId: string): Promise<DisputeMessage[]> {
-  const res = await getDisputeMessages(disputeId)
-  return res.messages
 }
 
 export function sendDisputeMessage(disputeId: string, message: string): Promise<unknown> {
