@@ -160,11 +160,23 @@ async function request<T>(
     const err = (await res.json().catch(() => null)) as {
       message?: string
       error?: string
+      errors?: { retryAfter?: number }
+      retryAfter?: number
     } | null
     const apiErr = new Error(err?.message ?? err?.error ?? `Admin API ${res.status}`) as Error & {
       status?: number
+      // ADM-426: durasi tunggu (detik) dari header Retry-After / body 429.
+      retryAfter?: number
     }
     apiErr.status = res.status
+    const headerRetryAfter = Number(res.headers.get("Retry-After"))
+    const bodyRetryAfter = Number(err?.retryAfter ?? err?.errors?.retryAfter)
+    const retryAfter = Number.isFinite(headerRetryAfter) && headerRetryAfter > 0
+      ? headerRetryAfter
+      : Number.isFinite(bodyRetryAfter) && bodyRetryAfter > 0
+        ? bodyRetryAfter
+        : undefined
+    if (retryAfter !== undefined) apiErr.retryAfter = retryAfter
     throw apiErr
   }
 

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { ToastProvider } from "@/components/ui/toast"
 import { AuthProvider, RequireAuth, useAuth } from "@/lib/auth-context"
 import { menuForRole, roleLabel } from "@/lib/rbac"
+import { Breadcrumb } from "@/components/admin/breadcrumb"
 import { cn } from "@/lib/cn"
 
 function Sidebar() {
@@ -92,6 +93,8 @@ function PanelShell({ children }: { children: ReactNode }) {
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <Header />
+          {/* ADM-416: breadcrumb otomatis dari pathname aktif. */}
+          <Breadcrumb />
           <main className="flex-1 overflow-y-auto p-6">{children}</main>
         </div>
       </div>

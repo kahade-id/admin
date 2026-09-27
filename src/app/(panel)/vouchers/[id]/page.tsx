@@ -31,7 +31,8 @@ import {
   type AdminVoucherItem,
   type AdminVoucherType,
 } from "@/lib/api/admin/vouchers"
-import { maskEmail, maskPhone, quotaRatio } from "../../campaigns/lib"
+import { maskEmail, maskPhone } from "@/lib/pii"
+import { quotaRatio } from "../../campaigns/lib"
 
 const VOUCHER_TYPE_LABEL: Record<AdminVoucherType, string> = {
   FEE_DISCOUNT_FLAT: "Diskon fee (nominal)",

@@ -44,6 +44,8 @@ import {
 import { getRoomIdByOrder, getRoomMessages } from "@/lib/api/admin/chat"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+// ADM-405: PII pihak transaksi di-mask secara default (mask-only, tanpa unmask).
+import { maskEmail, maskName } from "@/lib/pii"
 
 const PAGE_SIZE = 20
 
@@ -140,7 +142,9 @@ function partyName(
     email?: string | null
   } | null | undefined,
 ): string {
-  return p?.fullName ?? p?.username ?? p?.email ?? "—"
+  // ADM-405: nama pihak di-mask; username bukan PII langsung sehingga tetap tampil.
+  const masked = maskName(p?.fullName ?? null)
+  return masked !== "—" ? masked : (p?.username ?? "—")
 }
 
 function KeyValue({ label, value }: { label: string; value: string }) {
@@ -622,11 +626,11 @@ function OrdersPageContent() {
             <dl>
               <KeyValue label="Pembeli" value={partyName(detail.buyer)} />
               {detail.buyer?.email ? (
-                <KeyValue label="Email pembeli" value={detail.buyer.email} />
+                <KeyValue label="Email pembeli" value={maskEmail(detail.buyer.email)} />
               ) : null}
               <KeyValue label="Penjual" value={partyName(detail.seller)} />
               {detail.seller?.email ? (
-                <KeyValue label="Email penjual" value={detail.seller.email} />
+                <KeyValue label="Email penjual" value={maskEmail(detail.seller.email)} />
               ) : null}
               <KeyValue
                 label="Dibuat"

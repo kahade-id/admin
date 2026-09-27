@@ -25,6 +25,9 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { Field, Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
+// ADM-408: lapis UI kedua — tolak role non-SUPER_ADMIN dengan pesan jelas
+// (backend sudah SUPER_ADMIN-only; ini konsistensi tampilan).
+import { RoleGate } from "@/components/admin/role-gate"
 import { formatDateTimeWIB } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import {
@@ -139,6 +142,7 @@ export default function OpsSettingsPage() {
   }
 
   return (
+    <RoleGate href="/ops-settings">
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold">Pengaturan Operasional</h1>
@@ -291,5 +295,6 @@ export default function OpsSettingsPage() {
         )}
       </Dialog>
     </div>
+    </RoleGate>
   )
 }

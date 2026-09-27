@@ -49,6 +49,8 @@ import { listAdminUsers, type AdminUserSummary } from "@/lib/api/admin/users"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
+// ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
+import { maskEmail } from "@/lib/pii"
 
 const PAGE_SIZE = 20
 const SEARCH_DEBOUNCE_MS = 400
@@ -354,7 +356,7 @@ export default function SubscriptionsPage() {
                     <p className="font-semibold">{userDisplay(s)}</p>
                     {s.user?.email ? (
                       <p className="text-caption text-text-secondary">
-                        {s.user.email}
+                        {maskEmail(s.user.email)}
                       </p>
                     ) : null}
                   </div>

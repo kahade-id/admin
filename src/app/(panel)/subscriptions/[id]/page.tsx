@@ -27,6 +27,8 @@ import {
 } from "@/lib/api/admin/subscriptions"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
+// ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
+import { maskEmail } from "@/lib/pii"
 
 const STATUS_LABEL: Record<string, string> = {
   ACTIVE: "Aktif",
@@ -250,7 +252,7 @@ export default function SubscriptionDetailPage() {
                   }
                 />
                 {detail.user?.email ? (
-                  <KeyValue label="Email" value={detail.user.email} />
+                  <KeyValue label="Email" value={maskEmail(detail.user.email)} />
                 ) : null}
                 <KeyValue label="Harga" value={formatRupiah(detail.price)} />
                 <KeyValue
