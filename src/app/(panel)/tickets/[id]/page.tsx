@@ -40,6 +40,28 @@ const STATUS_OPTIONS = [
   { value: "CLOSED", label: "Ditutup" },
 ]
 
+/**
+ * Template balasan cepat — konsisten dengan template pesan mediasi sengketa.
+ * String statis yang aman; admin bisa mengedit sebelum mengirim.
+ */
+const REPLY_TEMPLATES = [
+  {
+    label: "Salam pembuka",
+    text: "Halo, terima kasih sudah menghubungi tim Kahade. Tiket Anda sedang kami tangani dan akan segera kami tindak lanjuti.",
+  },
+  {
+    label: "Minta info tambahan",
+    text: "Agar bisa kami bantu lebih cepat, mohon info tambahan terkait kendala Anda (mis. ID order/transaksi dan kronologi singkat).",
+  },
+  {
+    label: "Eskalasi",
+    text: "Laporan Anda sudah kami teruskan ke tim terkait. Kami akan mengabari perkembangannya melalui tiket ini. Terima kasih atas kesabarannya.",
+  },
+]
+
+/** Batas karakter draf balasan — selaras maxLength TextArea. */
+const REPLY_MAX_LENGTH = 2000
+
 function KeyValue({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border py-2.5 last:border-b-0">
@@ -260,13 +282,29 @@ export default function TicketDetailPage() {
               )}
 
               <div className="mt-4 space-y-3">
+                {/* Template balasan cepat — konsisten dengan sengketa. */}
+                <div className="flex flex-wrap gap-2">
+                  {REPLY_TEMPLATES.map((t) => (
+                    <Button
+                      key={t.label}
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      onClick={() => setDraft(t.text)}
+                      title="Sisipkan template ke kolom balasan (bisa diedit sebelum dikirim)"
+                    >
+                      {t.label}
+                    </Button>
+                  ))}
+                </div>
                 <TextArea
                   label="Balas tiket"
                   rows={3}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                   placeholder="Tulis balasan untuk pengguna…"
-                  maxLength={2000}
+                  maxLength={REPLY_MAX_LENGTH}
+                  hint={`${draft.length} / ${REPLY_MAX_LENGTH} karakter`}
                 />
                 <Button
                   variant="primary"

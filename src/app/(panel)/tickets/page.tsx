@@ -9,7 +9,8 @@
  */
 
 import Link from "next/link"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,14 +22,21 @@ import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
+import { Input } from "@/components/ui/input"
 import { listTickets, type SupportTicket } from "@/lib/api/admin/support"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB } from "@/lib/format"
+import { downloadCsv } from "@/lib/csv"
+import { ageHours, formatAge, formatDateTimeWIB } from "@/lib/format"
+import { useListShortcuts } from "@/lib/list-shortcuts"
 
 import { TICKET_STATUS_LABEL, TICKET_STATUS_TONE } from "./maps"
 import { cn } from "@/lib/cn"
 
 const PAGE_SIZE = 20
+/** Maksimum halaman yang diambil untuk export CSV (100 baris per halaman). */
+const FETCH_ALL_MAX_PAGES = 50
+/** Tiket OPEN/IN_PROGRESS yang tak tersentuh ≥ 24 jam disorot sebagai butuh perhatian. */
+const TICKET_STALE_HOURS = 24
 
 type Filter = "ALL" | "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED"
 type QueueTab = "general" | "priority"
@@ -59,6 +67,8 @@ export default function TicketsListPage() {
 
   const [filter, setFilter] = useState<Filter>("ALL")
   const [queue, setQueue] = useState<QueueTab>("general")
+  const [searchInput, setSearchInput] = useState("")
+  const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -66,6 +76,7 @@ export default function TicketsListPage() {
   const [rows, setRows] = useState<SupportTicket[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
+  const [csvLoading, setCsvLoading] = useState(false)
 
   const load = useCallback(
     async (
@@ -73,6 +84,7 @@ export default function TicketsListPage() {
       targetPage = page,
       targetFilter = filter,
       targetQueue = queue,
+      targetSearch = search,
     ) => {
       if (mode === "initial") setLoading(true)
       else setRefreshing(true)
@@ -83,6 +95,7 @@ export default function TicketsListPage() {
           limit: PAGE_SIZE,
           status: targetFilter === "ALL" ? undefined : targetFilter,
           priority: targetQueue === "priority" ? true : undefined,
+          search: targetSearch.trim() || undefined,
         })
         setRows(res.data ?? [])
         const t = res.total ?? res.data?.length ?? 0
@@ -97,7 +110,7 @@ export default function TicketsListPage() {
         setRefreshing(false)
       }
     },
-    [page, filter, queue, toast],
+    [page, filter, queue, search, toast],
   )
 
   useEffect(() => {
@@ -107,19 +120,88 @@ export default function TicketsListPage() {
   const handleQueueChange = (q: QueueTab) => {
     setQueue(q)
     setPage(1)
-    void load("initial", 1, filter, q)
+    setActiveIndex(0)
+    void load("initial", 1, filter, q, search)
   }
 
   const handleFilterChange = (f: Filter) => {
     setFilter(f)
     setPage(1)
-    void load("initial", 1, f, queue)
+    setActiveIndex(0)
+    void load("initial", 1, f, queue, search)
+  }
+
+  const handleSearch = () => {
+    const q = searchInput.trim()
+    setSearch(q)
+    setPage(1)
+    setActiveIndex(0)
+    void load("initial", 1, filter, queue, q)
   }
 
   const handlePageChange = (p: number) => {
     setPage(p)
-    void load("initial", p, filter, queue)
+    setActiveIndex(0)
+    void load("initial", p, filter, queue, search)
   }
+
+  /** Export CSV sesuai filter aktif (status/antrean/pencarian). */
+  const handleExportCsv = async () => {
+    setCsvLoading(true)
+    try {
+      const all: SupportTicket[] = []
+      for (let p = 1; p <= FETCH_ALL_MAX_PAGES; p++) {
+        const res = await listTickets({
+          page: p,
+          limit: 100,
+          status: filter === "ALL" ? undefined : filter,
+          priority: queue === "priority" ? true : undefined,
+          search: search.trim() || undefined,
+        })
+        const items = res.data ?? []
+        all.push(...items)
+        if (p >= (res.totalPages ?? 1) || items.length === 0) break
+      }
+      const stamp = new Date().toISOString().slice(0, 10)
+      downloadCsv(
+        `tiket-${stamp}.csv`,
+        ["ID", "Subjek", "Kategori", "Status", "Prioritas", "Umur", "Pengguna", "Dibuat", "Diperbarui"],
+        all.map((r) => [
+          r.id,
+          r.subject,
+          r.category ?? "",
+          TICKET_STATUS_LABEL[r.status] ?? r.status,
+          r.isPriority ? "Ya" : "Tidak",
+          formatAge(r.createdAt),
+          r.user?.fullName?.trim() || r.user?.email || r.userId,
+          formatDateTimeWIB(r.createdAt),
+          r.updatedAt ? formatDateTimeWIB(r.updatedAt) : "",
+        ]),
+      )
+      toast.show({
+        title: "CSV diunduh",
+        description: `${all.length} tiket sesuai filter aktif.`,
+        tone: "success",
+      })
+    } catch (e) {
+      toast.show({
+        title: "Gagal mengekspor CSV",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setCsvLoading(false)
+    }
+  }
+
+  // Keyboard shortcuts: "/" fokus cari, j/k pindah baris, Enter buka detail.
+  const router = useRouter()
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const { activeIndex, setActiveIndex } = useListShortcuts<SupportTicket>({
+    rows,
+    searchInputRef,
+    onOpen: (r) => router.push(`/tickets/${r.id}`),
+  })
 
   const activeTab = QUEUE_TABS.find((t) => t.value === queue)
 
@@ -132,15 +214,27 @@ export default function TicketsListPage() {
             Tiket dukungan pengguna yang perlu ditangani.
           </p>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          fullWidth={false}
-          loading={refreshing}
-          onClick={() => load("refresh")}
-        >
-          Muat ulang
-        </Button>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth={false}
+            loading={csvLoading}
+            onClick={() => void handleExportCsv()}
+            title="Unduh CSV sesuai filter aktif"
+          >
+            Unduh CSV
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth={false}
+            loading={refreshing}
+            onClick={() => load("refresh")}
+          >
+            Muat ulang
+          </Button>
+        </div>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -174,7 +268,32 @@ export default function TicketsListPage() {
           onChange={(e) => handleFilterChange(e.target.value as Filter)}
           className="w-52"
         />
+        <form
+          className="flex flex-1 flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleSearch()
+          }}
+        >
+          <Input
+            ref={searchInputRef}
+            label="Cari subjek / ID"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Subjek, ID tiket, atau nama pengguna…"
+            className="min-w-52 flex-1"
+          />
+          <Button type="submit" variant="secondary" size="md" fullWidth={false}>
+            Cari
+          </Button>
+        </form>
       </div>
+      <p className="mb-4 text-caption text-text-secondary">
+        Shortcut: <kbd className="rounded-sm border border-border bg-surface px-1">/</kbd> cari ·{" "}
+        <kbd className="rounded-sm border border-border bg-surface px-1">j</kbd>/
+        <kbd className="rounded-sm border border-border bg-surface px-1">k</kbd> navigasi ·{" "}
+        <kbd className="rounded-sm border border-border bg-surface px-1">Enter</kbd> buka detail
+      </p>
       {queue === "priority" ? (
         <p className="mb-4 text-caption text-text-secondary">{activeTab?.hint}</p>
       ) : null}
@@ -226,6 +345,28 @@ export default function TicketsListPage() {
                 render: (r) => r.category ?? "—",
               },
               {
+                key: "age",
+                header: "Umur",
+                render: (r) => {
+                  const lastTouch = r.updatedAt ?? r.createdAt
+                  const stale =
+                    (r.status === "OPEN" || r.status === "IN_PROGRESS") &&
+                    (ageHours(lastTouch) ?? 0) >= TICKET_STALE_HOURS
+                  return (
+                    <div className="flex flex-col gap-1">
+                      <span className="tabular-nums text-[13px]">
+                        {formatAge(r.createdAt)}
+                      </span>
+                      {stale ? (
+                        <Badge tone="warning">
+                          Tak tersentuh {formatAge(lastTouch)}
+                        </Badge>
+                      ) : null}
+                    </div>
+                  )
+                },
+              },
+              {
                 key: "status",
                 header: "Status",
                 render: (r) => (
@@ -250,6 +391,7 @@ export default function TicketsListPage() {
             ]}
             rows={rows}
             rowKey={(r) => r.id}
+            rowClassName={(_, i) => (i === activeIndex ? "bg-info-soft" : undefined)}
             emptyText="Tidak ada tiket pada filter ini."
           />
           <Pagination

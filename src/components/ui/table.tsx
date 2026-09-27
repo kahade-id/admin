@@ -147,6 +147,8 @@ export type DataTableProps<Row extends Record<string, unknown>> = {
   className?: string
   /** G518: caption untuk screen reader (WCAG 1.3.1) — tidak wajib tampil visual. */
   caption?: string
+  /** Kelas tambahan per baris (mis. sorotan baris aktif keyboard). */
+  rowClassName?: (row: Row, index: number) => string | undefined
 }
 
 const alignTextClass: Record<DataTableAlign, string> = {
@@ -163,6 +165,7 @@ export function DataTable<Row extends Record<string, unknown>>({
   emptyText = "Tidak ada data",
   className,
   caption,
+  rowClassName,
 }: DataTableProps<Row>) {
   const cellContent = (col: DataTableColumn<Row>, row: Row): ReactNode =>
     col.render ? col.render(row) : String(row[col.key] ?? "")
@@ -199,7 +202,10 @@ export function DataTable<Row extends Record<string, unknown>>({
           </TR>
         ) : (
           rows.map((row, i) => (
-            <TR key={rowKey ? rowKey(row, i) : String(i)} className="hover:bg-surface-elevated">
+            <TR
+              key={rowKey ? rowKey(row, i) : String(i)}
+              className={cn("hover:bg-surface-elevated", rowClassName?.(row, i))}
+            >
               {columns.map((col) => (
                 <TD key={col.key} className={alignTextClass[col.align ?? "left"]}>
                   {cellContent(col, row)}

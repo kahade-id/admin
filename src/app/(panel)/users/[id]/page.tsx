@@ -178,6 +178,9 @@ export default function UserDetailPage() {
   const [sessionsHasMore, setSessionsHasMore] = useState(false)
   const [auditPage, setAuditPage] = useState(1)
   const [auditHasMore, setAuditHasMore] = useState(false)
+  // Filter client-side pada tabel aktivitas (aksi + tanggal).
+  const [auditActionFilter, setAuditActionFilter] = useState("")
+  const [auditDateFilter, setAuditDateFilter] = useState("")
   const [txPage, setTxPage] = useState(1)
   const [txHasMore, setTxHasMore] = useState(false)
 
@@ -514,6 +517,21 @@ export default function UserDetailPage() {
   const user = detail
   // ADM-405: nama pengguna di-mask secara default di panel.
   const displayName = maskName(user?.fullName?.trim() || null)
+  // Filter client-side pada tabel aktivitas (berlaku pada data yang sudah dimuat).
+  const filteredAudit = audit.filter((e) => {
+    if (auditActionFilter.trim()) {
+      const q = auditActionFilter.trim().toLowerCase()
+      const hay = `${e.action} ${e.description ?? ""} ${e.entityType ?? ""}`.toLowerCase()
+      if (!hay.includes(q)) return false
+    }
+    if (auditDateFilter) {
+      const t = new Date(e.createdAt)
+      if (!Number.isFinite(t.getTime())) return false
+      const ymd = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`
+      if (ymd !== auditDateFilter) return false
+    }
+    return true
+  })
   const adjustAmountNum = Number(adjustAmount.replace(/[^0-9]/g, ""))
   const [tab, setTab] = useState<"ringkasan" | "moderasi" | "penghapusan">("ringkasan")
 
@@ -1070,6 +1088,21 @@ export default function UserDetailPage() {
           <Card padded={false}>
             <CardHeader title="Audit log" />
             <CardBody>
+              <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Input
+                  label="Filter aksi"
+                  value={auditActionFilter}
+                  onChange={(e) => setAuditActionFilter(e.target.value)}
+                  placeholder="Cari aksi / deskripsi / entitas…"
+                />
+                <Input
+                  label="Filter tanggal"
+                  type="date"
+                  value={auditDateFilter}
+                  onChange={(e) => setAuditDateFilter(e.target.value)}
+                  hint="Filter berlaku pada aktivitas yang sudah dimuat di bawah."
+                />
+              </div>
               {sectionError.audit ? (
                 <p className="text-body text-danger-text">{sectionError.audit}</p>
               ) : (
@@ -1107,10 +1140,14 @@ export default function UserDetailPage() {
                       ),
                     },
                   ]}
-                  rows={audit}
+                  rows={filteredAudit}
                   rowKey={(e) => e.id}
                   loading={loading}
-                  emptyText="Tidak ada jejak audit untuk pengguna ini."
+                  emptyText={
+                    audit.length === 0
+                      ? "Tidak ada jejak audit untuk pengguna ini."
+                      : "Tidak ada aktivitas yang cocok dengan filter."
+                  }
                 />
               )}
               <LoadMoreButton
