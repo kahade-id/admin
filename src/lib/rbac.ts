@@ -83,6 +83,7 @@ export const MENU: MenuItem[] = [
   { label: "Sistem & Konfigurasi", href: "/system", roles: ["SUPER_ADMIN"] },
   { label: "Klien Mitra", href: "/partner-clients", roles: ["SUPER_ADMIN"] },
   { label: "Observabilitas", href: "/observability", roles: ["SUPER_ADMIN"] },
+  { label: "Pengaturan Operasional", href: "/ops-settings", roles: ["SUPER_ADMIN"] },
   { label: "Tim Admin", href: "/team", roles: ["SUPER_ADMIN"] },
 ]
 
