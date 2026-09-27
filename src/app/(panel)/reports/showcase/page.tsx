@@ -29,13 +29,16 @@ import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import { useAuth } from "@/lib/auth-context"
 import {
+  assignShowcaseReport,
   bulkReviewShowcaseReports,
   decideAppeal,
   downloadShowcaseReportsExport,
+  getAssignCandidates,
   getModerationQueue,
   getShowcaseModerationMetrics,
   listPendingAppeals,
   listShowcaseReports,
+  type AssignCandidate,
   type BulkReviewResult,
   type ExportShowcaseReportsParams,
   type ModerationQueueItem,
@@ -558,6 +561,41 @@ function PriorityQueueSection() {
   const [rows, setRows] = useState<ModerationQueueItem[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
+  // ADM-324 — picker assign: kandidat admin aktif + jumlah antrean.
+  const [candidates, setCandidates] = useState<AssignCandidate[]>([])
+  const [assignTarget, setAssignTarget] = useState<ModerationQueueItem | null>(null)
+  const [assigneeId, setAssigneeId] = useState("")
+  const [assigning, setAssigning] = useState(false)
+
+  const openAssignDialog = async (r: ModerationQueueItem) => {
+    setAssignTarget(r)
+    setAssigneeId("")
+    try {
+      const res = await getAssignCandidates()
+      setCandidates(res.candidates ?? [])
+    } catch (e) {
+      toast.show({ title: "Gagal memuat kandidat assignee", description: userMessage(e), tone: "danger" })
+      setAssignTarget(null)
+    }
+  }
+
+  const handleAssign = async () => {
+    if (!assignTarget) return
+    setAssigning(true)
+    try {
+      await assignShowcaseReport(assignTarget.id, { assigneeAdminId: assigneeId || null })
+      toast.show({
+        title: assigneeId ? "Laporan di-assign" : "Laporan di-assign otomatis (beban tersedikit)",
+        tone: "success",
+      })
+      setAssignTarget(null)
+      void load(page)
+    } catch (e) {
+      toast.show({ title: "Assign gagal", description: userMessage(e), tone: "danger" })
+    } finally {
+      setAssigning(false)
+    }
+  }
 
   const load = useCallback(
     async (targetPage = 1, tier = riskTier, overdue = overdueOnly) => {
@@ -705,12 +743,22 @@ function PriorityQueueSection() {
                 header: "",
                 align: "right",
                 render: (r) => (
-                  <Link
-                    href={`/reports/showcase/${r.id}`}
-                    className="font-semibold text-info-text hover:underline"
-                  >
-                    Tinjau
-                  </Link>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      onClick={() => void openAssignDialog(r)}
+                    >
+                      Assign
+                    </Button>
+                    <Link
+                      href={`/reports/showcase/${r.id}`}
+                      className="font-semibold text-info-text hover:underline self-center"
+                    >
+                      Tinjau
+                    </Link>
+                  </div>
                 ),
               },
             ]}
@@ -728,6 +776,47 @@ function PriorityQueueSection() {
           />
         </>
       )}
+
+      {/* ADM-324 — dialog picker assign: kandidat admin aktif + jumlah antrean. */}
+      {assignTarget ? (
+        <Dialog
+          open={assignTarget !== null}
+          onClose={() => {
+            if (!assigning) setAssignTarget(null)
+          }}
+          title="Assign laporan"
+          description={`Pilih admin untuk menangani laporan "${assignTarget.showcase?.title ?? assignTarget.id}".`}
+        >
+          <div className="flex flex-col gap-3">
+            <Select
+              label="Assignee"
+              value={assigneeId}
+              onChange={(e) => setAssigneeId(e.target.value)}
+              options={[
+                { value: "", label: "Otomatis — beban antrean tersedikit" },
+                ...candidates.map((c) => ({
+                  value: c.id,
+                  label: `${c.fullName} (${c.role}) — ${c.openAssignments} antrean terbuka`,
+                })),
+              ]}
+              className="w-full"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                fullWidth={false}
+                disabled={assigning}
+                onClick={() => setAssignTarget(null)}
+              >
+                Batal
+              </Button>
+              <Button variant="primary" fullWidth={false} loading={assigning} onClick={handleAssign}>
+                Assign
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      ) : null}
     </div>
   )
 }

@@ -301,6 +301,20 @@ export function getShowcaseModerationMetrics(): Promise<ShowcaseModerationMetric
   return adminHttp.get<ShowcaseModerationMetrics>("/v1/admin/showcase-reports/metrics")
 }
 
+/** ADM-324 — kandidat assignee aktif beserta jumlah antrean terbuka. */
+export type AssignCandidate = {
+  id: string
+  fullName: string
+  role: string
+  openAssignments: number
+}
+
+export function getAssignCandidates(): Promise<{ candidates: AssignCandidate[] }> {
+  return adminHttp.get<{ candidates: AssignCandidate[] }>(
+    "/v1/admin/showcase-reports/assign/candidates",
+  )
+}
+
 /**
  * ADM-328 — bulk dismiss / under_review (maks 50, confirm wajib, hasil
  * parsial per item). Butuh Idempotency-Key (dikirim otomatis adminHttp).
