@@ -51,6 +51,25 @@ const ROUTES: RouteSpec[] = [
     href: "/reports/showcase",
     load: () => import("@/app/(panel)/reports/showcase/page"),
     heading: /Laporan Etalase/,
+    setupMocks: () => {
+      // ADM-327: getShowcaseModerationMetrics → agregat non-paginasi.
+      adminHttpMock.get.mockImplementation(async (path: string) => {
+        if (path === "/v1/admin/showcase-reports/metrics")
+          return {
+            openReports: 0,
+            underReview: 0,
+            resolvedLast30d: 0,
+            avgResolutionHours: null,
+            takedownsLast30d: 0,
+            restrictsLast30d: 0,
+            reopensLast30d: 0,
+            dismissedLast30d: 0,
+            pendingAppeals: 0,
+            reasonDistribution: [],
+          }
+        return { data: [], total: 0, page: 1, limit: 20, totalPages: 1 }
+      })
+    },
   },
   { href: "/chat", load: () => import("@/app/(panel)/chat/page"), heading: /Moderasi Chat/ },
   { href: "/badges", load: () => import("@/app/(panel)/badges/page"), heading: /Verifikasi & Badge/ },
@@ -132,11 +151,23 @@ const ROUTES: RouteSpec[] = [
           }
         if (path === "/v1/admin/observability/spans")
           return { sampling: {}, spans: [] }
+        // ADM-315: pratinjau status publik (PublicStatus) — bentuk non-paginasi.
+        if (path === "/v1/status")
+          return {
+            status: "operational",
+            release: "test",
+            at: new Date().toISOString(),
+            components: [],
+            activeIncidents: [],
+            history: [],
+          }
         return { data: [], total: 0, page: 1, limit: 20, totalPages: 1 }
       })
     },
   },
   { href: "/login", load: () => import("@/app/login/page"), heading: /Kahade Admin/ },
+  // ADM-427 (tim sistem): halaman status dari MENU rbac.
+  { href: "/status", load: () => import("@/app/(panel)/status/page"), heading: /Status Layanan/ },
   {
     href: "/ops-settings",
     load: () => import("@/app/(panel)/ops-settings/page"),
