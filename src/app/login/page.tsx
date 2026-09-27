@@ -18,6 +18,7 @@ import { useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, Input } from "@/components/ui/input"
+import { MfaQrCode } from "@/components/security/mfa-qr-code"
 import { ToastProvider, useToast } from "@/components/ui/toast"
 import { AuthProvider, useAuth } from "@/lib/auth-context"
 import { userMessage } from "@/lib/api/response"
@@ -169,13 +170,7 @@ function LoginForm() {
                 </p>
                 {mfaOtpauthUrl ? (
                   <div className="flex justify-center">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(mfaOtpauthUrl)}`}
-                      alt="QR code MFA"
-                      width={200}
-                      height={200}
-                    />
+                    <MfaQrCode otpauthUrl={mfaOtpauthUrl} />
                   </div>
                 ) : null}
                 {mfaSecret ? (
