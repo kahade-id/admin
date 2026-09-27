@@ -46,7 +46,9 @@ import {
   type FinancialSummary,
   type PendingWithdrawal,
   type RevenueBreakdown,
+  type WalletTransactionStatus,
   type WalletTransactionType,
+  downloadFinanceCsv,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
@@ -104,6 +106,14 @@ const WITHDRAW_STATUS_LABEL: Record<string, string> = {
   SUCCESS: "Berhasil",
   FAILED: "Gagal",
 }
+
+// ADM-214: filter status transaksi (backend `listTransactions` mendukung `status`).
+const TX_STATUS_FILTERS: Array<{ value: WalletTransactionStatus | ""; label: string }> = [
+  { value: "", label: "Semua status" },
+  { value: "PENDING", label: "Pending" },
+  { value: "SUCCESS", label: "Berhasil" },
+  { value: "FAILED", label: "Gagal" },
+]
 
 const TYPE_FILTERS: Array<{ value: WalletTransactionType | ""; label: string }> = [
   { value: "", label: "Semua tipe" },
@@ -348,6 +358,8 @@ export default function FinancePage() {
   const [search, setSearch] = useState("")
   const debouncedSearch = useDebouncedValue(search, 400)
   const [typeFilter, setTypeFilter] = useState<WalletTransactionType | "">("")
+  // ADM-214
+  const [txStatusFilter, setTxStatusFilter] = useState<WalletTransactionStatus | "">("")
   const [dateInputs, setDateInputs] = useState(defaultDateInputs)
   const [dateError, setDateError] = useState<string | null>(null)
   const [range, setRange] = useState(() =>
@@ -368,6 +380,7 @@ export default function FinancePage() {
           page,
           limit: PAGE_SIZE,
           type: typeFilter || undefined,
+          status: txStatusFilter || undefined,
           q: debouncedSearch.trim() || undefined,
           startDate: range.start,
           endDate: range.end,
@@ -388,7 +401,7 @@ export default function FinancePage() {
         setTxLoading(false)
       }
     },
-    [debouncedSearch, typeFilter, range, toast],
+    [debouncedSearch, typeFilter, txStatusFilter, range, toast],
   )
 
   useEffect(() => {
@@ -398,6 +411,34 @@ export default function FinancePage() {
   const handleTypeChange = (value: string) => {
     setTypeFilter(value as WalletTransactionType | "")
     setTxPage(1)
+  }
+
+  // ADM-214: filter status transaksi
+  const handleTxStatusChange = (value: string) => {
+    setTxStatusFilter(value as WalletTransactionStatus | "")
+    setTxPage(1)
+  }
+
+  // ADM-215: unduh export CSV ledger (terotentikasi, rentang = filter tanggal).
+  const [csvLoading, setCsvLoading] = useState(false)
+  const handleCsvExport = async () => {
+    setCsvLoading(true)
+    try {
+      await downloadFinanceCsv(range.start, range.end)
+      toast.show({
+        title: "CSV diunduh",
+        description: "Export ledger untuk rentang tanggal terpilih.",
+        tone: "success",
+      })
+    } catch (e) {
+      toast.show({
+        title: "Gagal mengunduh CSV",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setCsvLoading(false)
+    }
   }
 
   const handleDateChange = (nextStart: string, nextEnd: string) => {
@@ -493,15 +534,17 @@ export default function FinancePage() {
               value={formatRupiah(escrow?.totalEscrowBalance)}
               hint={`${formatNumber(escrow?.activeEscrowOrders ?? 0)} order aktif`}
             />
+            {/* ADM-211: revenue gabungan (fee + langganan) dengan breakdown — kartu
+                lama hanya menampilkan fee platform sehingga pendapatan mengecil. */}
             <StatCard
               label="Revenue hari ini"
-              value={formatRupiah(summary?.totalPlatformFeeToday)}
-              hint="Fee platform"
+              value={formatRupiah(summary?.totalRevenueToday)}
+              hint={`Fee ${formatRupiah(summary?.totalPlatformFeeToday)} + langganan ${formatRupiah(summary?.totalSubscriptionRevenueToday)}`}
             />
             <StatCard
               label="Revenue bulan ini"
-              value={formatRupiah(summary?.totalPlatformFeeThisMonth)}
-              hint="Fee platform"
+              value={formatRupiah(summary?.totalRevenueThisMonth)}
+              hint={`Fee ${formatRupiah(summary?.totalPlatformFeeThisMonth)} + langganan ${formatRupiah(summary?.totalSubscriptionRevenueThisMonth)}`}
             />
             <StatCard
               label="Antrean penarikan"
@@ -758,9 +801,21 @@ export default function FinancePage() {
           <CardHeader
             title="Transaksi"
             subtitle="Pencarian server-side: txId, deskripsi, order, referensi eksternal (Midtrans/Flash/Iris). Klik Detail untuk timeline."
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                loading={csvLoading}
+                onClick={() => void handleCsvExport()}
+                title="Unduh export CSV ledger untuk rentang tanggal terpilih"
+              >
+                Unduh CSV
+              </Button>
+            }
           />
           <CardBody>
-            <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               <Input
                 label="Cari"
                 placeholder="Cari txId, nama, nominal…"
@@ -775,6 +830,13 @@ export default function FinancePage() {
                 value={typeFilter}
                 onChange={(e) => handleTypeChange(e.target.value)}
                 options={TYPE_FILTERS}
+              />
+              {/* ADM-214: filter status */}
+              <Select
+                label="Status"
+                value={txStatusFilter}
+                onChange={(e) => handleTxStatusChange(e.target.value)}
+                options={TX_STATUS_FILTERS}
               />
               <Input
                 label="Dari"

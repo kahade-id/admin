@@ -58,6 +58,11 @@ export type FinancialSummary = {
   totalFeeCount: number
   totalPlatformFeeToday: number
   totalPlatformFeeThisMonth: number
+  /** ADM-211: breakdown revenue langganan + revenue gabungan (fee + langganan). */
+  totalSubscriptionRevenueToday: number
+  totalSubscriptionRevenueThisMonth: number
+  totalRevenueToday: number
+  totalRevenueThisMonth: number
   totalWithdrawalsToday: number
   totalEscrowBalance: number
   pendingWithdrawals: number
@@ -463,14 +468,44 @@ export function acknowledgeFinding(
   )
 }
 
-/** Unduh CSV temuan (tanpa PII — nama pengguna menjadi inisial). */
-export function exportFindingsCsvUrl(query: FindingsQuery = {}): string {
+/** URL export CSV ledger (GET /v1/admin/finance/export/csv). */
+export function buildFinanceCsvUrl(from?: string, to?: string): string {
   const params = new URLSearchParams()
-  for (const [k, v] of Object.entries(query)) {
-    if (v !== undefined && v !== null && v !== "") params.set(k, String(v))
-  }
+  if (from) params.set("from", from)
+  if (to) params.set("to", to)
   const qs = params.toString()
-  return `/v1/admin/finance/reconcile/findings/export/csv${qs ? `?${qs}` : ""}`
+  return `${API_BASE_URL}/v1/admin/finance/export/csv${qs ? `?${qs}` : ""}`
+}
+
+/**
+ * ADM-215: unduh export CSV ledger dengan bearer token (backend membatasi
+ * ke SUPER_ADMIN/FINANCE_ADMIN; rentang maks 365 hari, default 30 hari
+ * terakhir). Menggantikan builder URL publik tanpa auth (ADM-216).
+ */
+export async function downloadFinanceCsv(from?: string, to?: string): Promise<void> {
+  const token = getAdminAccessToken()
+  const res = await fetch(buildFinanceCsvUrl(from, to), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.message) detail = String(body.message)
+      else if (body?.code) detail = String(body.code)
+    } catch {
+      /* abaikan — pakai detail default */
+    }
+    throw new Error(`Gagal mengunduh CSV: ${detail}`)
+  }
+  const blob = await res.blob()
+  const a = document.createElement("a")
+  a.href = URL.createObjectURL(blob)
+  a.download = `finance-export-${(from ?? "30d").slice(0, 10)}-to-${(to ?? "now").slice(0, 10)}.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(a.href)
 }
 
 export type CorrectionType = "CREDIT" | "DEBIT"
