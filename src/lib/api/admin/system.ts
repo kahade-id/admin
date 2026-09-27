@@ -78,6 +78,8 @@ export interface AuditLogQuery {
   action?: string
   adminId?: string
   targetType?: string
+  /** ADM-128: filter target spesifik (exact match) — jejak versi per entitas. */
+  targetId?: string
   startDate?: string
   endDate?: string
 }

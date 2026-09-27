@@ -15,7 +15,8 @@
  */
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { Suspense, useCallback, useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -40,6 +41,7 @@ import {
   type AdminOrderItem,
   type AdminOrderStatus,
 } from "@/lib/api/admin/orders"
+import { getRoomIdByOrder, getRoomMessages } from "@/lib/api/admin/chat"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
@@ -91,13 +93,16 @@ const STATUS_FILTERS: Array<{ value: AdminOrderStatus | ""; label: string }> = [
   { value: "CANCELLED", label: "Dibatalkan" },
 ]
 
-/** Status order yang masih boleh dibatalkan paksa. */
+/**
+ * Status order yang masih boleh dibatalkan paksa.
+ * ADM-107: DISPUTED dikeluarkan — backend menolak force-cancel saat order
+ * disengketakan; intervensi wajib lewat alur sengketa (lihat hint di bawah).
+ */
 const CANCELLABLE: AdminOrderStatus[] = [
   "WAITING_CONFIRMATION",
   "WAITING_PAYMENT",
   "PROCESSING",
   "IN_DELIVERY",
-  "DISPUTED",
 ]
 
 /** Status order yang boleh diselesaikan paksa (DISPUTED wajib lewat alur sengketa). */
@@ -152,20 +157,48 @@ function KeyValue({ label, value }: { label: string; value: string }) {
 }
 
 export default function OrdersPage() {
+  return (
+    <Suspense>
+      <OrdersPageContent />
+    </Suspense>
+  )
+}
+
+const SORT_BY_OPTIONS = [
+  { value: "createdAt", label: "Terbaru dibuat" },
+  { value: "updatedAt", label: "Terbaru diperbarui" },
+  { value: "orderValue", label: "Nilai order" },
+  { value: "buyerPayAmount", label: "Bayar pembeli" },
+  { value: "completedAt", label: "Waktu selesai" },
+]
+
+const SORT_ORDER_OPTIONS = [
+  { value: "desc", label: "Menurun" },
+  { value: "asc", label: "Menaik" },
+]
+
+function OrdersPageContent() {
   const toast = useToast()
   // A5 (audit 2026-09-26): role dipakai untuk menyembunyikan tombol intervensi
   // yang pasti ditolak backend (403) — backend tetap gate utama.
   const { role } = useAuth()
+  // ADM-116: deep-link dari halaman milestone (?search=<orderId>).
+  const searchParams = useSearchParams()
 
   // ------------------------------------------------------------------
   // Daftar order
   // ------------------------------------------------------------------
-  const [search, setSearch] = useState("")
+  const [search, setSearch] = useState(() => searchParams.get("search") ?? "")
   const debouncedSearch = useDebouncedValue(search, 400)
   const [statusFilter, setStatusFilter] = useState<AdminOrderStatus | "">("")
   // AW-016: backend hanya menerapkan filter saat hasEscrow === true
   // (admin-orders.service.ts) — UI berupa pilihan "Dengan escrow" saja.
   const [escrowOnly, setEscrowOnly] = useState(false)
+  // ADM-117: rentang tanggal + pengurutan (didukung backend).
+  const [startDate, setStartDate] = useState("")
+  const [endDate, setEndDate] = useState("")
+  const [sortBy, setSortBy] = useState("createdAt")
+  const [sortOrder, setSortOrder] = useState("desc")
 
   const [rows, setRows] = useState<AdminOrderItem[]>([])
   const [page, setPage] = useState(1)
@@ -183,6 +216,10 @@ export default function OrdersPage() {
           status: statusFilter || undefined,
           q: debouncedSearch.trim() || undefined,
           hasEscrow: escrowOnly || undefined,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          sortBy: sortBy as "createdAt" | "updatedAt" | "orderValue" | "buyerPayAmount" | "completedAt",
+          sortOrder: sortOrder as "asc" | "desc",
         })
         setRows(res.data ?? [])
         const t = res.total ?? res.data?.length ?? 0
@@ -198,7 +235,7 @@ export default function OrdersPage() {
         setLoading(false)
       }
     },
-    [statusFilter, debouncedSearch, escrowOnly, toast],
+    [statusFilter, debouncedSearch, escrowOnly, startDate, endDate, sortBy, sortOrder, toast],
   )
 
   useEffect(() => {
@@ -232,6 +269,10 @@ export default function OrdersPage() {
     setConfirmOpen(false)
     setReason("")
     setReasonError(null)
+    // ADM-115: reset penampil percakapan order.
+    setConvMessages(null)
+    setConvError(null)
+    setConvRoomId(null)
     void (async () => {
       try {
         const d = await getAdminOrderDetail(order.orderId || order.id)
@@ -243,6 +284,30 @@ export default function OrdersPage() {
       }
     })()
   }, [])
+
+  // ADM-115: penampil percakapan room ORDER dari detail order.
+  // Backend hanya mengembalikan room bertipe ORDER — DM pribadi tidak bocor.
+  const [convRoomId, setConvRoomId] = useState<string | null>(null)
+  const [convMessages, setConvMessages] = useState<unknown[] | null>(null)
+  const [convLoading, setConvLoading] = useState(false)
+  const [convError, setConvError] = useState<string | null>(null)
+
+  const loadConversation = useCallback(async () => {
+    if (!detail || convLoading) return
+    setConvLoading(true)
+    setConvError(null)
+    try {
+      const resolved = await getRoomIdByOrder(detail.orderId)
+      setConvRoomId(resolved.roomId)
+      const res = await getRoomMessages(resolved.roomId, { limit: 50 })
+      setConvMessages(res.messages)
+    } catch (e) {
+      setConvError(userMessage(e))
+      setConvMessages(null)
+    } finally {
+      setConvLoading(false)
+    }
+  }, [detail, convLoading])
 
   const closeDetail = () => {
     if (submitting) return
@@ -377,6 +442,46 @@ export default function OrdersPage() {
                 { value: "", label: "Semua order" },
                 { value: "yes", label: "Dengan escrow" },
               ]}
+            />
+          </div>
+
+          {/* ADM-117: rentang tanggal + pengurutan (didukung backend). */}
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+            <Input
+              label="Dari tanggal"
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                setStartDate(e.target.value)
+                setPage(1)
+              }}
+            />
+            <Input
+              label="Sampai tanggal"
+              type="date"
+              value={endDate}
+              onChange={(e) => {
+                setEndDate(e.target.value)
+                setPage(1)
+              }}
+            />
+            <Select
+              label="Urutkan"
+              value={sortBy}
+              onChange={(e) => {
+                setSortBy(e.target.value)
+                setPage(1)
+              }}
+              options={SORT_BY_OPTIONS}
+            />
+            <Select
+              label="Arah"
+              value={sortOrder}
+              onChange={(e) => {
+                setSortOrder(e.target.value)
+                setPage(1)
+              }}
+              options={SORT_ORDER_OPTIONS}
             />
           </div>
 
@@ -535,6 +640,85 @@ export default function OrdersPage() {
               ) : null}
             </dl>
 
+            {/* ADM-118: info pengiriman dari detail order backend. */}
+            {detail.trackingNumber || detail.courierName || detail.shippedAt ? (
+              <div>
+                <p className="mb-2 text-label font-semibold text-text-secondary">
+                  Pengiriman
+                </p>
+                <dl>
+                  {detail.trackingNumber ? (
+                    <KeyValue label="Nomor resi" value={String(detail.trackingNumber)} />
+                  ) : null}
+                  {detail.courierName ? (
+                    <KeyValue label="Kurir" value={String(detail.courierName)} />
+                  ) : null}
+                  {detail.shippedAt ? (
+                    <KeyValue label="Dikirim" value={formatDateTimeWIB(String(detail.shippedAt))} />
+                  ) : null}
+                  {detail.trackingNotes ? (
+                    <KeyValue label="Catatan resi" value={String(detail.trackingNotes)} />
+                  ) : null}
+                </dl>
+              </div>
+            ) : null}
+
+            {/* ADM-115: percakapan room ORDER — hanya room transaksi, DM tidak bocor. */}
+            <div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-label font-semibold text-text-secondary">
+                  Percakapan order
+                </p>
+                {convMessages === null && !convLoading ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    onClick={() => void loadConversation()}
+                  >
+                    Lihat percakapan
+                  </Button>
+                ) : null}
+              </div>
+              {convLoading ? (
+                <div className="flex items-center gap-2 py-3">
+                  <Spinner size="sm" />
+                  <p className="text-body text-text-secondary">Memuat percakapan…</p>
+                </div>
+              ) : convError ? (
+                <p className="text-body text-danger-text">{convError}</p>
+              ) : convMessages ? (
+                convMessages.length === 0 ? (
+                  <p className="text-caption text-text-secondary">
+                    Belum ada pesan di room order.
+                  </p>
+                ) : (
+                  <ul className="max-h-64 space-y-2 overflow-y-auto">
+                    {convMessages.map((m, i) => {
+                      const rec = (m ?? {}) as Record<string, unknown>
+                      const text = ["content", "text", "body", "message"]
+                        .map((k) => rec[k])
+                        .find((v) => typeof v === "string" && (v as string).trim()) as string | undefined
+                      return (
+                        <li key={i} className="rounded-sm bg-surface px-3 py-2">
+                          <p className="text-caption text-text-tertiary">
+                            {typeof rec.createdAt === "string" ? formatDateTimeWIB(rec.createdAt) : ""}
+                          </p>
+                          <p className="mt-0.5 text-body text-text-primary">
+                            {text ?? "Pesan tanpa teks"}
+                          </p>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )
+              ) : (
+                <p className="text-caption text-text-secondary">
+                  Percakapan buyer–seller di room transaksi order ini.
+                </p>
+              )}
+            </div>
+
             {(detail.statusHistories?.length ?? 0) > 0 ? (
               <div>
                 <p className="mb-2 text-label font-semibold text-text-secondary">
@@ -602,9 +786,13 @@ export default function OrdersPage() {
                 </div>
                 {!showForceCancel && !showForceComplete ? (
                   <p className="mt-2 text-caption text-text-secondary">
-                    {canCancel || canComplete
-                      ? "Role admin Anda tidak memiliki izin intervensi darurat untuk order ini."
-                      : "Order pada status ini tidak bisa diintervensi (selesai/dibatalkan)."}
+                    {detailStatus === "DISPUTED"
+                      ? // ADM-107: DISPUTED tidak bisa dibatalkan paksa —
+                        // intervensi wajib lewat alur sengketa di halaman Disputes.
+                        "Order sedang disengketakan — batal paksa tidak tersedia. Selesaikan lewat alur sengketa di halaman Sengketa."
+                      : canCancel || canComplete
+                        ? "Role admin Anda tidak memiliki izin intervensi darurat untuk order ini."
+                        : "Order pada status ini tidak bisa diintervensi (selesai/dibatalkan)."}
                   </p>
                 ) : null}
               </div>

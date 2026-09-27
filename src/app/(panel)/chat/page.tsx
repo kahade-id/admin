@@ -36,6 +36,7 @@ import {
   reviewModerationEvent,
   type ModerationEvent,
 } from "@/lib/api/admin/chat"
+import { listAuditLogs, type AdminAuditLogItem } from "@/lib/api/admin/system"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 
@@ -51,6 +52,30 @@ const FILTER_OPTIONS = [
   { value: "REVIEWED", label: "Ditinjau" },
   { value: "DISMISSED", label: "Diabaikan" },
   { value: "ACTIONED", label: "Ditindak" },
+]
+
+/** ADM-122: filter severity / aksi otomatis / jenis pelanggaran (didukung backend). */
+const SEVERITY_OPTIONS = [
+  { value: "ALL", label: "Semua severity" },
+  { value: "LOW", label: "Low" },
+  { value: "MEDIUM", label: "Medium" },
+  { value: "HIGH", label: "High" },
+  { value: "CRITICAL", label: "Critical" },
+]
+
+const MOD_ACTION_OPTIONS = [
+  { value: "ALL", label: "Semua aksi" },
+  { value: "BLOCKED", label: "Diblokir" },
+  { value: "REDACTED", label: "Disensor" },
+  { value: "FLAGGED", label: "Ditandai" },
+]
+
+const KIND_OPTIONS = [
+  { value: "ALL", label: "Semua jenis" },
+  { value: "CIRCUMVENTION", label: "Pengelakan filter" },
+  { value: "CONTACT_SHARING", label: "Berbagi kontak" },
+  { value: "PROFANITY", label: "Kata kasar" },
+  { value: "SPAM", label: "Spam" },
 ]
 
 const ACTION_OPTIONS = [
@@ -137,6 +162,9 @@ export default function ChatModerationPage() {
   const toast = useToast()
 
   const [filter, setFilter] = useState<Filter>("ALL")
+  const [severityFilter, setSeverityFilter] = useState("ALL")
+  const [modActionFilter, setModActionFilter] = useState("ALL")
+  const [kindFilter, setKindFilter] = useState("ALL")
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -160,11 +188,27 @@ export default function ChatModerationPage() {
 
   const [messagesVisible, setMessagesVisible] = useState(false)
   const [messages, setMessages] = useState<unknown[] | null>(null)
+  const [msgCursor, setMsgCursor] = useState<string | null>(null)
+  const [msgHasMore, setMsgHasMore] = useState(false)
   const [messagesLoading, setMessagesLoading] = useState(false)
+  const [messagesOlderLoading, setMessagesOlderLoading] = useState(false)
   const [messagesError, setMessagesError] = useState<string | null>(null)
 
+  // ADM-128: riwayat review satu event dari audit log
+  // (targetType=ChatModerationEvent & targetId=<eventId>).
+  const [reviewHistory, setReviewHistory] = useState<AdminAuditLogItem[]>([])
+  const [reviewHistoryLoading, setReviewHistoryLoading] = useState(false)
+  const [reviewHistoryError, setReviewHistoryError] = useState<string | null>(null)
+
   const load = useCallback(
-    async (mode: "initial" | "refresh" = "initial", targetPage = page, targetFilter = filter) => {
+    async (
+      mode: "initial" | "refresh" = "initial",
+      targetPage = page,
+      targetFilter = filter,
+      targetSeverity = severityFilter,
+      targetAction = modActionFilter,
+      targetKind = kindFilter,
+    ) => {
       if (mode === "initial") setLoading(true)
       else setRefreshing(true)
       setError(null)
@@ -173,6 +217,9 @@ export default function ChatModerationPage() {
           page: targetPage,
           limit: PAGE_SIZE,
           status: targetFilter === "ALL" ? undefined : targetFilter,
+          severity: targetSeverity === "ALL" ? undefined : targetSeverity,
+          action: targetAction === "ALL" ? undefined : targetAction,
+          kind: targetKind === "ALL" ? undefined : targetKind,
         })
         setRows(res.data ?? [])
         const t = res.total ?? res.data?.length ?? 0
@@ -187,7 +234,7 @@ export default function ChatModerationPage() {
         setRefreshing(false)
       }
     },
-    [page, filter, toast],
+    [page, filter, severityFilter, modActionFilter, kindFilter, toast],
   )
 
   const loadStats = useCallback(async () => {
@@ -213,7 +260,22 @@ export default function ChatModerationPage() {
   const handleFilterChange = (f: Filter) => {
     setFilter(f)
     setPage(1)
-    void load("initial", 1, f)
+    void load("initial", 1, f, severityFilter, modActionFilter, kindFilter)
+  }
+
+  /** ADM-122: perubahan filter severity/aksi/jenis — reset ke halaman 1. */
+  const handleMetaFilterChange = (
+    which: "severity" | "action" | "kind",
+    value: string,
+  ) => {
+    const sev = which === "severity" ? value : severityFilter
+    const act = which === "action" ? value : modActionFilter
+    const knd = which === "kind" ? value : kindFilter
+    if (which === "severity") setSeverityFilter(value)
+    if (which === "action") setModActionFilter(value)
+    if (which === "kind") setKindFilter(value)
+    setPage(1)
+    void load("initial", 1, filter, sev, act, knd)
   }
 
   const handlePageChange = (p: number) => {
@@ -235,13 +297,40 @@ export default function ChatModerationPage() {
     setNotes("")
     setMessagesVisible(false)
     setMessages(null)
+    setMsgCursor(null)
+    setMsgHasMore(false)
     setMessagesError(null)
+    setReviewHistory([])
+    setReviewHistoryError(null)
     try {
-      setDetail(await getModerationEventDetail(eventId))
+      const ev = await getModerationEventDetail(eventId)
+      setDetail(ev)
+      // ADM-128: riwayat review satu event dari audit log.
+      void loadReviewHistory(ev)
     } catch (e) {
       setDetailError(userMessage(e))
     } finally {
       setDetailLoading(false)
+    }
+  }
+
+  /** ADM-128: jejak versi review per event via audit-log filter. */
+  const loadReviewHistory = async (ev: ModerationEvent) => {
+    const targetId = ev.eventId ?? ev.id
+    if (!targetId) return
+    setReviewHistoryLoading(true)
+    setReviewHistoryError(null)
+    try {
+      const res = await listAuditLogs({
+        targetType: "ChatModerationEvent",
+        targetId,
+        limit: 20,
+      })
+      setReviewHistory(res.data ?? [])
+    } catch (e) {
+      setReviewHistoryError(userMessage(e))
+    } finally {
+      setReviewHistoryLoading(false)
     }
   }
 
@@ -250,13 +339,17 @@ export default function ChatModerationPage() {
     setDetailId(null)
   }
 
+  // ADM-103: adaptor mengembalikan envelope { messages, nextCursor, hasMore }.
   const loadRoomMessages = async (roomId: string) => {
     setMessagesVisible(true)
     if (messages !== null || messagesLoading) return
     setMessagesLoading(true)
     setMessagesError(null)
     try {
-      setMessages(await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT }))
+      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT })
+      setMessages(res.messages)
+      setMsgCursor(res.nextCursor)
+      setMsgHasMore(res.hasMore)
     } catch (e) {
       setMessagesError(userMessage(e))
     } finally {
@@ -264,13 +357,30 @@ export default function ChatModerationPage() {
     }
   }
 
+  const loadOlderRoomMessages = async (roomId: string) => {
+    if (!msgCursor || messagesOlderLoading) return
+    setMessagesOlderLoading(true)
+    try {
+      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT, cursor: msgCursor })
+      setMessages((prev) => [...(prev ?? []), ...res.messages])
+      setMsgCursor(res.nextCursor)
+      setMsgHasMore(res.hasMore)
+    } catch (e) {
+      toast.show({ title: "Gagal memuat pesan lama", description: userMessage(e), tone: "danger" })
+    } finally {
+      setMessagesOlderLoading(false)
+    }
+  }
+
   const handleSubmitReview = async () => {
     if (!detailId || submitting) return
     setSubmitting(true)
     try {
+      // ADM-102: payload persis { status, note } — bentuk lama
+      // { action, notes } diam-diam diabaikan backend.
       await reviewModerationEvent(detailId, {
-        action: reviewAction,
-        notes: notes.trim() || undefined,
+        status: reviewAction,
+        note: notes.trim() || undefined,
       })
       toast.show({ title: "Review terkirim", tone: "success" })
       setDetailId(null)
@@ -354,6 +464,27 @@ export default function ChatModerationPage() {
           options={FILTER_OPTIONS}
           value={filter}
           onChange={(e) => handleFilterChange(e.target.value as Filter)}
+          className="w-52"
+        />
+        <Select
+          label="Severity"
+          options={SEVERITY_OPTIONS}
+          value={severityFilter}
+          onChange={(e) => handleMetaFilterChange("severity", e.target.value)}
+          className="w-52"
+        />
+        <Select
+          label="Aksi otomatis"
+          options={MOD_ACTION_OPTIONS}
+          value={modActionFilter}
+          onChange={(e) => handleMetaFilterChange("action", e.target.value)}
+          className="w-52"
+        />
+        <Select
+          label="Jenis pelanggaran"
+          options={KIND_OPTIONS}
+          value={kindFilter}
+          onChange={(e) => handleMetaFilterChange("kind", e.target.value)}
           className="w-52"
         />
       </div>
@@ -511,21 +642,36 @@ export default function ChatModerationPage() {
                       </Button>
                     </div>
                   ) : messages && messages.length > 0 ? (
-                    <ul className="max-h-64 space-y-2 overflow-y-auto">
-                      {messages.map((m, i) => (
-                        <li key={i} className="rounded-sm border border-border bg-surface px-3 py-2">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-caption font-semibold text-text-primary">
-                              {messageSenderLabel(m)}
-                            </span>
-                            <span className="text-caption text-text-tertiary">
-                              {messageTime(m)}
-                            </span>
-                          </div>
-                          <p className="mt-1 text-body text-text-primary">{messageText(m)}</p>
-                        </li>
-                      ))}
-                    </ul>
+                    <>
+                      <ul className="max-h-64 space-y-2 overflow-y-auto">
+                        {messages.map((m, i) => (
+                          <li key={i} className="rounded-sm border border-border bg-surface px-3 py-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-caption font-semibold text-text-primary">
+                                {messageSenderLabel(m)}
+                              </span>
+                              <span className="text-caption text-text-tertiary">
+                                {messageTime(m)}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-body text-text-primary">{messageText(m)}</p>
+                          </li>
+                        ))}
+                      </ul>
+                      {msgHasMore ? (
+                        <div className="mt-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            fullWidth={false}
+                            loading={messagesOlderLoading}
+                            onClick={() => void loadOlderRoomMessages(String(detail?.roomId))}
+                          >
+                            Muat pesan lama
+                          </Button>
+                        </div>
+                      ) : null}
+                    </>
                   ) : (
                     <p className="text-caption text-text-secondary">
                       Tidak ada pesan di room ini.
@@ -550,6 +696,42 @@ export default function ChatModerationPage() {
                 placeholder="Catatan review (opsional)…"
                 maxLength={500}
               />
+            </div>
+
+            {/* ADM-128: riwayat review satu event dari audit log. */}
+            <div className="space-y-2 border-t border-border pt-4">
+              <p className="text-body font-medium text-text-primary">Riwayat review</p>
+              {reviewHistoryLoading ? (
+                <div className="flex items-center gap-2">
+                  <Spinner size="sm" />
+                  <p className="text-caption text-text-secondary">Memuat riwayat…</p>
+                </div>
+              ) : reviewHistoryError ? (
+                <p className="text-caption text-danger-text">{reviewHistoryError}</p>
+              ) : reviewHistory.length === 0 ? (
+                <p className="text-caption text-text-secondary">
+                  Belum ada jejak review tercatat untuk event ini.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {reviewHistory.map((h) => {
+                    const after = (h.after ?? {}) as Record<string, unknown>
+                    return (
+                      <li key={h.id} className="rounded-sm bg-surface px-3 py-2">
+                        <p className="text-body text-text-primary">{h.description}</p>
+                        <p className="mt-0.5 text-caption text-text-secondary">
+                          {after.status ? `Status: ${String(after.status)}` : ""}
+                          {after.note ? ` · catatan: ${String(after.note)}` : ""}
+                        </p>
+                        <p className="text-caption text-text-tertiary">
+                          {formatDateTimeWIB(h.createdAt)}
+                          {h.adminId ? ` · admin ${h.adminId.slice(0, 12)}` : ""}
+                        </p>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
             </div>
           </div>
         ) : null}

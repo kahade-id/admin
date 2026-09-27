@@ -62,6 +62,12 @@ export type AdminOrderDetail = AdminOrderItem & {
   buyer: AdminOrderParty | null
   seller: AdminOrderParty | null
   statusHistories?: AdminOrderStatusHistory[]
+  // ADM-118: info pengiriman — backend mengirimnya via spread serializeOrder
+  // (trackingNumber / courierName / trackingNotes / shippedAt di model Order).
+  trackingNumber?: string | null
+  courierName?: string | null
+  trackingNotes?: string | null
+  shippedAt?: string | null
   walletTransactions?: Array<{
     txId?: string
     type?: string
@@ -97,6 +103,12 @@ export function listAdminOrders(query?: {
   page?: number
   limit?: number
   hasEscrow?: boolean
+  /** ADM-117: filter periode (ISO date) — didukung backend AdminOrderQueryDto. */
+  startDate?: string
+  endDate?: string
+  /** ADM-117: sort — createdAt | updatedAt | orderValue | buyerPayAmount | completedAt. */
+  sortBy?: "createdAt" | "updatedAt" | "orderValue" | "buyerPayAmount" | "completedAt"
+  sortOrder?: "asc" | "desc"
 }): Promise<Paginated<AdminOrderItem>> {
   const { q, ...rest } = query ?? {}
   return adminHttp.get<Paginated<AdminOrderItem>>("/v1/admin/orders", {
