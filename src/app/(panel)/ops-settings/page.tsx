@@ -35,14 +35,25 @@ import {
   updateOpsSetting,
   testOpsSetting,
   getOpsSettingHistory,
+  getMaintenanceStatus,
+  updateMaintenance,
   type OpsSettingView,
   type OpsSettingAuditItem,
+  type MaintenanceStatus,
 } from "@/lib/api/admin/ops-settings"
 
 export default function OpsSettingsPage() {
   const toast = useToast()
   const [settings, setSettings] = useState<OpsSettingView[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Item 9 (batch 2026-09-28): Mode maintenance — kartu khusus di atas daftar
+  // setting (toggle + pesan), memakai endpoint PUT /v1/admin/maintenance.
+  const [maintenance, setMaintenance] = useState<MaintenanceStatus | null>(null)
+  const [maintenanceLoading, setMaintenanceLoading] = useState(true)
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false)
+  const [maintenanceDraft, setMaintenanceDraft] = useState(false)
+  const [maintenanceMessage, setMaintenanceMessage] = useState("")
 
   // Dialog ubah
   const [editing, setEditing] = useState<OpsSettingView | null>(null)
@@ -58,12 +69,23 @@ export default function OpsSettingsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setMaintenanceLoading(true)
     try {
       setSettings(await listOpsSettings())
     } catch (e) {
       toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
     } finally {
       setLoading(false)
+    }
+    try {
+      const m = await getMaintenanceStatus()
+      setMaintenance(m)
+      setMaintenanceDraft(m.enabled)
+      setMaintenanceMessage(m.message ?? "")
+    } catch (e) {
+      toast.show({ title: "Gagal memuat status maintenance", description: userMessage(e), tone: "danger" })
+    } finally {
+      setMaintenanceLoading(false)
     }
   }, [toast])
 
@@ -121,8 +143,29 @@ export default function OpsSettingsPage() {
     }
   }
 
-  const openHistory = async (s: OpsSettingView) => {
-    setHistoryFor(s)
+  const doSaveMaintenance = async () => {
+    setMaintenanceSaving(true)
+    try {
+      const msg = maintenanceMessage.trim()
+      const updated = await updateMaintenance(maintenanceDraft, msg ? msg : undefined)
+      setMaintenance(updated)
+      setMaintenanceDraft(updated.enabled)
+      setMaintenanceMessage(updated.message ?? "")
+      toast.show({
+        title: updated.enabled ? "Mode maintenance AKTIF" : "Mode maintenance nonaktif",
+        description: updated.enabled
+          ? "Semua request non-admin kini dijawab 503. Admin panel tetap bisa diakses."
+          : "Layanan kembali normal.",
+        tone: updated.enabled ? "danger" : "success",
+      })
+    } catch (e) {
+      toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
+    } finally {
+      setMaintenanceSaving(false)
+    }
+  }
+
+  const openHistory = async (s: OpsSettingView) => {    setHistoryFor(s)
     setHistoryLoading(true)
     try {
       setHistory(await getOpsSettingHistory(s.key))
@@ -152,6 +195,73 @@ export default function OpsSettingsPage() {
           Boot secret (database, JWT, kunci enkripsi) <strong>tidak dikelola di sini</strong>.
         </p>
       </div>
+
+      {/* Item 9 (batch 2026-09-28): Mode maintenance — toggle + pesan.
+          PUT /v1/admin/maintenance (SUPER_ADMIN). Saat aktif, semua request
+          non-admin dijawab 503 + Retry-After; admin panel tetap bisa diakses. */}
+      <Card className={`p-4 space-y-3 ${maintenance?.enabled ? "border-red-500" : ""}`}>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="font-medium">Mode Maintenance</div>
+            <div className="text-xs text-muted-foreground font-mono">MAINTENANCE_MODE / MAINTENANCE_MESSAGE</div>
+          </div>
+          {maintenanceLoading ? (
+            <Spinner />
+          ) : (
+            <Badge variant="soft" tone={maintenance?.enabled ? "danger" : "neutral"}>
+              {maintenance?.enabled ? "AKTIF" : "Nonaktif"}
+            </Badge>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Saat aktif, aplikasi mobile & semua request non-admin menerima 503
+          (coba lagi nanti). Splash screen membaca status via{" "}
+          <code className="font-mono text-xs">GET /v1/public/maintenance</code> tanpa auth.
+        </p>
+        {!maintenanceLoading && maintenance && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={maintenanceDraft}
+                aria-label="Aktifkan mode maintenance"
+                onClick={() => setMaintenanceDraft((v) => !v)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  maintenanceDraft ? "bg-red-600" : "bg-muted"
+                }`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    maintenanceDraft ? "translate-x-5" : "translate-x-0.5"
+                  }`}
+                />
+              </button>
+              <span className="text-sm">{maintenanceDraft ? "Aktif" : "Nonaktif"}</span>
+            </div>
+            <Field label="Pesan untuk user (maks 500 karakter, kosong = default)">
+              <Input
+                type="text"
+                value={maintenanceMessage}
+                onChange={(e) => setMaintenanceMessage(e.target.value)}
+                placeholder="cth: Aplikasi sedang upgrade. Kembali dalam ±30 menit."
+                maxLength={500}
+                autoComplete="off"
+              />
+            </Field>
+            <div>
+              <Button
+                size="sm"
+                variant={maintenanceDraft ? "destructive" : "primary"}
+                onClick={doSaveMaintenance}
+                disabled={maintenanceSaving}
+              >
+                {maintenanceSaving ? "Menyimpan…" : "Simpan mode maintenance"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Card>
 
       {settings.length === 0 ? (
         <EmptyState title="Tidak ada pengaturan" description="Daftar pengaturan operasional kosong." />

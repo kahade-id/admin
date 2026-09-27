@@ -56,3 +56,30 @@ export async function getOpsSettingHistory(key: string): Promise<OpsSettingAudit
   const res = await adminHttp.get(`/v1/admin/ops-settings/${encodeURIComponent(key)}/history`)
   return (res as { history: OpsSettingAuditItem[] }).history
 }
+
+// ---------------------------------------------------------------------------
+// Item 9 (batch 2026-09-28): Mode maintenance.
+// Endpoint: GET/PUT `/v1/admin/maintenance` (SUPER_ADMIN).
+// Flag disimpan di app_settings (MAINTENANCE_MODE / MAINTENANCE_MESSAGE)
+// via modul ops-settings backend — tanpa tabel baru.
+// ---------------------------------------------------------------------------
+
+export type MaintenanceStatus = {
+  enabled: boolean
+  message: string | null
+  updatedAt?: string
+}
+
+export async function getMaintenanceStatus(): Promise<MaintenanceStatus> {
+  return adminHttp.get("/v1/admin/maintenance") as Promise<MaintenanceStatus>
+}
+
+export async function updateMaintenance(
+  enabled: boolean,
+  message?: string,
+): Promise<MaintenanceStatus> {
+  return adminHttp.put("/v1/admin/maintenance", {
+    enabled,
+    ...(message !== undefined ? { message } : {}),
+  }) as Promise<MaintenanceStatus>
+}
