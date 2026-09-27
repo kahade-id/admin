@@ -108,23 +108,6 @@ export function isoToDay(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-/** Masking email: "b***@contoh.com". */
-export function maskEmail(email: string | null | undefined): string {
-  if (!email) return "—"
-  const [local, domain] = email.split("@")
-  if (!domain) return "***"
-  const first = local?.charAt(0) ?? ""
-  return `${first}***@${domain}`
-}
-
-/** Masking nomor HP: "6285***15". */
-export function maskPhone(phone: string | null | undefined): string {
-  if (!phone) return "—"
-  const digits = phone.replace(/\D/g, "")
-  if (digits.length < 6) return "***"
-  return `${digits.slice(0, 4)}***${digits.slice(-2)}`
-}
-
 /** Proporsi pemakaian kuota 0–1; null bila kuota tanpa batas. */
 export function quotaRatio(used: number, quota: number | null | undefined): number | null {
   if (quota == null || quota <= 0) return null

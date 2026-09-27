@@ -28,6 +28,8 @@ import {
 } from "@/lib/api/admin/support"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
+// ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
+import { maskEmail } from "@/lib/pii"
 
 import { TICKET_STATUS_LABEL, TICKET_STATUS_TONE } from "../maps"
 
@@ -197,7 +199,7 @@ export default function TicketDetailPage() {
                   value={ticket.user?.fullName?.trim() || ticket.user?.email || ticket.userId}
                 />
                 {ticket.user?.email && ticket.user?.fullName?.trim() ? (
-                  <KeyValue label="Email" value={ticket.user.email} />
+                  <KeyValue label="Email" value={maskEmail(ticket.user.email)} />
                 ) : null}
                 <KeyValue label="Dibuat" value={formatDateTimeWIB(ticket.createdAt)} />
                 {ticket.updatedAt ? (

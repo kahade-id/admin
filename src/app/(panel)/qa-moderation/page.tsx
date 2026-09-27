@@ -26,6 +26,7 @@ import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { Select } from "@/components/admin/select"
 import { useAuth } from "@/lib/auth-context"
+import { RoleGate } from "@/components/admin/role-gate"
 import { formatDateTimeWIB } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import {
@@ -61,7 +62,6 @@ import {
 } from "@/lib/api/admin/qa-moderation"
 
 const PAGE_SIZE = 20
-const QA_ALLOWED_ROLES = ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] as const
 
 type Tab = "queue" | "appeals" | "spam" | "metrics"
 
@@ -108,32 +108,17 @@ const DEFAULT_FILTERS: QueueFilters = {
 }
 
 export default function QaModerationPage() {
-  const { state, role } = useAuth()
+  const { role } = useAuth()
   const toast = useToast()
 
-  const allowed = QA_ALLOWED_ROLES.includes(role as (typeof QA_ALLOWED_ROLES)[number])
+  // ADM-427: gate halaman via RoleGate (roles dari MENU rbac), bukan cek inline.
+  // role tetap dipakai untuk gating aksi level super-admin di dalam section.
   const isSuperAdmin = role === "SUPER_ADMIN"
 
   const [tab, setTab] = useState<Tab>("queue")
 
-  if (state.status === "loading") {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center">
-        <Spinner size="md" />
-      </div>
-    )
-  }
-
-  if (!allowed) {
-    return (
-      <EmptyState
-        title="Akses ditolak"
-        description="Halaman Moderasi Q&A hanya untuk Super Admin dan Customer Support."
-      />
-    )
-  }
-
   return (
+    <RoleGate href="/qa-moderation">
     <div>
       <div className="mb-6">
         <h1 className="text-h2 font-bold text-text-primary">Moderasi Q&A</h1>
@@ -162,6 +147,7 @@ export default function QaModerationPage() {
       {tab === "spam" && <SpamSection toast={toast} />}
       {tab === "metrics" && <MetricsSection toast={toast} isSuperAdmin={isSuperAdmin} />}
     </div>
+    </RoleGate>
   )
 }
 

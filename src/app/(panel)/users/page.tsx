@@ -25,6 +25,8 @@ import {
 } from "@/lib/api/admin/users"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+// ADM-405: PII (nama, email) di-mask secara default — tanpa tombol unmask (mask-only).
+import { maskEmail, maskName } from "@/lib/pii"
 
 import { ErrorBlock, LoadingBlock, PageHeader } from "../_components/admin-ui"
 import { ExportUsersDialog } from "./_components/export-users-dialog"
@@ -197,7 +199,8 @@ export default function UsersListPage() {
                 key: "user",
                 header: "Pengguna",
                 render: (r) => {
-                  const name = r.fullName?.trim() || "Tanpa nama"
+                  // ADM-405: mask nama + email pengguna di daftar.
+                  const name = maskName(r.fullName?.trim() || null)
                   return (
                     <div className="min-w-0">
                       <Link
@@ -209,7 +212,7 @@ export default function UsersListPage() {
                       {r.username ? (
                         <p className="text-caption text-text-secondary">@{r.username}</p>
                       ) : null}
-                      <p className="truncate text-caption text-text-secondary">{r.email}</p>
+                      <p className="truncate text-caption text-text-secondary">{maskEmail(r.email)}</p>
                     </div>
                   )
                 },

@@ -13,7 +13,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card"
@@ -46,6 +46,43 @@ function LoginForm() {
   const [mfaOtpauthUrl, setMfaOtpauthUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // ADM-426: hitung mundur setelah 429 (rate limit / lockout sementara).
+  const [cooldownLeft, setCooldownLeft] = useState(0)
+  const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (cooldownTimer.current) clearInterval(cooldownTimer.current)
+    }
+  }, [])
+
+  function startCooldown(seconds: number) {
+    if (cooldownTimer.current) clearInterval(cooldownTimer.current)
+    setCooldownLeft(seconds)
+    cooldownTimer.current = setInterval(() => {
+      setCooldownLeft((left) => {
+        if (left <= 1) {
+          if (cooldownTimer.current) clearInterval(cooldownTimer.current)
+          return 0
+        }
+        return left - 1
+      })
+    }, 1000)
+  }
+
+  /** ADM-426: kenali 429/lockout — pesan ramah + countdown dari Retry-After. */
+  function handleAuthError(err: unknown) {
+    const status = (err as { status?: number } | null)?.status
+    const retryAfter = (err as { retryAfter?: number } | null)?.retryAfter
+    if (status === 429) {
+      // ADM-426: banner countdown khusus — bukan error field biasa.
+      const seconds = retryAfter && retryAfter > 0 ? Math.ceil(retryAfter) : 60
+      startCooldown(seconds)
+      setError(null)
+      return
+    }
+    setError(userMessage(err))
+  }
 
   async function finishLogin() {
     await refresh()
@@ -68,7 +105,7 @@ function LoginForm() {
         toast.show({ title: "Login berhasil", tone: "success" })
         await finishLogin()
       } catch (err) {
-        setError(userMessage(err))
+        handleAuthError(err)
       } finally {
         setLoading(false)
       }
@@ -87,7 +124,7 @@ function LoginForm() {
         toast.show({ title: "MFA diaktifkan. Login berhasil.", tone: "success" })
         await finishLogin()
       } catch (err) {
-        setError(userMessage(err))
+        handleAuthError(err)
       } finally {
         setLoading(false)
       }
@@ -119,7 +156,7 @@ function LoginForm() {
         await finishLogin()
       }
     } catch (err) {
-      setError(userMessage(err))
+      handleAuthError(err)
     } finally {
       setLoading(false)
     }
@@ -213,7 +250,16 @@ function LoginForm() {
                 </Field>
               </>
             )}
-            <Button type="submit" loading={loading}>
+            {/* ADM-426: banner lockout/rate-limit dengan countdown dari Retry-After. */}
+            {cooldownLeft > 0 ? (
+              <p
+                role="alert"
+                className="rounded-md border border-warning bg-warning/10 px-4 py-3 text-body text-text-primary"
+              >
+                Terlalu banyak percobaan. Coba lagi dalam {cooldownLeft} detik.
+              </p>
+            ) : null}
+            <Button type="submit" loading={loading} disabled={cooldownLeft > 0}>
               {phase === "credentials" ? "Masuk" : phase === "mfa-setup" ? "Aktifkan MFA" : "Verifikasi"}
             </Button>
             {phase !== "credentials" ? (

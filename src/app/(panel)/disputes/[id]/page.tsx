@@ -44,6 +44,8 @@ import {
 import { listAdmins } from "@/lib/api/admin/management"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+// ADM-405: PII penggugat di-mask secara default (mask-only, tanpa unmask).
+import { maskEmail, maskName } from "@/lib/pii"
 
 import { DISPUTE_CATEGORY_LABEL, DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "../maps"
 
@@ -160,7 +162,7 @@ function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
           label="Penggugat (initiator)"
           value={
             initiator
-              ? `${initiator.fullName ?? "—"}${initiator.email ? ` · ${initiator.email}` : ""}`
+              ? `${maskName(initiator.fullName ?? null)}${initiator.email ? ` · ${maskEmail(initiator.email)}` : ""}`
               : "—"
           }
           mono

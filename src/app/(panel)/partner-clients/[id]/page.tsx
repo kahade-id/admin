@@ -19,7 +19,7 @@ import { Field, Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
-import { useAuth } from "@/lib/auth-context"
+import { RoleGate } from "@/components/admin/role-gate"
 import { formatDateTimeWIB } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import {
@@ -48,12 +48,18 @@ function KeyValue({ label, value, mono = false }: { label: string; value: ReactN
   )
 }
 
+// ADM-427: gate halaman via RoleGate (roles dari MENU rbac), bukan cek role inline.
 export default function PartnerClientDetailPage() {
-  const { id } = useParams<{ id: string }>()
-  const { state, role } = useAuth()
-  const toast = useToast()
+  return (
+    <RoleGate href="/partner-clients">
+      <PartnerClientDetailInner />
+    </RoleGate>
+  )
+}
 
-  const allowed = role === "SUPER_ADMIN"
+function PartnerClientDetailInner() {
+  const { id } = useParams<{ id: string }>()
+  const toast = useToast()
 
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState<PartnerClientDetail | null>(null)
@@ -93,25 +99,8 @@ export default function PartnerClientDetailPage() {
   }, [id, toast])
 
   useEffect(() => {
-    if (allowed) void load()
-  }, [allowed, load])
-
-  if (state.status === "loading") {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Spinner size="md" />
-      </div>
-    )
-  }
-
-  if (!allowed) {
-    return (
-      <EmptyState
-        title="Akses ditolak"
-        description="Halaman ini hanya untuk SUPER_ADMIN."
-      />
-    )
-  }
+    void load()
+  }, [load])
 
   const copyPlaintext = async () => {
     if (!plaintext) return

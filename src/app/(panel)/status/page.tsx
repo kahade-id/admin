@@ -5,9 +5,8 @@
  * `GET /v1/status` + pratinjau tampilan publiknya.
  * Deskripsi ditulis UNTUK PUBLIK — backend menolak pola mirip PII.
  *
- * CATATAN NAV: route ini BELUM didaftarkan di MENU (src/lib/rbac.ts) —
- * instruksi audit melarang edit nav shared; akses via URL langsung oleh
- * SUPER_ADMIN. RoleGate tetap menolak non-SUPER_ADMIN (canAccess).
+ * CATATAN NAV: route ini didaftarkan di MENU (src/lib/rbac.ts) per ADM-417 —
+ * SUPER_ADMIN melihatnya di sidebar. RoleGate tetap menolak non-SUPER_ADMIN.
  */
 "use client"
 

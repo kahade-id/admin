@@ -54,10 +54,6 @@ export function maskAccountNumber(acc: string | null | undefined): string {
  * Sapu satu objek: mask field yang namanya mengindikasikan PII.
  * Dipakai untuk memastikan payload log/debug tidak membocorkan PII mentah.
  */
-/**
- * Sapu satu objek: mask field yang namanya mengindikasikan PII.
- * Dipakai untuk memastikan payload log/debug tidak membocorkan PII mentah.
- */
 export function maskPiiInObject<T extends Record<string, unknown>>(obj: T): T {
   const out: Record<string, unknown> = { ...obj }
   for (const key of Object.keys(out)) {

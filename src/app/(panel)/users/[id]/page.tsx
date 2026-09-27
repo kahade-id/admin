@@ -57,6 +57,8 @@ import {
 } from "@/lib/api/admin/verified"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+// ADM-405: PII (nama, email, no. HP) di-mask secara default — tanpa tombol unmask (mask-only).
+import { maskEmail, maskName, maskPhone } from "@/lib/pii"
 
 import { ErrorBlock, KeyValue, LoadingBlock, PageHeader } from "../../_components/admin-ui"
 import { ModerationTab } from "./_components/moderation-tab"
@@ -283,7 +285,8 @@ export default function UserDetailPage() {
 
   // ---- Aksi verifikasi (tier abu/biru/emas) ----
 
-  const canManageGray = isSuperAdmin || role === "KYC_ADMIN"
+  // ADM-410: kelola tier abu hanya SUPER_ADMIN (konsisten dengan gold revoke).
+  const canManageGray = isSuperAdmin
 
   const hasTier = (type: string) =>
     verifiedBadges.some((b) => String(b.type).toUpperCase() === type)
@@ -355,7 +358,8 @@ export default function UserDetailPage() {
   // ---- Render ----
 
   const user = detail
-  const displayName = user?.fullName?.trim() || "Tanpa nama"
+  // ADM-405: nama pengguna di-mask secara default di panel.
+  const displayName = maskName(user?.fullName?.trim() || null)
   const adjustAmountNum = Number(adjustAmount.replace(/[^0-9]/g, ""))
   const [tab, setTab] = useState<"ringkasan" | "moderasi" | "penghapusan">("ringkasan")
 
@@ -363,7 +367,7 @@ export default function UserDetailPage() {
     <RoleGate href="/users">
       <PageHeader
         title={user ? displayName : "Detail Pengguna"}
-        description={user ? `${user.email} · ID ${user.userId}` : undefined}
+        description={user ? `${maskEmail(user.email)} · ID ${user.userId}` : undefined}
         actions={
           <Button
             variant="secondary"
@@ -446,7 +450,7 @@ export default function UserDetailPage() {
                 label="Email"
                 value={
                   <span className="flex flex-wrap items-center justify-end gap-1.5">
-                    <span className="break-all">{user.email}</span>
+                    <span className="break-all">{maskEmail(user.email)}</span>
                     <Badge tone={user.emailVerified ? "success" : "neutral"}>
                       {user.emailVerified ? "Email terverifikasi" : "Email belum verifikasi"}
                     </Badge>
@@ -458,7 +462,7 @@ export default function UserDetailPage() {
                   label="No. HP"
                   value={
                     <span className="flex flex-wrap items-center justify-end gap-1.5">
-                      <span className="font-mono text-[13px]">{user.phoneNumber}</span>
+                      <span className="font-mono text-[13px]">{maskPhone(user.phoneNumber)}</span>
                       {user.phoneVerified != null ? (
                         <Badge tone={user.phoneVerified ? "success" : "neutral"}>
                           {user.phoneVerified ? "HP terverifikasi" : "HP belum verifikasi"}
@@ -1055,7 +1059,7 @@ export default function UserDetailPage() {
         open={resetPasswordOpen}
         onClose={() => setResetPasswordOpen(false)}
         title="Reset kata sandi?"
-        description={`Link reset kata sandi akan dikirim ke ${user?.email ?? "email pengguna"}. Kata sandi lama langsung tidak berlaku.`}
+        description={`Link reset kata sandi akan dikirim ke ${user?.email ? maskEmail(user.email) : "email pengguna"}. Kata sandi lama langsung tidak berlaku.`}
         confirmLabel="Kirim reset"
         loading={acting === "reset-password"}
         onConfirm={() => {

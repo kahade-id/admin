@@ -50,6 +50,8 @@ import {
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+// ADM-405: PII (nama, email, rekening) di-mask secara default — mask-only, tanpa unmask.
+import { maskAccountNumber, maskEmail, maskName } from "@/lib/pii"
 
 const PAGE_SIZE = 20
 const PENDING_PAGE_SIZE = 20
@@ -165,9 +167,11 @@ function StatCard({
 }
 
 function withdrawUserName(tx: PendingWithdrawal): string {
+  // ADM-405: nama/email pemilik wallet di-mask; fallback ke userId bila keduanya kosong.
+  const masked = maskName(tx.wallet?.user?.fullName ?? null)
   return (
-    tx.wallet?.user?.fullName ??
-    tx.wallet?.user?.email ??
+    (masked !== "—" ? masked : null) ??
+    (tx.wallet?.user?.email ? maskEmail(tx.wallet.user.email) : null) ??
     tx.wallet?.userId ??
     "—"
   )
@@ -599,7 +603,7 @@ export default function FinancePage() {
                       <p className="font-semibold">{withdrawUserName(r)}</p>
                       {r.wallet?.user?.email ? (
                         <p className="text-caption text-text-secondary">
-                          {r.wallet.user.email}
+                          {maskEmail(r.wallet.user.email)}
                         </p>
                       ) : null}
                     </div>
@@ -612,13 +616,11 @@ export default function FinancePage() {
                     <div>
                       <p>
                         {r.bankAccount?.bankCode ?? "—"} ·{" "}
-                        {r.bankAccount?.accountNumber
-                          ? `••••${r.bankAccount.accountNumber.slice(-4)}`
-                          : "—"}
+                        {maskAccountNumber(r.bankAccount?.accountNumber)}
                       </p>
                       {r.bankAccount?.accountName ? (
                         <p className="text-caption text-text-secondary">
-                          {r.bankAccount.accountName}
+                          {maskName(r.bankAccount.accountName)}
                         </p>
                       ) : null}
                     </div>

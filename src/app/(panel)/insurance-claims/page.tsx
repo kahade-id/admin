@@ -35,6 +35,8 @@ import {
 } from "@/lib/api/admin/insurance-claims"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
+// ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
+import { maskEmail } from "@/lib/pii"
 
 const PAGE_SIZE = 20
 
@@ -415,7 +417,7 @@ export default function InsuranceClaimsPage() {
             <dl>
               <KeyValue label="Pengguna" value={claimUser(selected)} />
               {selected.user?.email ? (
-                <KeyValue label="Email" value={selected.user.email} />
+                <KeyValue label="Email" value={maskEmail(selected.user.email)} />
               ) : null}
               <KeyValue label="Order terkait" value={claimOrder(selected)} />
               <KeyValue label="Tipe klaim" value={claimType(selected)} />

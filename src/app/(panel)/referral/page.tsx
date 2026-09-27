@@ -30,6 +30,8 @@ import {
 } from "@/lib/api/admin/referral"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber, num } from "@/lib/format"
+// ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
+import { maskEmail } from "@/lib/pii"
 
 const PAGE_SIZE = 20
 const SEARCH_DEBOUNCE_MS = 400
@@ -268,7 +270,7 @@ export default function ReferralPage() {
                     <p className="font-semibold">{ownerName(c)}</p>
                     {c.user?.email ? (
                       <p className="text-caption text-text-secondary">
-                        {c.user.email}
+                        {maskEmail(c.user.email)}
                       </p>
                     ) : null}
                   </div>
