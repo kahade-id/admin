@@ -7,7 +7,8 @@
  * (Dialog form + ConfirmDialog — konfirmasi ganda, SUPER_ADMIN saja).
  *
  * CATATAN KONTRAK: `resetUserPassword` hanya me-return `message` (backend
- * mengirim link reset ke email) — TIDAK ada password baru untuk ditampilkan.
+ * mengirim OTP reset via email — BUKAN link; password lama TETAP berlaku
+ * sampai pengguna menyelesaikan reset; lihat ADM-001/ADM-024).
  */
 "use client"
 
@@ -64,6 +65,30 @@ import { DeletionTab } from "./_components/deletion-tab"
 import { cn } from "@/lib/cn"
 
 const MAX_ADJUST_IDR = 50_000_000
+
+/**
+ * ADM-007: arah mutasi wallet diturunkan dari `type`, BUKAN dari tanda amount
+ * (backend selalu menyimpan amount sebagai nominal positif). Backend ikut
+ * mengirim field `direction` (DEBIT/CREDIT) — dipakai bila ada; fallback ke
+ * pemetaan tipe di sini agar UI tetap benar bila field belum tersedia.
+ */
+const DEBIT_WALLET_TYPES = new Set([
+  "WITHDRAW",
+  "FEE_DEDUCT",
+  "ADMIN_DEBIT",
+  "TRANSFER_SENT",
+  "ORDER_LOCK",
+  "SUBSCRIPTION_PAYMENT",
+])
+
+function walletTxIsDebit(t: {
+  type: string
+  direction?: "DEBIT" | "CREDIT" | null
+}): boolean {
+  if (t.direction === "DEBIT") return true
+  if (t.direction === "CREDIT") return false
+  return DEBIT_WALLET_TYPES.has(t.type.toUpperCase())
+}
 
 function rp(n: number | null | undefined): string {
   return typeof n === "number" ? `Rp ${formatNumber(n)}` : "—"
@@ -493,6 +518,45 @@ export default function UserDetailPage() {
                 value={`${formatNumber(user.followersCount)} pengikut · ${formatNumber(user.followingCount)} mengikuti · ${formatNumber(user.reportsReceivedCount)} laporan diterima`}
               />
               {user.bio ? <KeyValue label="Bio" value={user.bio} /> : null}
+              {/* ADM-020: ringkasan pengajuan KYC terakhir + deep-link ke antrean */}
+              {user.kycRequests && user.kycRequests.length > 0 ? (
+                <KeyValue
+                  label="Pengajuan KYC"
+                  value={
+                    <span className="flex flex-wrap items-center justify-end gap-1.5">
+                      <Badge
+                        tone={
+                          user.kycRequests[0].status === "APPROVED"
+                            ? "success"
+                            : user.kycRequests[0].status === "REJECTED"
+                              ? "danger"
+                              : "warning"
+                        }
+                      >
+                        {user.kycRequests[0].status}
+                      </Badge>
+                      <span className="text-caption text-text-secondary">
+                        {formatDateTimeWIB(user.kycRequests[0].createdAt)}
+                        {user.kycRequests[0].rejectionReason
+                          ? ` · ${user.kycRequests[0].rejectionReason}`
+                          : ""}
+                      </span>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        fullWidth={false}
+                        onClick={() =>
+                          router.push(
+                            `/kyc/${encodeURIComponent(user.kycRequests[0].kycId)}`,
+                          )
+                        }
+                      >
+                        Tinjau
+                      </Button>
+                    </span>
+                  }
+                />
+              ) : null}
             </CardBody>
           </Card>
 
@@ -676,16 +740,19 @@ export default function UserDetailPage() {
                     key: "amount",
                     header: "Jumlah",
                     align: "right",
-                    render: (t) => (
-                      <span
-                        className={
-                          t.amount >= 0 ? "text-success-text" : "text-danger-text"
-                        }
-                      >
-                        {t.amount >= 0 ? "+" : "−"}
-                        {rp(Math.abs(t.amount))}
-                      </span>
-                    ),
+                    render: (t) => {
+                      const isDebit = walletTxIsDebit(t)
+                      return (
+                        <span
+                          className={
+                            isDebit ? "text-danger-text" : "text-success-text"
+                          }
+                        >
+                          {isDebit ? "−" : "+"}
+                          {rp(Math.abs(t.amount))}
+                        </span>
+                      )
+                    },
                   },
                   {
                     key: "balanceAfter",
@@ -707,7 +774,7 @@ export default function UserDetailPage() {
             <CardHeader
               title="Sesi aktif"
               action={
-                sessions.length > 0 ? (
+                sessions.length > 0 && isSuperAdmin ? (
                   <Button
                     variant="destructive"
                     size="sm"
@@ -896,41 +963,57 @@ export default function UserDetailPage() {
             </Card>
           ) : null}
 
-          {/* ---- Aksi admin ---- */}
+          {/* ---- Aksi admin ----
+              ADM-002: Blokir/Buka blokir, Reset kata sandi = SUPER_ADMIN-only
+              di backend — sembunyikan dari CUSTOMER_SUPPORT agar tidak 403.
+              "Cabut sesi" per-sesi (di kartu Sesi) & "Hapus flag review"
+              memang boleh untuk CS. */}
           <Card padded={false}>
             <CardHeader title="Aksi admin" />
             <CardBody>
               <div className="flex flex-wrap gap-3">
-                {user.isBanned ? (
+                {isSuperAdmin ? (
+                  user.isBanned ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      loading={acting === "unban"}
+                      onClick={() => setUnbanOpen(true)}
+                    >
+                      Buka blokir
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      fullWidth={false}
+                      loading={acting === "ban"}
+                      onClick={() => setBanOpen(true)}
+                    >
+                      Blokir
+                    </Button>
+                  )
+                ) : null}
+                {isSuperAdmin ? (
                   <Button
                     variant="secondary"
                     size="sm"
                     fullWidth={false}
-                    loading={acting === "unban"}
-                    onClick={() => setUnbanOpen(true)}
+                    loading={acting === "reset-password"}
+                    onClick={() => setResetPasswordOpen(true)}
+                    disabled={!user.email || user.isBanned || !user.isActive}
+                    title={
+                      !user.email
+                        ? "Akun ini tidak punya email — reset password tidak bisa dikirim (akun phone-only)."
+                        : user.isBanned || !user.isActive
+                          ? "Akun diblokir/nonaktif — buka blokir dulu sebelum reset kata sandi."
+                          : undefined
+                    }
                   >
-                    Buka blokir
+                    Reset kata sandi
                   </Button>
-                ) : (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    fullWidth={false}
-                    loading={acting === "ban"}
-                    onClick={() => setBanOpen(true)}
-                  >
-                    Blokir
-                  </Button>
-                )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  fullWidth={false}
-                  loading={acting === "reset-password"}
-                  onClick={() => setResetPasswordOpen(true)}
-                >
-                  Reset kata sandi
-                </Button>
+                ) : null}
                 {user.flaggedForReview ? (
                   <Button
                     variant="secondary"
@@ -941,6 +1024,13 @@ export default function UserDetailPage() {
                   >
                     Hapus flag review
                   </Button>
+                ) : null}
+                {isSuperAdmin && (!user.email || user.isBanned || !user.isActive) ? (
+                  <p className="w-full text-caption text-text-tertiary">
+                    {!user.email
+                      ? "Reset kata sandi dinonaktifkan: akun ini tidak punya email (akun phone-only) — belum ada jalur reset via WhatsApp/HP."
+                      : "Reset kata sandi dinonaktifkan: akun diblokir/nonaktif — buka blokir dulu."}
+                  </p>
                 ) : null}
               </div>
             </CardBody>
@@ -1050,13 +1140,15 @@ export default function UserDetailPage() {
         }}
       />
 
-      {/* ---- Konfirmasi: reset kata sandi ---- */}
+      {/* ---- Konfirmasi: reset kata sandi ----
+          ADM-001: copy jujur — backend mengirim OTP (BUKAN link), dan kata
+          sandi lama TETAP berlaku sampai pengguna menyelesaikan reset. */}
       <ConfirmDialog
         open={resetPasswordOpen}
         onClose={() => setResetPasswordOpen(false)}
         title="Reset kata sandi?"
-        description={`Link reset kata sandi akan dikirim ke ${user?.email ?? "email pengguna"}. Kata sandi lama langsung tidak berlaku.`}
-        confirmLabel="Kirim reset"
+        description={`Kode OTP reset akan dikirim ke ${user?.email ?? "email pengguna"}. Kata sandi lama tetap berlaku sampai pengguna menyelesaikan reset dengan kode tersebut.`}
+        confirmLabel="Kirim kode OTP"
         loading={acting === "reset-password"}
         onConfirm={() => {
           setResetPasswordOpen(false)

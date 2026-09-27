@@ -141,6 +141,8 @@ export type AdminUserWalletTransaction = {
   type: string
   status: string
   amount: number
+  /** ADM-007: arah mutasi dari backend (diturunkan dari `type`); optional untuk kompatibilitas. */
+  direction?: "DEBIT" | "CREDIT" | null
   balanceBefore: number
   balanceAfter: number
   description: string | null
