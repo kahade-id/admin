@@ -89,13 +89,13 @@ export async function listPartnerClients(
   page = 1,
   limit = 20,
 ): Promise<PartnerClientList> {
-  return adminHttp.get<PartnerClientList>("/admin/partner-clients", {
+  return adminHttp.get<PartnerClientList>("/v1/admin/partner-clients", {
     query: { page, limit },
   })
 }
 
 export async function getPartnerClient(id: string): Promise<PartnerClientDetail> {
-  return adminHttp.get<PartnerClientDetail>(`/admin/partner-clients/${id}`)
+  return adminHttp.get<PartnerClientDetail>(`/v1/admin/partner-clients/${id}`)
 }
 
 export type CreatePartnerClientPayload = {
@@ -106,14 +106,14 @@ export type CreatePartnerClientPayload = {
 }
 
 export async function createPartnerClient(payload: CreatePartnerClientPayload) {
-  return adminHttp.post<PartnerClient>("/admin/partner-clients", payload)
+  return adminHttp.post<PartnerClient>("/v1/admin/partner-clients", payload)
 }
 
 export async function updatePartnerClient(
   id: string,
   payload: Partial<CreatePartnerClientPayload> & { status?: PartnerClientStatus },
 ) {
-  return adminHttp.patch<PartnerClient>(`/admin/partner-clients/${id}`, payload)
+  return adminHttp.patch<PartnerClient>(`/v1/admin/partner-clients/${id}`, payload)
 }
 
 export type IssuedPartnerKey = {
@@ -130,7 +130,7 @@ export async function issuePartnerKey(
   payload: { label?: string; scopes?: string[]; ttlDays?: number },
 ): Promise<IssuedPartnerKey> {
   return adminHttp.post<IssuedPartnerKey>(
-    `/admin/partner-clients/${clientId}/keys`,
+    `/v1/admin/partner-clients/${clientId}/keys`,
     payload,
   )
 }
@@ -140,7 +140,7 @@ export async function rotatePartnerKey(
   keyId: string,
 ): Promise<IssuedPartnerKey> {
   return adminHttp.post<IssuedPartnerKey>(
-    `/admin/partner-clients/${clientId}/keys/${keyId}/rotate`,
+    `/v1/admin/partner-clients/${clientId}/keys/${keyId}/rotate`,
   )
 }
 
@@ -149,7 +149,7 @@ export async function revokePartnerKey(
   keyId: string,
   reason: string,
 ): Promise<void> {
-  await adminHttp.post(`/admin/partner-clients/${clientId}/keys/${keyId}/revoke`, {
+  await adminHttp.post(`/v1/admin/partner-clients/${clientId}/keys/${keyId}/revoke`, {
     reason,
   })
 }
@@ -159,7 +159,7 @@ export async function registerWebhookEndpoint(
   payload: { url: string; events: string[] },
 ): Promise<PartnerWebhookEndpoint> {
   return adminHttp.post<PartnerWebhookEndpoint>(
-    `/admin/partner-clients/${clientId}/endpoints`,
+    `/v1/admin/partner-clients/${clientId}/endpoints`,
     payload,
   )
 }
@@ -169,7 +169,7 @@ export async function challengeWebhookEndpoint(
   endpointId: string,
 ): Promise<{ challenged: boolean }> {
   return adminHttp.post<{ challenged: boolean }>(
-    `/admin/partner-clients/${clientId}/endpoints/${endpointId}/challenge`,
+    `/v1/admin/partner-clients/${clientId}/endpoints/${endpointId}/challenge`,
   )
 }
 
@@ -178,7 +178,7 @@ export async function sendTestWebhook(
   endpointId: string,
 ): Promise<{ enqueued: boolean }> {
   return adminHttp.post<{ enqueued: boolean }>(
-    `/admin/partner-clients/${clientId}/endpoints/${endpointId}/test`,
+    `/v1/admin/partner-clients/${clientId}/endpoints/${endpointId}/test`,
   )
 }
 
@@ -188,7 +188,7 @@ export async function listWebhookDeliveries(
   limit = 20,
 ): Promise<{ items: PartnerDelivery[]; total: number }> {
   return adminHttp.get<{ items: PartnerDelivery[]; total: number }>(
-    `/admin/partner-clients/${clientId}/deliveries`,
+    `/v1/admin/partner-clients/${clientId}/deliveries`,
     { query: { page, limit } },
   )
 }
@@ -198,7 +198,7 @@ export async function replayWebhookDelivery(
   deliveryId: string,
 ): Promise<{ enqueued: boolean }> {
   return adminHttp.post<{ enqueued: boolean }>(
-    `/admin/partner-clients/${clientId}/deliveries/${deliveryId}/replay`,
+    `/v1/admin/partner-clients/${clientId}/deliveries/${deliveryId}/replay`,
   )
 }
 
@@ -207,7 +207,7 @@ export async function getPartnerAuditLog(
   limit = 50,
 ): Promise<PartnerAuditEntry[]> {
   return adminHttp.get<PartnerAuditEntry[]>(
-    `/admin/partner-clients/${clientId}/audit-log`,
+    `/v1/admin/partner-clients/${clientId}/audit-log`,
     { query: { limit } },
   )
 }
