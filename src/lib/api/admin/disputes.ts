@@ -85,19 +85,32 @@ export type DisputeMessagesResponse = {
 }
 
 /**
- * Ambil pesan sengketa.
+ * Ambil pesan sengketa (pesan mediasi admin).
  *
- * AW-021 (2026-09-26): backend mengembalikan envelope
- * `{ messages, nextCursor, hasMore }` — adaptor mengembalikan
- * `response.messages` saja agar pemanggil lama tetap mendapat array.
+ * ADM-127: backend mengembalikan envelope `{ messages, nextCursor, hasMore }`
+ * (limit 50) — adaptor mengembalikan envelope utuh agar riwayat >50 pesan
+ * bisa dimuat ("Muat pesan lama"). Pemanggil lama yang butuh array saja
+ * memakai `getDisputeMessagesFlat`.
  */
 export async function getDisputeMessages(
   disputeId: string,
-): Promise<DisputeMessage[]> {
+  params?: { cursor?: string; limit?: number },
+): Promise<DisputeMessagesResponse> {
   const res = await adminHttp.get<DisputeMessagesResponse>(
     `/v1/admin/disputes/${encodeURIComponent(disputeId)}/messages`,
+    { query: params },
   )
-  return Array.isArray(res?.messages) ? res.messages : []
+  return {
+    messages: Array.isArray(res?.messages) ? res.messages : [],
+    nextCursor: res?.nextCursor ?? null,
+    hasMore: res?.hasMore === true,
+  }
+}
+
+/** Kompat: array pesan saja (tanpa paginasi). */
+export async function getDisputeMessagesFlat(disputeId: string): Promise<DisputeMessage[]> {
+  const res = await getDisputeMessages(disputeId)
+  return res.messages
 }
 
 export function sendDisputeMessage(disputeId: string, message: string): Promise<unknown> {
@@ -111,7 +124,84 @@ export function sendDisputeMessage(disputeId: string, message: string): Promise<
   )
 }
 
+export type DisputeOrderChatMessage = {
+  id: string
+  content?: string
+  message?: string
+  senderId?: string
+  isDeleted?: boolean
+  deletedContent?: string | null
+  createdAt: string
+  [key: string]: unknown
+}
+
+/** Respons `GET /v1/admin/disputes/:id/chat` — percakapan order (termasuk pesan terhapus). */
+export type DisputeOrderChatResponse = {
+  messages: DisputeOrderChatMessage[]
+  nextCursor: string | null
+  hasMore: boolean
+}
+
+/**
+ * ADM-111: ambil percakapan buyer–seller di room order sengketa.
+ * `includeDeleted` default true (backend) agar mediator melihat isi asli
+ * pesan yang dihapus sebagai bukti.
+ */
+export async function getDisputeChat(
+  disputeId: string,
+  params?: { cursor?: string; limit?: number; includeDeleted?: boolean },
+): Promise<DisputeOrderChatResponse> {
+  const res = await adminHttp.get<DisputeOrderChatResponse>(
+    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/chat`,
+    { query: params },
+  )
+  return {
+    messages: Array.isArray(res?.messages) ? res.messages : [],
+    nextCursor: res?.nextCursor ?? null,
+    hasMore: res?.hasMore === true,
+  }
+}
+
 export type DisputeDecision = "FULL_BUYER" | "FULL_SELLER" | "SPLIT"
+
+export type ResolvePreviewResult = {
+  disputeId: string
+  orderId: string
+  decision: DisputeDecision
+  buyerPercent: number | null
+  sellerPercent: number | null
+  /** Nominal dalam rupiah (number). */
+  buyerAmount: number
+  sellerAmount: number
+  platformRetainAmount: number
+  escrowedAmount: number
+  platformFee: number
+  /** Nominal presisi dalam sen (string) — untuk tampilan presisi penuh. */
+  buyerAmountSen: string
+  sellerAmountSen: string
+  platformRetainAmountSen: string
+  isPostCompletionDispute: boolean
+  feePolicy: { fullBuyerRefundsPlatformFee: boolean }
+}
+
+/**
+ * ADM-109: pratinjau nominal disbursement SEBELUM eksekusi resolve.
+ * GET read-only — tidak memutasi apa pun; guard status sama dengan resolve
+ * sehingga angka yang ditampilkan pasti bisa dieksekusi.
+ */
+export function previewResolveDispute(
+  disputeId: string,
+  input: {
+    decision: DisputeDecision
+    buyerPercent?: number
+    sellerPercent?: number
+  },
+): Promise<ResolvePreviewResult> {
+  return adminHttp.get<ResolvePreviewResult>(
+    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/resolve/preview`,
+    { query: input as Record<string, string | number | undefined> },
+  )
+}
 
 export function resolveDispute(
   disputeId: string,

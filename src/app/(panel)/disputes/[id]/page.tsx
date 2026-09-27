@@ -4,14 +4,19 @@
  * Admin — Detail sengketa: info, riwayat pesan, dan aksi putusan.
  *
  * Alur aksi (sesuai mobile):
- * - "Mulai review" → markDisputeUnderReview (tersedia bila belum
- *   UNDER_REVIEW/RESOLVED).
- * - "Assign" → Dialog dropdown admin (DISPUTE_ADMIN/SUPER_ADMIN aktif) → assignDispute.
+ * - "Mulai review" → markDisputeUnderReview (hanya ASSIGNED — ADM-108).
+ * - "Assign"/"Ambil sengketa ini" → hanya OPEN/WAITING_RESPONSE (ADM-123);
+ *   DISPUTE_ADMIN self-assign, SUPER_ADMIN memilih lewat dropdown.
  * - "Resolve" → Dialog: keputusan FULL_BUYER/FULL_SELLER/SPLIT (Select) +
  *   catatan wajib min 100 karakter + persen SPLIT (1–99, jumlah 100, hanya
- *   saat SPLIT) — hanya bila status UNDER_REVIEW/ESCALATED (DP-007).
+ *   saat SPLIT) + pratinjau nominal disbursement read-only sebelum eksekusi
+ *   (ADM-109) — hanya bila status UNDER_REVIEW/ESCALATED (DP-007).
  *   Payload persis DisputeDecisionDto backend (DP-001).
- * - Riwayat pesan + kirim pesan sebagai admin (DP-002: field `content`).
+ * - Riwayat pesan mediasi + paginasi "muat pesan lama" (ADM-127) + template
+ *   pesan mediasi statis (ADM-126).
+ * - Percakapan order buyer–seller termasuk pesan terhapus (ADM-111).
+ * - Kartu hasil putusan untuk sengketa resolved (ADM-110); panggilan
+ *   mediasi tercatat (ADM-120).
  * - Polling ringan 20 dtk saat tab aktif + indikator kesegaran (DP-021).
  *
  * Port dari frontend/app/admin/(panel)/disputes/[id].tsx → web desktop.
@@ -33,17 +38,22 @@ import { Select } from "@/components/admin/select"
 import {
   assignDispute,
   getDisputeDetail,
+  getDisputeChat,
   getDisputeMessages,
   markDisputeUnderReview,
+  previewResolveDispute,
   resolveDispute,
   sendDisputeMessage,
   type AdminDisputeItem,
   type DisputeDecision,
   type DisputeMessage,
+  type DisputeOrderChatMessage,
+  type ResolvePreviewResult,
 } from "@/lib/api/admin/disputes"
 import { listAdmins } from "@/lib/api/admin/management"
+import { useAuth } from "@/lib/auth-context"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatIdrSen, formatNumber } from "@/lib/format"
 
 import { DISPUTE_CATEGORY_LABEL, DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "../maps"
 
@@ -53,6 +63,25 @@ const RESOLUTION_OPTIONS = [
   { value: "FULL_BUYER", label: "Menangkan pembeli" },
   { value: "FULL_SELLER", label: "Menangkan penjual" },
   { value: "SPLIT", label: "Bagi dua (split)" },
+]
+
+/**
+ * ADM-126: template pesan mediasi — string statis yang aman, tanpa PII,
+ * tanpa janji nominal/waktu. Admin bisa mengedit sebelum mengirim.
+ */
+const MESSAGE_TEMPLATES = [
+  {
+    label: "Konfirmasi peninjauan",
+    text: "Terima kasih. Sengketa ini sedang kami tinjau berdasarkan bukti dari kedua pihak. Kami akan mengabari perkembangannya di sini.",
+  },
+  {
+    label: "Minta klarifikasi",
+    text: "Mohon kedua pihak menyampaikan klarifikasi atau bukti tambahan melalui halaman sengketa ini. Batas penyampaian akan kami informasikan menyusul.",
+  },
+  {
+    label: "Jadwal putusan",
+    text: "Peninjauan hampir selesai. Keputusan mediasi akan kami sampaikan melalui halaman ini. Terima kasih atas kesabarannya.",
+  },
 ]
 
 /** "Rp1.234.567" — konsisten dengan halaman keuangan. */
@@ -367,11 +396,29 @@ export default function DisputeDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [dispute, setDispute] = useState<AdminDisputeItem | null>(null)
 
+  const { profile, role } = useAuth()
+
   const [messages, setMessages] = useState<DisputeMessage[]>([])
+  const [msgCursor, setMsgCursor] = useState<string | null>(null)
+  const [msgHasMore, setMsgHasMore] = useState(false)
   const [msgLoading, setMsgLoading] = useState(true)
+  const [msgOlderLoading, setMsgOlderLoading] = useState(false)
   const [msgError, setMsgError] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
+
+  // ADM-111: percakapan order (buyer–seller), termasuk pesan terhapus.
+  const [orderChat, setOrderChat] = useState<DisputeOrderChatMessage[]>([])
+  const [orderChatCursor, setOrderChatCursor] = useState<string | null>(null)
+  const [orderChatHasMore, setOrderChatHasMore] = useState(false)
+  const [orderChatLoading, setOrderChatLoading] = useState(true)
+  const [orderChatOlderLoading, setOrderChatOlderLoading] = useState(false)
+  const [orderChatError, setOrderChatError] = useState<string | null>(null)
+
+  // ADM-109: pratinjau nominal disbursement sebelum eksekusi resolve.
+  const [preview, setPreview] = useState<ResolvePreviewResult | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   const [assignOpen, setAssignOpen] = useState(false)
   const [adminId, setAdminId] = useState("")
@@ -406,13 +453,16 @@ export default function DisputeDetailPage() {
     [disputeId],
   )
 
+  // ADM-127: pesan terbaru (halaman pertama) — di-refresh polling;
+  // pesan lama dimuat on-demand via cursor tanpa menumpuk duplikat.
   const loadMessages = useCallback(async () => {
     setMsgLoading(true)
     setMsgError(null)
     try {
-      const list = await getDisputeMessages(disputeId)
-      // AW-021: adaptor sudah menjamin array.
-      setMessages(list)
+      const res = await getDisputeMessages(disputeId)
+      setMessages(res.messages)
+      setMsgCursor(res.nextCursor)
+      setMsgHasMore(res.hasMore)
     } catch (e) {
       setMsgError(userMessage(e))
     } finally {
@@ -420,12 +470,59 @@ export default function DisputeDetailPage() {
     }
   }, [disputeId])
 
+  const loadOlderMessages = useCallback(async () => {
+    if (!msgCursor || msgOlderLoading) return
+    setMsgOlderLoading(true)
+    try {
+      const res = await getDisputeMessages(disputeId, { cursor: msgCursor })
+      setMessages((prev) => [...prev, ...res.messages])
+      setMsgCursor(res.nextCursor)
+      setMsgHasMore(res.hasMore)
+    } catch (e) {
+      toast.show({ title: "Gagal memuat pesan lama", description: userMessage(e), tone: "danger" })
+    } finally {
+      setMsgOlderLoading(false)
+    }
+  }, [disputeId, msgCursor, msgOlderLoading, toast])
+
+  // ADM-111: percakapan order buyer–seller (termasuk pesan terhapus).
+  const loadOrderChat = useCallback(async () => {
+    setOrderChatLoading(true)
+    setOrderChatError(null)
+    try {
+      const res = await getDisputeChat(disputeId)
+      setOrderChat(res.messages)
+      setOrderChatCursor(res.nextCursor)
+      setOrderChatHasMore(res.hasMore)
+    } catch (e) {
+      setOrderChatError(userMessage(e))
+    } finally {
+      setOrderChatLoading(false)
+    }
+  }, [disputeId])
+
+  const loadOlderOrderChat = useCallback(async () => {
+    if (!orderChatCursor || orderChatOlderLoading) return
+    setOrderChatOlderLoading(true)
+    try {
+      const res = await getDisputeChat(disputeId, { cursor: orderChatCursor })
+      setOrderChat((prev) => [...prev, ...res.messages])
+      setOrderChatCursor(res.nextCursor)
+      setOrderChatHasMore(res.hasMore)
+    } catch (e) {
+      toast.show({ title: "Gagal memuat chat lama", description: userMessage(e), tone: "danger" })
+    } finally {
+      setOrderChatOlderLoading(false)
+    }
+  }, [disputeId, orderChatCursor, orderChatOlderLoading, toast])
+
   useEffect(() => {
     if (disputeId) {
       void load("initial")
       void loadMessages()
+      void loadOrderChat()
     }
-  }, [disputeId, load, loadMessages])
+  }, [disputeId, load, loadMessages, loadOrderChat])
 
   // DP-021: polling ringan tiap 20 detik, hanya saat tab aktif, agar admin
   // tahu bila ada bukti/klaim/pesan baru tanpa refresh manual. Interval
@@ -444,6 +541,7 @@ export default function DisputeDetailPage() {
   const reloadAll = () => {
     void load("refresh")
     void loadMessages()
+    void loadOrderChat()
   }
 
   const fail = (title: string, e: unknown) => {
@@ -474,6 +572,24 @@ export default function DisputeDetailPage() {
       toast.show({ title: "Sengketa ditandai under review", tone: "success" })
     } catch (e) {
       fail("Gagal menandai under review", e)
+    } finally {
+      setActing(null)
+    }
+  }
+
+  // ADM-123: DISPUTE_ADMIN melakukan self-assign langsung; SUPER_ADMIN
+  // dapat memilih admin lewat dropdown (dialog dibuka hanya bila gating
+  // status di bawah terpenuhi).
+  const isDisputeAdmin = role === "DISPUTE_ADMIN"
+  const selfAssign = async () => {
+    if (!profile || acting) return
+    setActing("assign")
+    try {
+      await assignDispute(disputeId, profile.id)
+      await load("refresh")
+      toast.show({ title: "Sengketa diambil alih", tone: "success" })
+    } catch (e) {
+      fail("Gagal mengambil sengketa", e)
     } finally {
       setActing(null)
     }
@@ -557,11 +673,53 @@ export default function DisputeDetailPage() {
     }
   }
 
+  // ADM-109: pratinjau nominal disbursement SEBELUM eksekusi resolve.
+  // Read-only di backend — guard status sama dengan resolve sehingga angka
+  // yang tampil pasti bisa dieksekusi.
+  const handlePreview = async () => {
+    if (previewLoading) return
+    if (isSplit && !splitValid) {
+      setPreviewError("Persen SPLIT harus valid (1–99, jumlah 100) sebelum pratinjau.")
+      return
+    }
+    setPreviewLoading(true)
+    setPreviewError(null)
+    try {
+      const res = await previewResolveDispute(disputeId, {
+        decision: resolution,
+        ...(isSplit ? { buyerPercent: buyerPct, sellerPercent: sellerPct } : {}),
+      })
+      setPreview(res)
+    } catch (e) {
+      setPreviewError(userMessage(e))
+      setPreview(null)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  // Reset pratinjau setiap dialog dibuka / input keputusan berubah.
+  const openResolve = () => {
+    setPreview(null)
+    setPreviewError(null)
+    setResolveOpen(true)
+  }
+
   const status = dispute ? String(dispute.status) : ""
-  const canReview = status !== "" && status !== "UNDER_REVIEW" && status !== "RESOLVED"
+  // ADM-108: backend `markUnderReview` menerima OPEN dan ASSIGNED, tapi OPEN
+  // tidak pernah muncul di alur nyata (sengketa baru lahir ASSIGNED;
+  // WAITING_RESPONSE unreachable) — gating tunggal: ASSIGNED.
+  // ADM-123: assign hanya relevan saat sengketa masih "muda" (OPEN) atau
+  // menunggu respons (WAITING_RESPONSE).
+  const canAssign = status === "OPEN" || status === "WAITING_RESPONSE"
+  const canReview = status === "ASSIGNED"
   // DP-007: backend hanya menerima resolve dari UNDER_REVIEW/ESCALATED.
   // ASSIGNED diarahkan lewat "Mulai review" (markDisputeUnderReview).
   const canResolve = status === "UNDER_REVIEW" || status === "ESCALATED"
+  // ADM-110: sengketa yang sudah punya keputusan → tampilkan kartu putusan,
+  // tombol resolve disembunyikan.
+  const decision = dispute ? asRecord(dispute.decision) : null
+  const isResolved = status === "RESOLVED" || decision !== null
 
   // Info order untuk label pengirim di riwayat pesan (pembeli/penjual/admin).
   const disputeOrder = dispute ? (asRecord(dispute.order) as DisputeOrderInfo | null) : null
@@ -613,6 +771,7 @@ export default function DisputeDetailPage() {
                 onClick={() => {
                   void load("initial")
                   void loadMessages()
+                  void loadOrderChat()
                 }}
               >
                 Coba lagi
@@ -653,6 +812,76 @@ export default function DisputeDetailPage() {
             </CardBody>
           </Card>
 
+          {/* ADM-110: kartu hasil putusan untuk sengketa yang sudah resolved. */}
+          {isResolved && decision ? (
+            <Card padded={false}>
+              <CardHeader title="Hasil putusan" />
+              <CardBody>
+                <dl>
+                  <KeyValue
+                    label="Keputusan"
+                    value={
+                      RESOLUTION_OPTIONS.find((o) => o.value === String(decision.decision))?.label ??
+                      String(decision.decision ?? "—")
+                    }
+                  />
+                  {decision.buyerPercent != null || decision.sellerPercent != null ? (
+                    <KeyValue
+                      label="Pembagian"
+                      value={`Pembeli ${String(decision.buyerPercent ?? "—")}% · Penjual ${String(decision.sellerPercent ?? "—")}%`}
+                    />
+                  ) : null}
+                  {decision.buyerAmount != null ? (
+                    <KeyValue label="Nominal pembeli" value={formatIdrSen(decision.buyerAmount as string | number)} />
+                  ) : null}
+                  {decision.sellerAmount != null ? (
+                    <KeyValue label="Nominal penjual" value={formatIdrSen(decision.sellerAmount as string | number)} />
+                  ) : null}
+                  {decision.decisionNotes ? (
+                    <KeyValue label="Catatan putusan" value={String(decision.decisionNotes)} />
+                  ) : null}
+                  {decision.decidedAt ? (
+                    <KeyValue label="Diputus" value={formatDateTimeWIB(String(decision.decidedAt))} />
+                  ) : null}
+                </dl>
+              </CardBody>
+            </Card>
+          ) : null}
+
+          {/* ADM-120: panggilan mediasi yang tercatat pada sengketa. */}
+          {Array.isArray(dispute.calls) && dispute.calls.length > 0 ? (
+            <Card padded={false} className="xl:col-span-2">
+              <CardHeader title="Panggilan mediasi" />
+              <CardBody>
+                <ul className="space-y-2">
+                  {(dispute.calls as Array<Record<string, unknown>>).map((c, i) => {
+                    const dur = typeof c.durationSeconds === "number" ? c.durationSeconds : null
+                    return (
+                      <li
+                        key={String(c.id ?? i)}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-sm bg-surface px-4 py-3"
+                      >
+                        <div>
+                          <p className="text-body font-medium text-text-primary">
+                            Status: {String(c.status ?? "—")}
+                          </p>
+                          <p className="text-caption text-text-secondary">
+                            Diminta {c.requestedAt ? formatDateTimeWIB(String(c.requestedAt)) : "—"}
+                            {c.startedAt ? ` · mulai ${formatDateTimeWIB(String(c.startedAt))}` : ""}
+                            {c.endedAt ? ` · selesai ${formatDateTimeWIB(String(c.endedAt))}` : ""}
+                          </p>
+                        </div>
+                        <p className="text-body text-text-secondary">
+                          {dur != null ? `Durasi ${Math.floor(dur / 60)} mnt ${dur % 60} dtk` : "Belum ada durasi"}
+                        </p>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </CardBody>
+            </Card>
+          ) : null}
+
           <Card padded={false} className="xl:col-span-2">
             <CardHeader title="Pihak, nominal & bukti" />
             <CardBody>
@@ -670,29 +899,55 @@ export default function DisputeDetailPage() {
           <Card padded={false}>
             <CardHeader title="Aksi putusan" />
             <CardBody>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  fullWidth={false}
-                  disabled={!canReview}
-                  loading={acting === "under-review"}
-                  onClick={handleUnderReview}
-                >
-                  Mulai review
-                </Button>
-                <Button variant="secondary" fullWidth={false} onClick={openAssign}>
-                  Assign
-                </Button>
-                <Button
-                  variant="primary"
-                  fullWidth={false}
-                  disabled={!canResolve}
-                  onClick={() => setResolveOpen(true)}
-                >
-                  Resolve
-                </Button>
-              </div>
-              {!canResolve ? (
+              {isResolved ? (
+                <p className="text-body text-text-secondary">
+                  Sengketa ini sudah diputus — lihat kartu “Hasil putusan” di atas.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    fullWidth={false}
+                    disabled={!canReview}
+                    title={canReview ? undefined : "Hanya tersedia saat status ASSIGNED"}
+                    loading={acting === "under-review"}
+                    onClick={handleUnderReview}
+                  >
+                    Mulai review
+                  </Button>
+                  {isDisputeAdmin ? (
+                    <Button
+                      variant="secondary"
+                      fullWidth={false}
+                      disabled={!canAssign}
+                      title={canAssign ? undefined : "Assign hanya untuk status OPEN / WAITING_RESPONSE"}
+                      loading={acting === "assign"}
+                      onClick={selfAssign}
+                    >
+                      Ambil sengketa ini
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      fullWidth={false}
+                      disabled={!canAssign}
+                      title={canAssign ? undefined : "Assign hanya untuk status OPEN / WAITING_RESPONSE"}
+                      onClick={openAssign}
+                    >
+                      Assign
+                    </Button>
+                  )}
+                  <Button
+                    variant="primary"
+                    fullWidth={false}
+                    disabled={!canResolve}
+                    onClick={openResolve}
+                  >
+                    Resolve
+                  </Button>
+                </div>
+              )}
+              {!isResolved && !canResolve ? (
                 <p className="mt-3 text-caption text-text-secondary">
                   {status === "ASSIGNED"
                     ? // DP-007: backend menolak resolve dari ASSIGNED — arahkan lewat "Mulai review".
@@ -704,7 +959,7 @@ export default function DisputeDetailPage() {
           </Card>
 
           <Card padded={false} className="xl:col-span-2">
-            <CardHeader title="Riwayat pesan" />
+            <CardHeader title="Riwayat pesan mediasi" />
             <CardBody>
               {msgLoading ? (
                 <p className="text-body text-text-secondary">Memuat pesan…</p>
@@ -723,27 +978,58 @@ export default function DisputeDetailPage() {
               ) : messages.length === 0 ? (
                 <p className="text-body text-text-secondary">Belum ada pesan.</p>
               ) : (
-                <ul className="space-y-3">
-                  {messages.map((m) => {
-                    const senderLabel =
-                      disputeOrder?.buyerId && String(m.senderId) === String(disputeOrder.buyerId)
-                        ? "Pembeli"
-                        : disputeOrder?.sellerId && String(m.senderId) === String(disputeOrder.sellerId)
-                          ? "Penjual"
-                          : "Admin"
-                    return (
-                      <li key={m.id} className="rounded-sm bg-surface px-4 py-3">
-                        <p className="text-caption text-text-secondary">
-                          {senderLabel} · {formatDateTimeWIB(m.createdAt)}
-                        </p>
-                        <p className="mt-1 text-body text-text-primary">{m.message}</p>
-                      </li>
-                    )
-                  })}
-                </ul>
+                <>
+                  <ul className="space-y-3">
+                    {messages.map((m) => {
+                      const senderLabel =
+                        disputeOrder?.buyerId && String(m.senderId) === String(disputeOrder.buyerId)
+                          ? "Pembeli"
+                          : disputeOrder?.sellerId && String(m.senderId) === String(disputeOrder.sellerId)
+                            ? "Penjual"
+                            : "Admin"
+                      return (
+                        <li key={m.id} className="rounded-sm bg-surface px-4 py-3">
+                          <p className="text-caption text-text-secondary">
+                            {senderLabel} · {formatDateTimeWIB(m.createdAt)}
+                          </p>
+                          <p className="mt-1 text-body text-text-primary">{m.message}</p>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  {/* ADM-127: muat riwayat pesan lama via cursor. */}
+                  {msgHasMore ? (
+                    <div className="mt-3">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        fullWidth={false}
+                        loading={msgOlderLoading}
+                        onClick={() => void loadOlderMessages()}
+                      >
+                        Muat pesan lama
+                      </Button>
+                    </div>
+                  ) : null}
+                </>
               )}
 
               <div className="mt-4 space-y-3">
+                {/* ADM-126: template pesan mediasi statis (aman, tanpa janji nominal). */}
+                <div className="flex flex-wrap gap-2">
+                  {MESSAGE_TEMPLATES.map((t) => (
+                    <Button
+                      key={t.label}
+                      variant="secondary"
+                      size="sm"
+                      fullWidth={false}
+                      onClick={() => setDraft(t.text)}
+                      title="Sisipkan template ke kolom pesan (bisa diedit sebelum dikirim)"
+                    >
+                      {t.label}
+                    </Button>
+                  ))}
+                </div>
                 <TextArea
                   label="Kirim pesan sebagai admin"
                   rows={3}
@@ -762,6 +1048,84 @@ export default function DisputeDetailPage() {
                   Kirim pesan
                 </Button>
               </div>
+            </CardBody>
+          </Card>
+
+          {/* ADM-111: percakapan order buyer–seller, termasuk pesan terhapus. */}
+          <Card padded={false} className="xl:col-span-2">
+            <CardHeader
+              title="Percakapan order (buyer–seller)"
+              action={
+                <p className="text-caption text-text-secondary">
+                  Termasuk pesan yang dihapus — bukti untuk mediasi
+                </p>
+              }
+            />
+            <CardBody>
+              {orderChatLoading ? (
+                <p className="text-body text-text-secondary">Memuat percakapan…</p>
+              ) : orderChatError ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="text-body text-danger-text">{orderChatError}</p>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    onClick={() => void loadOrderChat()}
+                  >
+                    Coba lagi
+                  </Button>
+                </div>
+              ) : orderChat.length === 0 ? (
+                <p className="text-body text-text-secondary">Belum ada percakapan di room order.</p>
+              ) : (
+                <>
+                  <ul className="space-y-3">
+                    {orderChat.map((m) => {
+                      const senderLabel =
+                        disputeOrder?.buyerId && String(m.senderId) === String(disputeOrder.buyerId)
+                          ? "Pembeli"
+                          : disputeOrder?.sellerId && String(m.senderId) === String(disputeOrder.sellerId)
+                            ? "Penjual"
+                            : "Admin"
+                      const deleted = m.isDeleted === true
+                      return (
+                        <li
+                          key={m.id}
+                          className={
+                            deleted
+                              ? "rounded-sm border border-dashed border-border px-4 py-3 opacity-70"
+                              : "rounded-sm bg-surface px-4 py-3"
+                          }
+                        >
+                          <p className="text-caption text-text-secondary">
+                            {senderLabel} · {formatDateTimeWIB(m.createdAt)}
+                            {deleted ? " · dihapus" : ""}
+                          </p>
+                          <p className="mt-1 text-body text-text-primary">
+                            {deleted
+                              ? `Isi asli (dihapus): ${String(m.deletedContent ?? m.content ?? m.message ?? "—")}`
+                              : String(m.content ?? m.message ?? "—")}
+                          </p>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  {orderChatHasMore ? (
+                    <div className="mt-3">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        fullWidth={false}
+                        loading={orderChatOlderLoading}
+                        onClick={() => void loadOlderOrderChat()}
+                      >
+                        Muat chat lama
+                      </Button>
+                    </div>
+                  ) : null}
+                </>
+              )}
             </CardBody>
           </Card>
         </div>
@@ -834,7 +1198,11 @@ export default function DisputeDetailPage() {
             label="Keputusan penyelesaian"
             options={RESOLUTION_OPTIONS}
             value={resolution}
-            onChange={(e) => setResolution(e.target.value as Resolution)}
+            onChange={(e) => {
+              setResolution(e.target.value as Resolution)
+              setPreview(null)
+              setPreviewError(null)
+            }}
           />
           <TextArea
             label="Catatan keputusan"
@@ -858,7 +1226,11 @@ export default function DisputeDetailPage() {
                 min={1}
                 max={99}
                 value={buyerPercent}
-                onChange={(e) => setBuyerPercent(e.target.value)}
+                onChange={(e) => {
+                  setBuyerPercent(e.target.value)
+                  setPreview(null)
+                  setPreviewError(null)
+                }}
                 error={
                   buyerPercent !== "" && (!Number.isInteger(buyerPct) || buyerPct < 1 || buyerPct > 99)
                     ? "Isi 1–99"
@@ -873,7 +1245,11 @@ export default function DisputeDetailPage() {
                 min={1}
                 max={99}
                 value={sellerPercent}
-                onChange={(e) => setSellerPercent(e.target.value)}
+                onChange={(e) => {
+                  setSellerPercent(e.target.value)
+                  setPreview(null)
+                  setPreviewError(null)
+                }}
                 error={
                   sellerPercent !== "" && (!Number.isInteger(sellerPct) || sellerPct < 1 || sellerPct > 99)
                     ? "Isi 1–99"
@@ -896,6 +1272,56 @@ export default function DisputeDetailPage() {
                 : "Jumlah persen pembeli + penjual harus tepat 100."}
             </p>
           ) : null}
+
+          {/* ADM-109: pratinjau nominal disbursement SEBELUM eksekusi. */}
+          <div className="rounded-sm border border-border bg-surface px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-caption font-semibold text-text-secondary">
+                Pratinjau nominal disbursement
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                loading={previewLoading}
+                disabled={isSplit && !splitValid}
+                onClick={() => void handlePreview()}
+              >
+                Hitung pratinjau
+              </Button>
+            </div>
+            {previewError ? (
+              <p role="alert" className="mt-2 text-caption text-danger-text">
+                {previewError}
+              </p>
+            ) : preview ? (
+              <dl className="mt-2 space-y-1 text-body">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-text-secondary">Pembeli menerima</dt>
+                  <dd className="font-semibold">{formatIdrSen(preview.buyerAmountSen)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-text-secondary">Penjual menerima</dt>
+                  <dd className="font-semibold">{formatIdrSen(preview.sellerAmountSen)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-text-secondary">Platform menahan</dt>
+                  <dd>{formatIdrSen(preview.platformRetainAmountSen)}</dd>
+                </div>
+                {preview.isPostCompletionDispute ? (
+                  <p className="pt-1 text-caption text-text-secondary">
+                    Sengketa pasca-penyelesaian — disbursement mengikuti kebijakan
+                    platform fee yang berlaku.
+                  </p>
+                ) : null}
+              </dl>
+            ) : (
+              <p className="mt-2 text-caption text-text-secondary">
+                Klik “Hitung pratinjau” untuk melihat nominal sebelum keputusan
+                dieksekusi. Tanpa pratinjau, tombol eksekusi tetap aktif.
+              </p>
+            )}
+          </div>
         </div>
       </Dialog>
     </RoleGate>

@@ -1,7 +1,17 @@
 /**
- * Kahade admin — antrean retur (GAP-D G214–G217, G224).
- * Backend: /v1/admin/returns. Mutasi aksi memakai Idempotency-Key
- * (@Idempotency() pada controller) agar retry aman.
+ * Kahade admin — antrean retur.
+ *
+ * ADM-101/105 (2026-09-27): kontrak diselaraskan ke backend nyata
+ * `AdminReturnsController`:
+ * - list   → GET /v1/admin/returns/queue  → { items, page, limit, total, totalPages }
+ *             (diadaptasi ke Paginated { data, ... } di sini)
+ * - detail → GET /v1/admin/returns/:id
+ * - aksi   → POST /v1/admin/returns/:id/action { action, ... } dengan Idempotency-Key
+ *             (APPROVE | REJECT | ESCALATE | FORCE_RESOLVE_REFUND |
+ *              FORCE_RESOLVE_EXCHANGE | FORCE_RESOLVE_REPAIR | EXTEND_DEADLINE)
+ *
+ * Endpoint lama yang TIDAK ADA di backend (/force-close, /escalate,
+ * /approve-refund, /extend-deadline) dihapus — semuanya 404.
  */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
@@ -49,6 +59,15 @@ export const ADMIN_RETURN_STATUS_LABEL: Record<AdminReturnStatus, string> = {
   EXPIRED: "Kedaluwarsa",
 }
 
+export type AdminReturnAction =
+  | "APPROVE"
+  | "REJECT"
+  | "ESCALATE"
+  | "FORCE_RESOLVE_REFUND"
+  | "FORCE_RESOLVE_EXCHANGE"
+  | "FORCE_RESOLVE_REPAIR"
+  | "EXTEND_DEADLINE"
+
 export type AdminReturnItem = {
   id: string
   returnId: string
@@ -63,10 +82,24 @@ export type AdminReturnItem = {
   sellerRespondBy?: string | null
   createdAt: string
   updatedAt?: string
+  order?: {
+    orderId?: string
+    buyerPayAmount?: string | number | null
+    [key: string]: unknown
+  } | null
   [key: string]: unknown
 }
 
-export function listAdminReturns(params?: {
+/** Respons mentah backend `GET /v1/admin/returns/queue` (ADM-105: `items`, bukan `data`). */
+type ReturnQueueResponse = {
+  items: AdminReturnItem[]
+  page: number
+  limit: number
+  total: number
+  totalPages: number
+}
+
+export async function listAdminReturns(params?: {
   page?: number
   limit?: number
   status?: string
@@ -74,37 +107,83 @@ export function listAdminReturns(params?: {
   /** Filter umur pengajuan (jam) untuk menyorot SLA. */
   minAgeHours?: number
 }): Promise<Paginated<AdminReturnItem>> {
-  return adminHttp.get<Paginated<AdminReturnItem>>("/v1/admin/returns", { query: params })
+  const res = await adminHttp.get<ReturnQueueResponse>("/v1/admin/returns/queue", {
+    query: params,
+  })
+  // ADM-105: adaptor items → data (kontrak Paginated admin).
+  const items = Array.isArray(res?.items) ? res.items : []
+  return {
+    data: items,
+    total: res?.total ?? items.length,
+    page: res?.page ?? 1,
+    limit: res?.limit ?? items.length,
+    totalPages: res?.totalPages ?? 1,
+  }
 }
 
 export function getAdminReturnDetail(returnId: string): Promise<AdminReturnItem> {
   return adminHttp.get<AdminReturnItem>(`/v1/admin/returns/${encodeURIComponent(returnId)}`)
 }
 
-export function adminForceCloseReturn(returnId: string, body: { resolution: string; note?: string }): Promise<unknown> {
-  return adminHttp.post(`/v1/admin/returns/${encodeURIComponent(returnId)}/force-close`, body, {
-    headers: idempotencyHeaders(),
-  })
+export type AdminReturnActionInput = {
+  action: AdminReturnAction
+  /** Nominal refund yang disetujui (sen). Bila kosong + APPROVE → full buyerPayAmount (backend). */
+  refundAmountSen?: number
+  resolutionType?: "REFUND" | "EXCHANGE" | "REPAIR"
+  rejectReasonCode?: string
+  /** Catatan wajib untuk aksi destruktif (force-resolve). */
+  note?: string
 }
 
-export function adminEscalateReturn(returnId: string, body?: { note?: string }): Promise<unknown> {
-  return adminHttp.post(`/v1/admin/returns/${encodeURIComponent(returnId)}/escalate`, body ?? {}, {
-    headers: idempotencyHeaders(),
-  })
-}
-
-export function adminApproveReturnRefund(returnId: string): Promise<unknown> {
-  return adminHttp.post(
-    `/v1/admin/returns/${encodeURIComponent(returnId)}/approve-refund`,
-    {},
+/**
+ * Satu pintu aksi admin retur → POST /v1/admin/returns/:id/action.
+ * Selalu membawa Idempotency-Key (backend @Idempotency()).
+ */
+export function adminReturnAction(
+  returnId: string,
+  input: AdminReturnActionInput,
+): Promise<AdminReturnItem> {
+  return adminHttp.post<AdminReturnItem>(
+    `/v1/admin/returns/${encodeURIComponent(returnId)}/action`,
+    input,
     { headers: idempotencyHeaders() },
   )
 }
 
-export function adminExtendSellerDeadline(returnId: string, hours: number): Promise<unknown> {
-  return adminHttp.post(
-    `/v1/admin/returns/${encodeURIComponent(returnId)}/extend-deadline`,
-    { hours },
-    { headers: idempotencyHeaders() },
-  )
+/** Eskalasi retur ke sengketa (sengketa yang sudah ada dipakai ulang). */
+export function adminEscalateReturn(returnId: string, note?: string): Promise<AdminReturnItem> {
+  return adminReturnAction(returnId, { action: "ESCALATE", note })
+}
+
+/** Setujui refund — nominal dikonfirmasi di UI (ADM-113) sebelum dikirim. */
+export function adminApproveReturnRefund(
+  returnId: string,
+  opts?: { refundAmountSen?: number; resolutionType?: "REFUND" | "EXCHANGE" | "REPAIR"; note?: string },
+): Promise<AdminReturnItem> {
+  return adminReturnAction(returnId, { action: "APPROVE", ...opts })
+}
+
+/** Tolak pengajuan retur dengan alasan terstruktur. */
+export function adminRejectReturn(
+  returnId: string,
+  opts: { rejectReasonCode: string; note?: string },
+): Promise<AdminReturnItem> {
+  return adminReturnAction(returnId, { action: "REJECT", ...opts })
+}
+
+/** Tutup paksa — outcome dipilih eksplisit (pengganti endpoint /force-close yang tidak ada). */
+export function adminForceResolveReturn(
+  returnId: string,
+  outcome: "REFUND" | "EXCHANGE" | "REPAIR",
+  note: string,
+): Promise<AdminReturnItem> {
+  return adminReturnAction(returnId, {
+    action: `FORCE_RESOLVE_${outcome}` as AdminReturnAction,
+    note,
+  })
+}
+
+/** Perpanjang deadline respons seller +24 jam (ADM-114; backend cap 3x per case). */
+export function adminExtendSellerDeadline(returnId: string): Promise<AdminReturnItem> {
+  return adminReturnAction(returnId, { action: "EXTEND_DEADLINE" })
 }

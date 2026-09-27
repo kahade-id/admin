@@ -153,7 +153,7 @@ function ReconcileTab() {
             render: (r) => (
               <div>
                 <p className="font-semibold">
-                  <Link href={`/orders/${r.orderId}`} className="text-info-text hover:underline">
+                  <Link href={`/orders?search=${encodeURIComponent(r.orderId ?? "")}`} className="text-info-text hover:underline">
                     {r.orderId}
                   </Link>
                 </p>
@@ -325,7 +325,7 @@ function MilestoneList({ status }: { status: string }) {
                   Tahap {r.seq}: {r.title}
                 </p>
                 <p className="text-caption text-text-secondary">
-                  <Link href={`/orders/${r.orderId}`} className="text-info-text hover:underline">
+                  <Link href={`/orders?search=${encodeURIComponent(r.orderId ?? "")}`} className="text-info-text hover:underline">
                     {r.orderTitle ?? r.orderId}
                   </Link>
                 </p>

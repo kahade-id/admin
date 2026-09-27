@@ -1,9 +1,13 @@
 "use client"
 
 /**
- * Admin — Antrean retur (GAP-D G214–G217, G224).
- * Filter status + umur pengajuan (sorot SLA), aksi: eskalasi, setujui refund,
- * perpanjang deadline penjual, paksa tutup. Mutasi dengan Idempotency-Key.
+ * Admin — Antrean retur.
+ *
+ * ADM-101/105: kontrak diselaraskan ke backend nyata —
+ * list → GET /v1/admin/returns/queue (adaptor items → data),
+ * aksi → POST /v1/admin/returns/:id/action { action, ... } + Idempotency-Key.
+ * ADM-113: konfirmasi aksi via dialog (nominal + catatan tervalidasi),
+ * bukan window.confirm/prompt.
  */
 
 import Link from "next/link"
@@ -24,13 +28,16 @@ import {
   listAdminReturns,
   adminEscalateReturn,
   adminApproveReturnRefund,
+  adminRejectReturn,
   adminExtendSellerDeadline,
-  adminForceCloseReturn,
+  adminForceResolveReturn,
   ADMIN_RETURN_STATUS_LABEL,
   type AdminReturnItem,
   type AdminReturnStatus,
 } from "@/lib/api/admin/returns"
+import { ReturnActionDialog, type ReturnActionKind, type ReturnActionConfirmInput } from "./action-dialog"
 import { userMessage } from "@/lib/api/response"
+import { downloadCsv } from "@/lib/csv"
 import { formatDateTimeWIB, formatIdrSen } from "@/lib/format"
 
 const PAGE_SIZE = 20
@@ -54,6 +61,25 @@ function ageHours(createdAt: string): number {
   return Math.max(0, Math.floor(ms / 3_600_000))
 }
 
+/** Status yang masih bisa dieskalasi / ditolak / diperpanjang deadline-nya. */
+const EARLY_STATUSES = ["REQUESTED", "SELLER_REVIEW"]
+/** Status yang refund-nya bisa disetujui admin. */
+const APPROVABLE_STATUSES = ["APPROVED", "RECEIVED"]
+/** Status terminal — tidak ada aksi tersisa. */
+const TERMINAL_STATUSES = [
+  "RESOLVED_REFUND",
+  "RESOLVED_EXCHANGE",
+  "RESOLVED_REPAIR",
+  "CANCELLED",
+  "EXPIRED",
+]
+
+function senOf(v: unknown): number | null {
+  if (v == null) return null
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN
+  return Number.isFinite(n) ? Math.round(n) : null
+}
+
 export default function ReturnsListPage() {
   const toast = useToast()
   const [statusFilter, setStatusFilter] = useState("ALL")
@@ -66,7 +92,11 @@ export default function ReturnsListPage() {
   const [rows, setRows] = useState<AdminReturnItem[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
-  const [acting, setActing] = useState<string | null>(null)
+
+  // ADM-113: dialog aksi (pengganti window.confirm/prompt).
+  const [actionKind, setActionKind] = useState<ReturnActionKind | null>(null)
+  const [actionTarget, setActionTarget] = useState<AdminReturnItem | null>(null)
+  const [confirming, setConfirming] = useState(false)
 
   const load = useCallback(
     async (targetPage = page, targetStatus = statusFilter, targetAge = ageFilter, targetSearch = search) => {
@@ -99,23 +129,74 @@ export default function ReturnsListPage() {
     void load()
   }, [load])
 
-  async function runAction(id: string, label: string, fn: () => Promise<unknown>, confirm?: string) {
-    const go = async () => {
-      setActing(id)
-      try {
-        await fn()
-        toast.show({ title: `Berhasil: ${label}`, tone: "success" })
-        await load()
-      } catch (e) {
-        toast.show({ title: `Gagal: ${label}`, description: userMessage(e), tone: "danger" })
-      } finally {
-        setActing(null)
+  const openAction = (kind: ReturnActionKind, row: AdminReturnItem) => {
+    setActionKind(kind)
+    setActionTarget(row)
+  }
+
+  const closeAction = () => {
+    if (confirming) return
+    setActionKind(null)
+    setActionTarget(null)
+  }
+
+  const confirmAction = async (input: ReturnActionConfirmInput) => {
+    if (!actionTarget || !actionKind) return
+    const id = actionTarget.id
+    const label = String(actionTarget.returnId ?? id)
+    setConfirming(true)
+    try {
+      switch (actionKind) {
+        case "escalate":
+          await adminEscalateReturn(id, input.note || undefined)
+          break
+        case "approve":
+          await adminApproveReturnRefund(id, {
+            refundAmountSen: input.refundAmountSen,
+            note: input.note || undefined,
+          })
+          break
+        case "reject":
+          await adminRejectReturn(id, {
+            rejectReasonCode: input.rejectReasonCode ?? "LAINNYA",
+            note: input.note || undefined,
+          })
+          break
+        case "force-resolve":
+          await adminForceResolveReturn(id, input.resolution ?? "REFUND", input.note)
+          break
+        case "extend":
+          await adminExtendSellerDeadline(id)
+          break
       }
+      toast.show({ title: `Berhasil: ${label}`, tone: "success" })
+      setActionKind(null)
+      setActionTarget(null)
+      await load()
+    } catch (e) {
+      toast.show({ title: `Gagal: ${label}`, description: userMessage(e), tone: "danger" })
+    } finally {
+      setConfirming(false)
     }
-    if (confirm) {
-      if (!window.confirm(confirm)) return
-    }
-    await go()
+  }
+
+  /** ADM-125: ekspor CSV baris yang tampil (agregat, tanpa dokumen bukti). */
+  const exportCsv = () => {
+    if (rows.length === 0) return
+    downloadCsv(
+      `retur-antrean-${new Date().toISOString().slice(0, 10)}.csv`,
+      ["ID Retur", "ID Order", "Status", "Alasan", "Refund (sen)", "Umur (jam)", "Diajukan"],
+      rows.map((r) => [
+        String(r.returnId ?? r.id),
+        String(r.orderId ?? ""),
+        ADMIN_RETURN_STATUS_LABEL[r.status as AdminReturnStatus] ?? String(r.status),
+        String(r.reasonCode ?? ""),
+        r.refundAmount != null ? String(r.refundAmount) : "",
+        String(ageHours(String(r.createdAt))),
+        formatDateTimeWIB(String(r.createdAt)),
+      ]),
+    )
+    toast.show({ title: "CSV antrean retur diunduh", tone: "success" })
   }
 
   return (
@@ -127,9 +208,14 @@ export default function ReturnsListPage() {
             Antrean pengajuan retur/tukar barang. SLA respons penjual {SELLER_SLA_HOURS} jam.
           </p>
         </div>
-        <Button variant="secondary" size="sm" fullWidth={false} loading={loading} onClick={() => load()}>
-          Muat ulang
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" fullWidth={false} disabled={rows.length === 0} onClick={exportCsv}>
+            Ekspor CSV
+          </Button>
+          <Button variant="secondary" size="sm" fullWidth={false} loading={loading} onClick={() => load()}>
+            Muat ulang
+          </Button>
+        </div>
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
@@ -196,38 +282,37 @@ export default function ReturnsListPage() {
               {
                 key: "actions",
                 header: "Aksi",
-                render: (r) => (
-                  <div className="flex flex-wrap gap-1">
-                    {["REQUESTED", "SELLER_REVIEW"].includes(String(r.status)) ? (
-                      <Button size="sm" variant="secondary" fullWidth={false} loading={acting === r.id}
-                        onClick={() => runAction(r.id, "eskalasi", () => adminEscalateReturn(r.id), "Eskalasi retur ini ke sengketa? Sengketa yang sudah ada akan dipakai ulang.")}>
-                        Eskalasi
-                      </Button>
-                    ) : null}
-                    {["APPROVED", "RECEIVED"].includes(String(r.status)) ? (
-                      <Button size="sm" variant="secondary" fullWidth={false} loading={acting === r.id}
-                        onClick={() => runAction(r.id, "setujui refund", () => adminApproveReturnRefund(r.id), "Setujui refund retur ini? Refund dieksekusi sekali (idempoten).")}>
-                        Setujui refund
-                      </Button>
-                    ) : null}
-                    {["REQUESTED", "SELLER_REVIEW"].includes(String(r.status)) ? (
-                      <Button size="sm" variant="secondary" fullWidth={false} loading={acting === r.id}
-                        onClick={() => runAction(r.id, "perpanjang deadline", () => adminExtendSellerDeadline(r.id, 24))}>
-                        +24 jam
-                      </Button>
-                    ) : null}
-                    {!["RESOLVED_REFUND", "RESOLVED_EXCHANGE", "RESOLVED_REPAIR", "CANCELLED", "EXPIRED"].includes(String(r.status)) ? (
-                      <Button size="sm" variant="secondary" fullWidth={false} loading={acting === r.id}
-                        onClick={() => {
-                          const note = window.prompt("Catatan penutupan paksa (wajib):", "")
-                          if (!note) return
-                          void runAction(r.id, "tutup paksa", () => adminForceCloseReturn(r.id, { resolution: "ADMIN_CLOSED", note }))
-                        }}>
-                        Tutup paksa
-                      </Button>
-                    ) : null}
-                  </div>
-                ),
+                render: (r) => {
+                  const s = String(r.status)
+                  const terminal = TERMINAL_STATUSES.includes(s)
+                  return (
+                    <div className="flex flex-wrap gap-1">
+                      {EARLY_STATUSES.includes(s) ? (
+                        <>
+                          <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("escalate", r)}>
+                            Eskalasi
+                          </Button>
+                          <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("reject", r)}>
+                            Tolak
+                          </Button>
+                          <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("extend", r)}>
+                            +24 jam
+                          </Button>
+                        </>
+                      ) : null}
+                      {APPROVABLE_STATUSES.includes(s) ? (
+                        <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("approve", r)}>
+                          Setujui refund
+                        </Button>
+                      ) : null}
+                      {!terminal ? (
+                        <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("force-resolve", r)}>
+                          Tutup paksa
+                        </Button>
+                      ) : null}
+                    </div>
+                  )
+                },
               },
             ]}
             rows={rows}
@@ -239,6 +324,18 @@ export default function ReturnsListPage() {
           </div>
         </>
       )}
+
+      <ReturnActionDialog
+        open={actionKind !== null}
+        kind={actionKind}
+        returnLabel={actionTarget ? String(actionTarget.returnId ?? actionTarget.id) : ""}
+        currentDeadline={actionTarget?.sellerRespondBy ? formatDateTimeWIB(String(actionTarget.sellerRespondBy)) : null}
+        currentRefundSen={senOf(actionTarget?.refundAmount)}
+        buyerPaySen={senOf(actionTarget?.order?.buyerPayAmount)}
+        confirming={confirming}
+        onClose={closeAction}
+        onConfirm={(input) => void confirmAction(input)}
+      />
     </RoleGate>
   )
 }
