@@ -12,6 +12,10 @@
  *
  * ATURAN TAMPILAN KUNCI: plaintext hanya dari respons penerbitan/rotasi,
  * tampil sekali di dialog dengan tombol salin — tidak pernah disimpan ulang.
+ *
+ * Kontrak diselaraskan dengan DTO backend (ADM-305, ADM-307): orgName,
+ * isSandbox, rateLimitPerMinute, quotaPerDay — scope melekat pada KUNCI,
+ * bukan klien.
  */
 
 import { useCallback, useEffect, useState } from "react"
@@ -34,6 +38,7 @@ import {
   createPartnerClient,
   listPartnerClients,
   type PartnerClient,
+  type PartnerClientStatus,
 } from "@/lib/api/admin/partner-clients"
 
 const PAGE_SIZE = 20
@@ -48,7 +53,34 @@ const STATUS_OPTIONS = [
   { value: "", label: "Semua status" },
   { value: "ACTIVE", label: "Aktif" },
   { value: "SUSPENDED", label: "Ditangguhkan" },
+  { value: "REVOKED", label: "Dicabut" },
 ]
+
+function statusLabel(s: PartnerClientStatus): string {
+  switch (s) {
+    case "ACTIVE":
+      return "Aktif"
+    case "SUSPENDED":
+      return "Ditangguhkan"
+    case "REVOKED":
+      return "Dicabut"
+    default:
+      return s
+  }
+}
+
+function statusTone(s: PartnerClientStatus): "success" | "warning" | "danger" | "neutral" {
+  switch (s) {
+    case "ACTIVE":
+      return "success"
+    case "SUSPENDED":
+      return "warning"
+    case "REVOKED":
+      return "danger"
+    default:
+      return "neutral"
+  }
+}
 
 export default function PartnerClientsPage() {
   const { state, role } = useAuth()
@@ -64,7 +96,16 @@ export default function PartnerClientsPage() {
   const [status, setStatus] = useState("")
   const [showCreate, setShowCreate] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [form, setForm] = useState({ name: "", environment: "SANDBOX", scopes: "", dailyQuota: "" })
+  // ADM-305: selaras CreatePartnerClientDto backend
+  // (orgName, ownerUserId?, isSandbox?, rateLimitPerMinute?, quotaPerDay?).
+  // Scope diisi saat penerbitan kunci, bukan saat buat klien.
+  const [form, setForm] = useState({
+    orgName: "",
+    ownerUserId: "",
+    isSandbox: "true",
+    rateLimitPerMinute: "",
+    quotaPerDay: "",
+  })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -101,30 +142,33 @@ export default function PartnerClientsPage() {
   }
 
   const handleCreate = async () => {
-    const name = form.name.trim()
-    if (name.length < 3) {
-      toast.show({ title: "Nama wajib diisi", description: "Minimal 3 karakter.", tone: "danger" })
+    const orgName = form.orgName.trim()
+    if (orgName.length < 3) {
+      toast.show({ title: "Nama organisasi wajib", description: "Minimal 3 karakter.", tone: "danger" })
       return
     }
-    const scopes = form.scopes
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-    if (scopes.length === 0) {
-      toast.show({ title: "Scope wajib diisi", description: "Pisahkan dengan koma.", tone: "danger" })
+    const quotaPerDay = form.quotaPerDay.trim() ? Number(form.quotaPerDay) : undefined
+    const rateLimitPerMinute = form.rateLimitPerMinute.trim() ? Number(form.rateLimitPerMinute) : undefined
+    if (quotaPerDay !== undefined && (!Number.isFinite(quotaPerDay) || quotaPerDay <= 0)) {
+      toast.show({ title: "Kuota tidak valid", description: "Kuota harian harus bilangan positif.", tone: "danger" })
+      return
+    }
+    if (rateLimitPerMinute !== undefined && (!Number.isFinite(rateLimitPerMinute) || rateLimitPerMinute <= 0)) {
+      toast.show({ title: "Rate limit tidak valid", description: "Rate limit per menit harus bilangan positif.", tone: "danger" })
       return
     }
     setCreating(true)
     try {
       await createPartnerClient({
-        name,
-        environment: form.environment as "SANDBOX" | "PRODUCTION",
-        scopes,
-        dailyQuota: form.dailyQuota ? Number(form.dailyQuota) : undefined,
+        orgName,
+        ownerUserId: form.ownerUserId.trim() || undefined,
+        isSandbox: form.isSandbox === "true",
+        rateLimitPerMinute,
+        quotaPerDay,
       })
-      toast.show({ title: "Berhasil", description: "Klien mitra dibuat.", tone: "success" })
+      toast.show({ title: "Berhasil", description: "Klien mitra dibuat. Terbitkan kunci dari halaman detail.", tone: "success" })
       setShowCreate(false)
-      setForm({ name: "", environment: "SANDBOX", scopes: "", dailyQuota: "" })
+      setForm({ orgName: "", ownerUserId: "", isSandbox: "true", rateLimitPerMinute: "", quotaPerDay: "" })
       await load()
     } catch (e) {
       toast.show({ title: "Gagal membuat klien", description: userMessage(e), tone: "danger" })
@@ -133,9 +177,11 @@ export default function PartnerClientsPage() {
     }
   }
 
+  // ADM-307: filter terhadap field backend (isSandbox, status).
   const filtered = items.filter(
     (c) =>
-      (env === "" || c.environment === env) && (status === "" || c.status === status),
+      (env === "" || (c.isSandbox ? "SANDBOX" : "PRODUCTION") === env) &&
+      (status === "" || c.status === status),
   )
 
   return (
@@ -144,7 +190,7 @@ export default function PartnerClientsPage() {
         <div>
           <h1 className="text-title font-bold text-text-primary">Klien API mitra</h1>
           <p className="text-body text-text-secondary">
-            Kelola kunci API, scope, endpoint webhook, dan kuota mitra integrasi.
+            Kelola kunci API, endpoint webhook, dan kuota mitra integrasi.
           </p>
         </div>
         <Button variant="primary" size="sm" fullWidth={false} onClick={() => setShowCreate(true)}>
@@ -180,32 +226,25 @@ export default function PartnerClientsPage() {
           ) : (
             <DataTable
               columns={[
-                { key: "col1", header: "Nama", render: (c: PartnerClient) => c.name },
+                { key: "col1", header: "Organisasi", render: (c: PartnerClient) => c.orgName },
                 { key: "col2", header: "Environment",
                   render: (c: PartnerClient) => (
-                    <Badge tone={c.environment === "PRODUCTION" ? "info" : "neutral"}>
-                      {c.environment}
+                    <Badge tone={c.isSandbox ? "neutral" : "info"}>
+                      {c.isSandbox ? "SANDBOX" : "PRODUCTION"}
                     </Badge>
                   ),
                 },
                 { key: "col3", header: "Status",
                   render: (c: PartnerClient) => (
-                    <Badge tone={c.status === "ACTIVE" ? "success" : "danger"}>
-                      {c.status === "ACTIVE" ? "Aktif" : "Ditangguhkan"}
-                    </Badge>
+                    <Badge tone={statusTone(c.status)}>{statusLabel(c.status)}</Badge>
                   ),
                 },
-                { key: "col4", header: "Scope",
-                  render: (c: PartnerClient) => (
-                    <span className="text-caption text-text-secondary">
-                      {(c.scopes ?? []).join(", ")}
-                    </span>
-                  ),
-                },
-                { key: "col5", header: "Dibuat",
+                { key: "col4", header: "Kuota/hari", render: (c: PartnerClient) => <span className="font-mono">{c.quotaPerDay}</span> },
+                { key: "col5", header: "Rate limit/mnt", render: (c: PartnerClient) => <span className="font-mono">{c.rateLimitPerMinute}</span> },
+                { key: "col6", header: "Dibuat",
                   render: (c: PartnerClient) => formatDateTimeWIB(c.createdAt),
                 },
-                { key: "col6", header: "",
+                { key: "col7", header: "",
                   render: (c: PartnerClient) => (
                     <a
                       href={`/partner-clients/${c.id}`}
@@ -236,39 +275,47 @@ export default function PartnerClientsPage() {
           if (!creating) setShowCreate(false)
         }}
         title="Buat klien mitra"
-        description="Klien baru dimulai di environment sandbox. Kunci API diterbitkan dari halaman detail."
+        description="Klien baru dimulai aktif. Scope diisi saat menerbitkan kunci API (melekat pada kunci, bukan klien)."
         footer={
           <div className="flex flex-col gap-3">
-            <Field label="Nama klien (wajib)">
+            <Field label="Nama organisasi (wajib)">
               <Input
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                value={form.orgName}
+                onChange={(e) => setForm((f) => ({ ...f, orgName: e.target.value }))}
                 placeholder="Nama perusahaan mitra"
               />
             </Field>
             <Field label="Environment">
               <Select
-                value={form.environment}
-                onChange={(e) => setForm((f) => ({ ...f, environment: e.target.value }))}
+                value={form.isSandbox}
+                onChange={(e) => setForm((f) => ({ ...f, isSandbox: e.target.value }))}
                 options={[
-                  { value: "SANDBOX", label: "Sandbox" },
-                  { value: "PRODUCTION", label: "Produksi" },
+                  { value: "true", label: "Sandbox" },
+                  { value: "false", label: "Produksi" },
                 ]}
               />
             </Field>
-            <Field label="Scope (koma, wajib)">
+            <Field label="Kuota harian (opsional, default 10000)">
               <Input
-                value={form.scopes}
-                onChange={(e) => setForm((f) => ({ ...f, scopes: e.target.value }))}
-                placeholder="orders:read, webhooks:write"
-              />
-            </Field>
-            <Field label="Kuota harian (opsional)">
-              <Input
-                value={form.dailyQuota}
-                onChange={(e) => setForm((f) => ({ ...f, dailyQuota: e.target.value }))}
+                value={form.quotaPerDay}
+                onChange={(e) => setForm((f) => ({ ...f, quotaPerDay: e.target.value }))}
                 inputMode="numeric"
                 placeholder="mis. 10000"
+              />
+            </Field>
+            <Field label="Rate limit per menit (opsional, default 100)">
+              <Input
+                value={form.rateLimitPerMinute}
+                onChange={(e) => setForm((f) => ({ ...f, rateLimitPerMinute: e.target.value }))}
+                inputMode="numeric"
+                placeholder="mis. 100"
+              />
+            </Field>
+            <Field label="ID pemilik (opsional)">
+              <Input
+                value={form.ownerUserId}
+                onChange={(e) => setForm((f) => ({ ...f, ownerUserId: e.target.value }))}
+                placeholder="ID pengguna pemilik (opsional)"
               />
             </Field>
             <div className="flex justify-end gap-2">

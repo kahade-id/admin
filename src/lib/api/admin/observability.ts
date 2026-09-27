@@ -155,17 +155,44 @@ export async function createIncident(input: {
   severity: IncidentItem["severity"]
   component: string
 }): Promise<IncidentItem> {
-  return adminHttp.post("/v1/admin/observability/incidents", { body: input })
+  // ADM-303: adminPost(path, body) — body sebagai argumen ke-2, BUKAN { body: input }.
+  return adminHttp.post("/v1/admin/observability/incidents", input)
 }
 
 export async function updateIncident(
   id: string,
   input: Partial<Pick<IncidentItem, "title" | "description" | "severity" | "status" | "component">>,
 ): Promise<IncidentItem> {
-  return adminHttp.patch(`/v1/admin/observability/incidents/${encodeURIComponent(id)}`, { body: input })
+  // ADM-303: sama — body sebagai argumen ke-2.
+  return adminHttp.patch(`/v1/admin/observability/incidents/${encodeURIComponent(id)}`, input)
 }
 
 /** Status publik — endpoint tanpa auth (untuk pratinjau di halaman kelola). */
 export async function getPublicStatus(): Promise<PublicStatus> {
   return adminHttp.get("/v1/status")
+}
+
+/* ---------- ADM-315: kapasitas storage & synthetic check manual ---------- */
+
+/** GET /v1/admin/observability/storage — ringkasan alert disk_usage/table_growth (on-demand). */
+export interface StorageAlert {
+  key: string
+  severity: string
+  message: string
+  context: Record<string, unknown> | null
+  status: string
+  raisedAt: string
+  lastSeenAt: string
+}
+
+export async function getStorageSummary(): Promise<{
+  alerts: StorageAlert[]
+  note: string
+}> {
+  return adminHttp.get("/v1/admin/observability/storage")
+}
+
+/** POST /v1/admin/observability/synthetic/run — cek sintetis manual. */
+export async function runSyntheticCheck(): Promise<Record<string, unknown>> {
+  return adminHttp.post("/v1/admin/observability/synthetic/run")
 }
