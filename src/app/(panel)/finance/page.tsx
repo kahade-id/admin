@@ -300,12 +300,23 @@ export default function FinancePage() {
     const mapKey = `${actionKind}:${actionTx.txId}`
     try {
       if (actionKind === "approve") {
-        await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
-        toast.show({
-          title: "Penarikan disetujui",
-          description: formatRupiah(actionTx.amount),
-          tone: "success",
-        })
+        const res = await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
+        // ADM-205: persetujuan pertama belum mengeksekusi payout.
+        if (res?.status === "AWAITING_SECOND_APPROVAL") {
+          toast.show({
+            title: "Persetujuan tercatat",
+            description:
+              res.message ??
+              `Menunggu persetujuan ${(res.requiredApprovals ?? 2) - (res.approvals ?? 1)} admin lain sebelum payout dieksekusi.`,
+            tone: "info",
+          })
+        } else {
+          toast.show({
+            title: res?.status === "ALREADY_EXECUTED" ? "Payout sudah dieksekusi" : "Penarikan disetujui",
+            description: formatRupiah(actionTx.amount),
+            tone: "success",
+          })
+        }
       } else {
         await rejectWithdrawal(actionTx.txId, trimmed, actionKeyFor(actionTx.txId, actionKind))
         toast.show({
@@ -665,25 +676,57 @@ export default function FinancePage() {
                   // pertahanan UI agar baris non-pending tidak bisa di-aksi.
                   render: (r) => {
                     const status = String(r.withdrawStatus)
-                    if (status !== "PENDING_PROCESS" && status !== "PENDING_OTP") return null
+                    // ADM-207: PENDING_OTP tidak punya aksi — backend menolaknya
+                    // (400). Tampilkan label status, bukan tombol rusak.
+                    if (status === "PENDING_OTP") {
+                      return (
+                        <span className="text-caption text-text-secondary">
+                          Menunggu OTP pengguna
+                        </span>
+                      )
+                    }
+                    if (status !== "PENDING_PROCESS") return null
+                    // ADM-205: tampilkan kuorum dual approval; admin yang sudah
+                    // menyetujui tidak bisa menyetujui lagi.
+                    const info = r.approvalInfo
+                    const quorum = info
+                      ? `${info.approvals}/${info.requiredApprovals} persetujuan`
+                      : null
                     return (
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          fullWidth={false}
-                          onClick={() => openAction(r, "reject")}
-                        >
-                          Tolak
-                        </Button>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          fullWidth={false}
-                          onClick={() => openAction(r, "approve")}
-                        >
-                          Setujui
-                        </Button>
+                      <div className="flex flex-col items-end gap-1">
+                        {quorum ? (
+                          <span className="text-caption text-text-secondary">{quorum}</span>
+                        ) : null}
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            fullWidth={false}
+                            onClick={() => openAction(r, "reject")}
+                          >
+                            Tolak
+                          </Button>
+                          {info?.approvedByMe ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              fullWidth={false}
+                              disabled
+                              title="Anda sudah menyetujui — menunggu admin lain"
+                            >
+                              Sudah disetujui ✓
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              fullWidth={false}
+                              onClick={() => openAction(r, "approve")}
+                            >
+                              Setujui
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     )
                   },
@@ -898,10 +941,18 @@ export default function FinancePage() {
             Tulis alasan yang jelas.
           </p>
         ) : (
-          <p className="text-body text-text-secondary">
-            Penarikan yang disetujui akan diproses ke rekening tujuan. Tindakan
-            ini tidak bisa dibatalkan.
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="text-body text-text-secondary">
+              {actionTx?.approvalInfo
+                ? `Persetujuan ${actionTx.approvalInfo.approvals}/${actionTx.approvalInfo.requiredApprovals} — payout ke rekening tujuan dieksekusi setelah ${actionTx.approvalInfo.requiredApprovals} admin BERBEDA menyetujui. Tindakan ini tidak bisa dibatalkan.`
+                : "Penarikan yang disetujui akan diproses ke rekening tujuan. Tindakan ini tidak bisa dibatalkan."}
+            </p>
+            {actionTx?.approvalInfo?.approvedByMe ? (
+              <p className="text-caption text-warning-text">
+                Anda sudah menyetujui penarikan ini — menunggu persetujuan admin lain.
+              </p>
+            ) : null}
+          </div>
         )}
         <div className="mt-4">
           <TextArea

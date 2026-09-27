@@ -511,8 +511,8 @@ function CorrectionRequestDialog({
         reason: reason.trim(),
         ticketRef: ticketRef.trim(),
         idempotencyKey: newIdempotencyKey(),
-        // Diteruskan apa adanya; verifikasi server-side belum tersedia (follow-up).
-        reauthToken: `password-confirm:${password.length > 0 ? "provided" : "missing"}`,
+        // ADM-206: kata sandi asli — diverifikasi server-side (bcrypt + rate limit).
+        reauthPassword: password,
       })
       show({ tone: "success", title: "Pengajuan koreksi dibuat — menunggu persetujuan admin lain." })
       reset()
@@ -586,7 +586,7 @@ function CorrectionRequestDialog({
             <dt className="text-caption text-text-secondary">Referensi tiket</dt>
             <dd className="text-body font-medium">{ticketRef.trim()}</dd>
           </div>
-          <p className="rounded-md bg-warning-bg p-3 text-caption text-warning-text">
+          <p className="rounded-md bg-warning-soft p-3 text-caption text-warning-text">
             Setelah dikirim, pengajuan berstatus Menunggu persetujuan. Hanya admin
             selain pengaju yang dapat menyetujui/menolak.
           </p>
@@ -629,10 +629,9 @@ function CorrectionRequestDialog({
             placeholder="Wajib diisi sebelum submit"
             autoComplete="current-password"
           />
-          <p className="rounded-md bg-warning-bg p-3 text-caption text-warning-text">
-            Verifikasi kata sandi saat ini hanya berupa konfirmasi sadar di UI.
-            Verifikasi server-side terhadap hash kata sandi admin belum tersedia
-            dan dicatat sebagai tindak lanjut keamanan.
+          <p className="rounded-md bg-info-soft p-3 text-caption text-info-text">
+            Kata sandi diverifikasi server-side terhadap hash akun admin Anda
+            (rate limit 5x salah / 15 menit). Tidak pernah disimpan di log.
           </p>
           {error ? <p className="text-body text-danger-text">{error}</p> : null}
         </div>
@@ -703,7 +702,8 @@ function CorrectionsSection() {
         {
           decision,
           notes: decisionNotes.trim() || undefined,
-          reauthToken: "password-confirm:provided",
+          // ADM-206: kata sandi asli — diverifikasi server-side (bcrypt + rate limit).
+          reauthPassword: decidePassword,
         },
         newIdempotencyKey(),
       )
@@ -712,6 +712,7 @@ function CorrectionsSection() {
         title: decision === "APPROVE" ? "Koreksi disetujui dan dieksekusi." : "Koreksi ditolak.",
       })
       setDecideTarget(null)
+      setDecidePassword("")
       void load()
     } catch (err: unknown) {
       show({ tone: "danger", title: "Gagal memproses keputusan.", description: userMessage(err) })
@@ -885,9 +886,9 @@ function CorrectionsSection() {
             onChange={(e) => setDecidePassword(e.target.value)}
             autoComplete="current-password"
           />
-          <p className="rounded-md bg-warning-bg p-3 text-caption text-warning-text">
-            Verifikasi kata sandi saat ini hanya berupa konfirmasi sadar di UI.
-            Verifikasi server-side belum tersedia (tindak lanjut keamanan).
+          <p className="rounded-md bg-info-soft p-3 text-caption text-info-text">
+            Kata sandi diverifikasi server-side terhadap hash akun admin Anda
+            (rate limit 5x salah / 15 menit). Tidak pernah disimpan di log.
           </p>
         </div>
       </Dialog>

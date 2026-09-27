@@ -149,6 +149,12 @@ export type AdminTransactionDetail = AdminTransactionItem & {
 export type PendingWithdrawal = AdminTransactionItem & {
   withdrawStatus: WithdrawStatus | string
   wallet: { userId?: string; user?: AdminTransactionUser | null }
+  /** ADM-205: kuorum dual approval untuk baris ini. */
+  approvalInfo?: {
+    approvals: number
+    requiredApprovals: number
+    approvedByMe: boolean
+  }
 }
 
 export type AuditTrailRow = {
@@ -195,6 +201,19 @@ export type WithdrawalActionResult = {
   txId?: string
   status?: string
   [key: string]: unknown
+}
+
+/**
+ * ADM-205: respons approve withdrawal dengan dual control.
+ * - `AWAITING_SECOND_APPROVAL`: persetujuan tercatat, payout BELUM dieksekusi.
+ * - `ALREADY_EXECUTED`: payout sudah dieksekusi persetujuan admin lain.
+ * - selain itu: objek transaksi (kuorum tercapai, payout dieksekusi).
+ */
+export type WithdrawalApproveResponse = WithdrawalActionResult & {
+  approvals?: number
+  requiredApprovals?: number
+  executed?: boolean
+  message?: string
 }
 
 /**
@@ -289,13 +308,15 @@ export function listPendingWithdrawals(params?: {
   )
 }
 
-/** Setujui penarikan pending (idempoten). Catatan admin opsional. */
+/** Setujui penarikan pending — ADM-205 dual control (idempoten). Catatan admin opsional.
+ * Persetujuan PERTAMA mengembalikan AWAITING_SECOND_APPROVAL tanpa payout;
+ * payout dieksekusi hanya setelah kuorum admin BERBEDA tercapai. */
 export function approveWithdrawal(
   txId: string,
   note?: string,
   idempotencyKey?: string,
-): Promise<WithdrawalActionResult> {
-  return adminHttp.post<WithdrawalActionResult>(
+): Promise<WithdrawalApproveResponse> {
+  return adminHttp.post<WithdrawalApproveResponse>(
     `/v1/admin/finance/withdrawals/${encodeURIComponent(txId)}/approve`,
     note ? { adminNote: note } : {},
     { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
@@ -477,8 +498,8 @@ export type LedgerCorrection = {
  * Minta kata sandi admin sebelum submit koreksi.
  *
  * PERINGATAN: verifikasi kata sandi ini HANYA di sisi UI (konfirmasi
- * sadar). Verifikasi server-side terhadap hash kata sandi admin BELUM
- * tersedia — dicatat sebagai tindak lanjut (follow-up) di backend.
+ * sadar). ADM-206: kata sandi DIVERIFIKASI server-side (bcrypt + rate
+ * limit 5x/15 mnt) — bukan lagi token palsu.
  */
 export type RequestCorrectionInput = {
   userId: string
@@ -487,8 +508,8 @@ export type RequestCorrectionInput = {
   reason: string
   ticketRef: string
   idempotencyKey: string
-  /** Diteruskan ke backend; belum diverifikasi server-side (follow-up). */
-  reauthToken?: string
+  /** ADM-206: kata sandi admin — DIVERIFIKASI server-side (bcrypt + rate limit). Wajib. */
+  reauthPassword: string
 }
 
 /**
@@ -527,7 +548,7 @@ export function getCorrection(id: string): Promise<LedgerCorrection> {
  */
 export function decideCorrection(
   id: string,
-  body: { decision: CorrectionDecision; notes?: string; reauthToken?: string },
+  body: { decision: CorrectionDecision; notes?: string; reauthPassword: string },
   idempotencyKey?: string,
 ): Promise<LedgerCorrection> {
   return adminHttp.post<LedgerCorrection>(
