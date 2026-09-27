@@ -283,6 +283,59 @@ export function listPendingAppeals(params?: {
   )
 }
 
+/** ADM-327 — ringkasan metrik moderasi showcase (read-only, agregat). */
+export type ShowcaseModerationMetrics = {
+  openReports: number
+  underReview: number
+  resolvedLast30d: number
+  avgResolutionHours: number | null
+  takedownsLast30d: number
+  restrictsLast30d: number
+  reopensLast30d: number
+  dismissedLast30d: number
+  pendingAppeals: number
+  reasonDistribution: Array<{ reason: string; count: number }>
+}
+
+export function getShowcaseModerationMetrics(): Promise<ShowcaseModerationMetrics> {
+  return adminHttp.get<ShowcaseModerationMetrics>("/v1/admin/showcase-reports/metrics")
+}
+
+/** ADM-324 — kandidat assignee aktif beserta jumlah antrean terbuka. */
+export type AssignCandidate = {
+  id: string
+  fullName: string
+  role: string
+  openAssignments: number
+}
+
+export function getAssignCandidates(): Promise<{ candidates: AssignCandidate[] }> {
+  return adminHttp.get<{ candidates: AssignCandidate[] }>(
+    "/v1/admin/showcase-reports/assign/candidates",
+  )
+}
+
+/**
+ * ADM-328 — bulk dismiss / under_review (maks 50, confirm wajib, hasil
+ * parsial per item). Butuh Idempotency-Key (dikirim otomatis adminHttp).
+ */
+export type BulkReviewResult = {
+  action: "dismiss" | "under_review"
+  total: number
+  succeeded: number
+  failed: number
+  results: Array<{ id: string; ok: boolean; status?: string; error?: string }>
+}
+
+export function bulkReviewShowcaseReports(input: {
+  ids: string[]
+  action: "dismiss" | "under_review"
+  resolution?: string
+  confirm: true
+}): Promise<BulkReviewResult> {
+  return adminHttp.post<BulkReviewResult>("/v1/admin/showcase-reports/bulk-review", input)
+}
+
 /** G405–G408 — putusan banding (reviewer ≠ moderator awal; APPROVED → restore). */
 export function decideAppeal(
   appealId: string,

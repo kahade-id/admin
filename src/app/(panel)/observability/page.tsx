@@ -19,11 +19,15 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
 import { DataTable } from "@/components/ui/table"
+import { Dialog } from "@/components/ui/dialog"
 import { EmptyState } from "@/components/ui/empty-state"
+import { Field, Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { RoleGate } from "@/components/admin/role-gate"
+import { Select } from "@/components/admin/select"
 import { useToast } from "@/components/ui/toast"
 import { userMessage } from "@/lib/api/response"
+import { formatDateTimeWIB } from "@/lib/format"
 import {
   getLatency,
   getQueues,
@@ -31,9 +35,15 @@ import {
   listAlerts,
   resolveAlert,
   runSyntheticAlertTest,
+  runSyntheticCheck,
   getDelivery,
   getWebsocket,
   getSpans,
+  listIncidents,
+  createIncident,
+  updateIncident,
+  getPublicStatus,
+  getStorageSummary,
   type RouteLatency,
   type QueueDepth,
   type DependencyInfo,
@@ -41,6 +51,9 @@ import {
   type DeliveryStats,
   type WsSnapshot,
   type SpanItem,
+  type IncidentItem,
+  type PublicStatus,
+  type StorageAlert,
 } from "@/lib/api/admin/observability"
 
 type LatencyRow = RouteLatency & Record<string, unknown>
@@ -82,11 +95,27 @@ function ObservabilityInner() {
   const [otpProvider, setOtpProvider] = useState<{ provider: string; tokenConfigured: boolean; production: boolean } | null>(null)
   const [ws, setWs] = useState<WsSnapshot | null>(null)
   const [spans, setSpans] = useState<SpanItem[]>([])
+  // ADM-303: insiden + pratinjau status publik.
+  const [incidents, setIncidents] = useState<IncidentItem[]>([])
+  const [publicStatus, setPublicStatus] = useState<PublicStatus | null>(null)
+  const [showIncidentDialog, setShowIncidentDialog] = useState(false)
+  const [incidentForm, setIncidentForm] = useState({ title: "", description: "", severity: "SEV2", component: "api" })
+  const [savingIncident, setSavingIncident] = useState(false)
+  const [updatingIncidentId, setUpdatingIncidentId] = useState<string | null>(null)
+  const [updatingIncidentStatus, setUpdatingIncidentStatus] = useState("")
+  // ADM-315: kapasitas storage + synthetic check manual.
+  const [storageAlerts, setStorageAlerts] = useState<StorageAlert[]>([])
+  const [storageNote, setStorageNote] = useState("")
+  const [syntheticResult, setSyntheticResult] = useState<Record<string, unknown> | null>(null)
+  const [runningSynthetic, setRunningSynthetic] = useState(false)
+  // ADM-316: konfirmasi resolve alert.
+  const [resolvingAlertKey, setResolvingAlertKey] = useState<string | null>(null)
+  const [resolving, setResolving] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [lat, q, d, a, del, w, s] = await Promise.all([
+      const [lat, q, d, a, del, w, s, inc, ps, st] = await Promise.all([
         getLatency(),
         getQueues(),
         getDependencies(),
@@ -94,6 +123,9 @@ function ObservabilityInner() {
         getDelivery(),
         getWebsocket(),
         getSpans(),
+        listIncidents(),
+        getPublicStatus(),
+        getStorageSummary(),
       ])
       setRelease(lat.release)
       setRoutes(lat.routes)
@@ -104,6 +136,10 @@ function ObservabilityInner() {
       setOtpProvider(del.otpProvider)
       setWs(w)
       setSpans(s.spans)
+      setIncidents(inc.incidents)
+      setPublicStatus(ps)
+      setStorageAlerts(st.alerts)
+      setStorageNote(st.note)
     } catch (err) {
       toast.show({ title: "Gagal memuat observabilitas", description: userMessage(err), tone: "danger" })
     } finally {
@@ -115,16 +151,21 @@ function ObservabilityInner() {
     void load()
   }, [load])
 
-  const onResolveAlert = useCallback(async (key: string) => {
+  const onResolveAlert = useCallback(async () => {
+    if (!resolvingAlertKey) return
+    setResolving(true)
     try {
-      await resolveAlert(key)
+      await resolveAlert(resolvingAlertKey)
       toast.show({ title: "Alert diselesaikan", tone: "success" })
+      setResolvingAlertKey(null)
       const a = await listAlerts()
       setAlerts(a.alerts)
     } catch (err) {
       toast.show({ title: "Gagal resolve alert", description: userMessage(err), tone: "danger" })
+    } finally {
+      setResolving(false)
     }
-  }, [toast])
+  }, [resolvingAlertKey, toast])
 
   const onSyntheticTest = useCallback(async () => {
     try {
@@ -138,6 +179,70 @@ function ObservabilityInner() {
       setAlerts(a.alerts)
     } catch (err) {
       toast.show({ title: "Uji sintetis gagal", description: userMessage(err), tone: "danger" })
+    }
+  }, [toast])
+
+  // ADM-303: buat insiden.
+  const onCreateIncident = useCallback(async () => {
+    const title = incidentForm.title.trim()
+    const description = incidentForm.description.trim()
+    if (!title || !description) {
+      toast.show({ title: "Judul & deskripsi wajib", tone: "danger" })
+      return
+    }
+    setSavingIncident(true)
+    try {
+      await createIncident({
+        title,
+        description,
+        severity: incidentForm.severity as IncidentItem["severity"],
+        component: incidentForm.component.trim() || "api",
+      })
+      toast.show({ title: "Insiden dibuat", tone: "success" })
+      setShowIncidentDialog(false)
+      setIncidentForm({ title: "", description: "", severity: "SEV2", component: "api" })
+      const [inc, ps] = await Promise.all([listIncidents(), getPublicStatus()])
+      setIncidents(inc.incidents)
+      setPublicStatus(ps)
+    } catch (err) {
+      toast.show({ title: "Gagal membuat insiden", description: userMessage(err), tone: "danger" })
+    } finally {
+      setSavingIncident(false)
+    }
+  }, [incidentForm, toast])
+
+  // ADM-303: ubah status insiden.
+  const onUpdateIncidentStatus = useCallback(async () => {
+    if (!updatingIncidentId || !updatingIncidentStatus) return
+    setSavingIncident(true)
+    try {
+      await updateIncident(updatingIncidentId, {
+        status: updatingIncidentStatus as IncidentItem["status"],
+      })
+      toast.show({ title: "Status insiden diperbarui", tone: "success" })
+      setUpdatingIncidentId(null)
+      setUpdatingIncidentStatus("")
+      const [inc, ps] = await Promise.all([listIncidents(), getPublicStatus()])
+      setIncidents(inc.incidents)
+      setPublicStatus(ps)
+    } catch (err) {
+      toast.show({ title: "Gagal memperbarui insiden", description: userMessage(err), tone: "danger" })
+    } finally {
+      setSavingIncident(false)
+    }
+  }, [updatingIncidentId, updatingIncidentStatus, toast])
+
+  // ADM-315: jalankan synthetic check manual.
+  const onRunSynthetic = useCallback(async () => {
+    setRunningSynthetic(true)
+    try {
+      const r = await runSyntheticCheck()
+      setSyntheticResult(r)
+      toast.show({ title: "Synthetic check selesai", tone: "success" })
+    } catch (err) {
+      toast.show({ title: "Synthetic check gagal", description: userMessage(err), tone: "danger" })
+    } finally {
+      setRunningSynthetic(false)
     }
   }, [toast])
 
@@ -179,11 +284,11 @@ function ObservabilityInner() {
                     ),
                   },
                   { key: "message", header: "Pesan" },
-                  { key: "lastSeenAt", header: "Terakhir terlihat" },
+                  { key: "lastSeenAt", header: "Terakhir terlihat", render: (r: AlertRow) => formatDateTimeWIB(r.lastSeenAt) },
                   {
                     key: "id", header: "Aksi",
                     render: (r) => (
-                      <Button size="sm" variant="secondary" onClick={() => void onResolveAlert(r.key)}>
+                      <Button size="sm" variant="secondary" onClick={() => setResolvingAlertKey(r.key)}>
                         Resolve
                       </Button>
                     ),
@@ -193,6 +298,130 @@ function ObservabilityInner() {
                 rowKey={(r) => r.id}
               />
             )}
+          </CardBody>
+        </Card>
+      </Section>
+
+      {/* ADM-303 — Manajemen insiden: daftar + buat + ubah status + pratinjau status publik. */}
+      <Section
+        title="Insiden"
+        description="Deklarasikan insiden saat outage; status publik (/v1/status) ter-update otomatis."
+        action={
+          <Button variant="secondary" size="sm" onClick={() => setShowIncidentDialog(true)}>
+            Buat insiden
+          </Button>
+        }
+      >
+        <Card>
+          <CardBody>
+            {publicStatus ? (
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-body text-text-secondary">
+                <span>Pratinjau status publik:</span>
+                <Badge
+                  tone={
+                    publicStatus.status === "operational"
+                      ? "success"
+                      : publicStatus.status === "degraded"
+                        ? "warning"
+                        : "danger"
+                  }
+                >
+                  {publicStatus.status}
+                </Badge>
+                <span className="text-caption">
+                  {publicStatus.activeIncidents.length} insiden aktif
+                </span>
+              </div>
+            ) : null}
+            {incidents.length === 0 ? (
+              <EmptyState title="Tidak ada insiden" description="Semua operasional normal." />
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "title", header: "Judul" },
+                  {
+                    key: "severity", header: "Severity",
+                    render: (r: IncidentItem & Record<string, unknown>) => (
+                      <Badge tone={r.severity === "SEV1" ? "danger" : r.severity === "SEV2" ? "warning" : "neutral"}>
+                        {r.severity}
+                      </Badge>
+                    ),
+                  },
+                  {
+                    key: "status", header: "Status",
+                    render: (r: IncidentItem & Record<string, unknown>) => (
+                      <Badge tone={r.status === "RESOLVED" ? "success" : "info"}>{r.status}</Badge>
+                    ),
+                  },
+                  { key: "component", header: "Komponen" },
+                  { key: "startedAt", header: "Mulai", render: (r: IncidentItem & Record<string, unknown>) => formatDateTimeWIB(r.startedAt) },
+                  {
+                    key: "id", header: "Aksi",
+                    render: (r: IncidentItem & Record<string, unknown>) =>
+                      r.status === "RESOLVED" ? (
+                        <span className="text-caption text-text-secondary">Selesai</span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setUpdatingIncidentId(r.id)
+                            setUpdatingIncidentStatus(r.status)
+                          }}
+                        >
+                          Ubah status
+                        </Button>
+                      ),
+                  },
+                ]}
+                rows={incidents.map((i) => ({ ...i }) as IncidentItem & Record<string, unknown>)}
+                rowKey={(r) => r.id}
+              />
+            )}
+          </CardBody>
+        </Card>
+      </Section>
+
+      {/* ADM-315 — Kapasitas storage & synthetic check manual. */}
+      <Section
+        title="Kapasitas & synthetic check"
+        description="Kesehatan disk/pertumbuhan tabel (evaluasi on-demand) + cek sintetis manual."
+        action={
+          <Button variant="secondary" size="sm" loading={runningSynthetic} onClick={() => void onRunSynthetic()}>
+            Jalankan synthetic check
+          </Button>
+        }
+      >
+        <Card>
+          <CardBody>
+            {storageNote ? <p className="mb-2 text-caption text-text-secondary">{storageNote}</p> : null}
+            {storageAlerts.length === 0 ? (
+              <EmptyState title="Kapasitas normal" description="Tidak ada alert disk_usage/table_growth." />
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "key", header: "Kunci" },
+                  {
+                    key: "severity", header: "Severity",
+                    render: (r: StorageAlert & Record<string, unknown>) => (
+                      <Badge tone={r.severity === "critical" ? "danger" : "warning"}>{r.severity}</Badge>
+                    ),
+                  },
+                  { key: "message", header: "Pesan" },
+                  { key: "lastSeenAt", header: "Terakhir terlihat", render: (r: StorageAlert & Record<string, unknown>) => formatDateTimeWIB(r.lastSeenAt) },
+                ]}
+                rows={storageAlerts.map((a) => ({ ...a }) as StorageAlert & Record<string, unknown>)}
+                rowKey={(r) => r.key}
+              />
+            )}
+            {syntheticResult ? (
+              <div className="mt-3 rounded-sm border border-border bg-surface-elevated p-3">
+                <p className="mb-1 text-caption text-text-secondary">Hasil synthetic check:</p>
+                <pre className="overflow-x-auto text-caption text-text-primary">
+                  {JSON.stringify(syntheticResult, null, 2)}
+                </pre>
+              </div>
+            ) : null}
           </CardBody>
         </Card>
       </Section>
@@ -296,7 +525,7 @@ function ObservabilityInner() {
                   { key: "sent", header: "Terkirim" },
                   { key: "failed", header: "Gagal" },
                   { key: "skipped", header: "Dilewati" },
-                  { key: "lastAt", header: "Terakhir", render: (r: DeliveryStats & Record<string, unknown>) => r.lastAt ?? "-" },
+                  { key: "lastAt", header: "Terakhir", render: (r: DeliveryStats & Record<string, unknown>) => r.lastAt ? formatDateTimeWIB(r.lastAt) : "-" },
                 ]}
                 rows={delivery.map((d) => ({ ...d }) as DeliveryStats & Record<string, unknown>)}
                 rowKey={(r) => `${r.channel}:${r.provider}`}
@@ -348,6 +577,127 @@ function ObservabilityInner() {
           </CardBody>
         </Card>
       </Section>
+
+      {/* ADM-316: dialog konfirmasi resolve alert (satu klik bisa menghilangkan sinyal). */}
+      <Dialog
+        open={resolvingAlertKey !== null}
+        onClose={() => {
+          if (!resolving) setResolvingAlertKey(null)
+        }}
+        title="Resolve alert"
+        description={resolvingAlertKey ? `Tandai alert "${resolvingAlertKey}" sebagai selesai?` : ""}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" disabled={resolving} onClick={() => setResolvingAlertKey(null)}>
+              Batal
+            </Button>
+            <Button variant="primary" loading={resolving} onClick={() => void onResolveAlert()}>
+              Resolve
+            </Button>
+          </div>
+        }
+      />
+
+      {/* ADM-303: dialog buat insiden. */}
+      <Dialog
+        open={showIncidentDialog}
+        onClose={() => {
+          if (!savingIncident) setShowIncidentDialog(false)
+        }}
+        title="Buat insiden"
+        description="Insiden aktif tampil di status publik. Jangan tulis data pribadi."
+        footer={
+          <div className="flex flex-col gap-3">
+            <Field label="Judul (wajib)">
+              <Input
+                value={incidentForm.title}
+                onChange={(e) => setIncidentForm((f) => ({ ...f, title: e.target.value }))}
+                placeholder="mis. Latency checkout meningkat"
+              />
+            </Field>
+            <Field label="Deskripsi (wajib)">
+              <TextArea
+                value={incidentForm.description}
+                onChange={(e) => setIncidentForm((f) => ({ ...f, description: e.target.value }))}
+                rows={3}
+                placeholder="Dampak, komponen terdampak, langkah mitigasi…"
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Severity">
+                <Select
+                  value={incidentForm.severity}
+                  onChange={(e) => setIncidentForm((f) => ({ ...f, severity: e.target.value }))}
+                  options={[
+                    { value: "SEV1", label: "SEV1" },
+                    { value: "SEV2", label: "SEV2" },
+                    { value: "SEV3", label: "SEV3" },
+                    { value: "SEV4", label: "SEV4" },
+                  ]}
+                />
+              </Field>
+              <Field label="Komponen">
+                <Input
+                  value={incidentForm.component}
+                  onChange={(e) => setIncidentForm((f) => ({ ...f, component: e.target.value }))}
+                  placeholder="api"
+                />
+              </Field>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" disabled={savingIncident} onClick={() => setShowIncidentDialog(false)}>
+                Batal
+              </Button>
+              <Button variant="primary" loading={savingIncident} onClick={() => void onCreateIncident()}>
+                Buat
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      {/* ADM-303: dialog ubah status insiden. */}
+      <Dialog
+        open={updatingIncidentId !== null}
+        onClose={() => {
+          if (!savingIncident) {
+            setUpdatingIncidentId(null)
+            setUpdatingIncidentStatus("")
+          }
+        }}
+        title="Ubah status insiden"
+        footer={
+          <div className="flex flex-col gap-3">
+            <Field label="Status">
+              <Select
+                value={updatingIncidentStatus}
+                onChange={(e) => setUpdatingIncidentStatus(e.target.value)}
+                options={[
+                  { value: "INVESTIGATING", label: "INVESTIGATING" },
+                  { value: "IDENTIFIED", label: "IDENTIFIED" },
+                  { value: "MONITORING", label: "MONITORING" },
+                  { value: "RESOLVED", label: "RESOLVED" },
+                ]}
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                disabled={savingIncident}
+                onClick={() => {
+                  setUpdatingIncidentId(null)
+                  setUpdatingIncidentStatus("")
+                }}
+              >
+                Batal
+              </Button>
+              <Button variant="primary" loading={savingIncident} onClick={() => void onUpdateIncidentStatus()}>
+                Simpan
+              </Button>
+            </div>
+          </div>
+        }
+      />
     </div>
   )
 }

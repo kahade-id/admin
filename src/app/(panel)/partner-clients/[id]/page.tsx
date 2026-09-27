@@ -5,6 +5,10 @@
  *
  * Route: `/partner-clients/[id]`. HANYA SUPER_ADMIN (local gate; backend
  * otoritas RBAC). Kunci & webhook & kuota & audit.
+ *
+ * Kontrak diselaraskan dengan backend (ADM-304–ADM-313, ADM-321–ADM-322):
+ * detail me-return { client, keys, endpoints, usage } dengan keys teredaksi
+ * di level atas; respons penerbitan/rotasi = { key, plaintext }.
  */
 
 import { useCallback, useEffect, useState } from "react"
@@ -19,11 +23,16 @@ import { Field, Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
+import { Select } from "@/components/admin/select"
 import { useAuth } from "@/lib/auth-context"
 import { formatDateTimeWIB } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import {
   challengeWebhookEndpoint,
+  deleteWebhookEndpoint,
+  deliveryCanReplay,
+  deliveryStatusLabel,
+  deliveryStatusTone,
   getPartnerAuditLog,
   getPartnerClient,
   issuePartnerKey,
@@ -33,9 +42,14 @@ import {
   revokePartnerKey,
   rotatePartnerKey,
   sendTestWebhook,
+  updatePartnerClient,
+  updateWebhookEndpoint,
   type PartnerAuditEntry,
   type PartnerClientDetail,
+  type PartnerClientStatus,
   type PartnerDelivery,
+  type PartnerKeySummary,
+  type PartnerWebhookEndpoint,
 } from "@/lib/api/admin/partner-clients"
 import type { ReactNode } from "react"
 
@@ -46,6 +60,19 @@ function KeyValue({ label, value, mono = false }: { label: string; value: ReactN
       <dd className={`text-body text-text-primary ${mono ? "font-mono" : ""}`}>{value}</dd>
     </div>
   )
+}
+
+function clientStatusTone(s: PartnerClientStatus): "success" | "warning" | "danger" | "neutral" {
+  switch (s) {
+    case "ACTIVE":
+      return "success"
+    case "SUSPENDED":
+      return "warning"
+    case "REVOKED":
+      return "danger"
+    default:
+      return "neutral"
+  }
 }
 
 export default function PartnerClientDetailPage() {
@@ -61,10 +88,10 @@ export default function PartnerClientDetailPage() {
   const [audit, setAudit] = useState<PartnerAuditEntry[]>([])
 
   const [showKeyDialog, setShowKeyDialog] = useState(false)
-  const [keyForm, setKeyForm] = useState({ label: "", scopes: "", ttlDays: "" })
+  // ADM-306: { name*, scopes*, expiresAt? } (ttlDays → expiresAt ISO).
+  const [keyForm, setKeyForm] = useState({ name: "", scopes: "", ttlDays: "" })
   const [issuing, setIssuing] = useState(false)
   const [plaintext, setPlaintext] = useState<string | null>(null)
-  const [plaintextKeyId, setPlaintextKeyId] = useState<string | null>(null)
 
   const [showEndpointDialog, setShowEndpointDialog] = useState(false)
   const [endpointForm, setEndpointForm] = useState({ url: "", events: "" })
@@ -72,7 +99,19 @@ export default function PartnerClientDetailPage() {
 
   const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null)
   const [revokeReason, setRevokeReason] = useState("")
+  // ADM-321: konfirmasi rotasi.
+  const [rotatingKey, setRotatingKey] = useState<PartnerKeySummary | null>(null)
   const [acting, setActing] = useState(false)
+
+  // ADM-313: kelola klien (status/kuota/rate-limit + alasan audit).
+  const [manageForm, setManageForm] = useState({ status: "ACTIVE", quotaPerDay: "", rateLimitPerMinute: "", reason: "" })
+  const [managing, setManaging] = useState(false)
+  const [manageInit, setManageInit] = useState(false)
+
+  // ADM-322: edit & hapus endpoint webhook.
+  const [editingEndpoint, setEditingEndpoint] = useState<PartnerWebhookEndpoint | null>(null)
+  const [editEndpointForm, setEditEndpointForm] = useState({ url: "", events: "", isActive: true })
+  const [deletingEndpoint, setDeletingEndpoint] = useState<PartnerWebhookEndpoint | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -95,6 +134,20 @@ export default function PartnerClientDetailPage() {
   useEffect(() => {
     if (allowed) void load()
   }, [allowed, load])
+
+  // Sinkronkan form kelola dengan data klien sekali saja.
+  useEffect(() => {
+    const c = detail?.client
+    if (c && !manageInit) {
+      setManageForm({
+        status: c.status,
+        quotaPerDay: String(c.quotaPerDay),
+        rateLimitPerMinute: String(c.rateLimitPerMinute),
+        reason: "",
+      })
+      setManageInit(true)
+    }
+  }, [detail, manageInit])
 
   if (state.status === "loading") {
     return (
@@ -124,22 +177,33 @@ export default function PartnerClientDetailPage() {
   }
 
   const handleIssueKey = async () => {
+    const name = keyForm.name.trim()
+    if (name.length < 3) {
+      toast.show({ title: "Nama kunci wajib", description: "Minimal 3 karakter.", tone: "danger" })
+      return
+    }
     const scopes = keyForm.scopes.split(",").map((s) => s.trim()).filter(Boolean)
     if (scopes.length === 0) {
       toast.show({ title: "Scope wajib", description: "Isi minimal satu scope.", tone: "danger" })
       return
     }
+    // ADM-306: ttlDays → expiresAt ISO (atau tanpa kedaluwarsa).
+    let expiresAt: string | undefined
+    if (keyForm.ttlDays.trim()) {
+      const days = Number(keyForm.ttlDays)
+      if (!Number.isFinite(days) || days <= 0) {
+        toast.show({ title: "TTL tidak valid", description: "TTL hari harus bilangan positif.", tone: "danger" })
+        return
+      }
+      expiresAt = new Date(Date.now() + days * 86_400_000).toISOString()
+    }
     setIssuing(true)
     try {
-      const issued = await issuePartnerKey(id, {
-        label: keyForm.label.trim() || undefined,
-        scopes,
-        ttlDays: keyForm.ttlDays ? Number(keyForm.ttlDays) : undefined,
-      })
+      // Respons { key, plaintext } — ADM-306.
+      const issued = await issuePartnerKey(id, { name, scopes, expiresAt })
       setPlaintext(issued.plaintext)
-      setPlaintextKeyId(issued.id)
       setShowKeyDialog(false)
-      setKeyForm({ label: "", scopes: "", ttlDays: "" })
+      setKeyForm({ name: "", scopes: "", ttlDays: "" })
       await load()
     } catch (e) {
       toast.show({ title: "Gagal menerbitkan kunci", description: userMessage(e), tone: "danger" })
@@ -148,12 +212,14 @@ export default function PartnerClientDetailPage() {
     }
   }
 
-  const handleRotate = async (keyId: string) => {
+  // ADM-321: rotasi lewat dialog konfirmasi (kunci lama overlap 24 jam).
+  const handleRotate = async () => {
+    if (!rotatingKey) return
     setActing(true)
     try {
-      const issued = await rotatePartnerKey(id, keyId)
+      const issued = await rotatePartnerKey(id, rotatingKey.id)
       setPlaintext(issued.plaintext)
-      setPlaintextKeyId(issued.id)
+      setRotatingKey(null)
       toast.show({ title: "Berhasil", description: "Kunci baru diterbitkan — kunci lama overlap 24 jam.", tone: "success" })
       await load()
     } catch (e) {
@@ -208,9 +274,102 @@ export default function PartnerClientDetailPage() {
     }
   }
 
+  // ADM-322: edit endpoint (URL/event/status aktif).
+  const handleEditEndpoint = async () => {
+    if (!editingEndpoint) return
+    const url = editEndpointForm.url.trim()
+    if (!/^https:\/\//.test(url)) {
+      toast.show({ title: "URL tidak valid", description: "Endpoint webhook harus HTTPS.", tone: "danger" })
+      return
+    }
+    const events = editEndpointForm.events.split(",").map((s) => s.trim()).filter(Boolean)
+    if (events.length === 0) {
+      toast.show({ title: "Event wajib", description: "Isi minimal satu tipe event.", tone: "danger" })
+      return
+    }
+    setActing(true)
+    try {
+      await updateWebhookEndpoint(id, editingEndpoint.id, {
+        url,
+        events,
+        isActive: editEndpointForm.isActive,
+      })
+      toast.show({ title: "Berhasil", description: "Endpoint diperbarui — URL baru memicu re-verifikasi.", tone: "success" })
+      setEditingEndpoint(null)
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal memperbarui", description: userMessage(e), tone: "danger" })
+    } finally {
+      setActing(false)
+    }
+  }
+
+  // ADM-322: hapus endpoint (konfirmasi).
+  const handleDeleteEndpoint = async () => {
+    if (!deletingEndpoint) return
+    setActing(true)
+    try {
+      await deleteWebhookEndpoint(id, deletingEndpoint.id)
+      toast.show({ title: "Berhasil", description: "Endpoint dihapus.", tone: "success" })
+      setDeletingEndpoint(null)
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal menghapus", description: userMessage(e), tone: "danger" })
+    } finally {
+      setActing(false)
+    }
+  }
+
+  // ADM-313: kelola klien — status (suspend/revoke/restore), kuota, rate limit.
+  const handleManage = async () => {
+    const c = detail?.client
+    if (!c) return
+    const statusChanged = manageForm.status !== c.status
+    const reason = manageForm.reason.trim()
+    if (statusChanged && reason.length < 10) {
+      toast.show({ title: "Alasan wajib", description: "Perubahan status butuh alasan min. 10 karakter (diaudit).", tone: "danger" })
+      return
+    }
+    const quotaPerDay = manageForm.quotaPerDay.trim() ? Number(manageForm.quotaPerDay) : undefined
+    const rateLimitPerMinute = manageForm.rateLimitPerMinute.trim() ? Number(manageForm.rateLimitPerMinute) : undefined
+    if (quotaPerDay !== undefined && (!Number.isInteger(quotaPerDay) || quotaPerDay < 0)) {
+      toast.show({ title: "Kuota tidak valid", description: "Kuota harian harus bilangan bulat ≥ 0.", tone: "danger" })
+      return
+    }
+    if (rateLimitPerMinute !== undefined && (!Number.isInteger(rateLimitPerMinute) || rateLimitPerMinute < 1)) {
+      toast.show({ title: "Rate limit tidak valid", description: "Rate limit harus bilangan bulat ≥ 1.", tone: "danger" })
+      return
+    }
+    if (
+      !statusChanged &&
+      quotaPerDay === c.quotaPerDay &&
+      rateLimitPerMinute === c.rateLimitPerMinute
+    ) {
+      toast.show({ title: "Tidak ada perubahan", tone: "info" })
+      return
+    }
+    setManaging(true)
+    try {
+      await updatePartnerClient(id, {
+        ...(statusChanged ? { status: manageForm.status as PartnerClientStatus, reason } : {}),
+        ...(quotaPerDay !== undefined && quotaPerDay !== c.quotaPerDay ? { quotaPerDay } : {}),
+        ...(rateLimitPerMinute !== undefined && rateLimitPerMinute !== c.rateLimitPerMinute ? { rateLimitPerMinute } : {}),
+      })
+      toast.show({ title: "Berhasil", description: "Klien diperbarui dan diaudit.", tone: "success" })
+      setManageForm((f) => ({ ...f, reason: "" }))
+      setManageInit(false)
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal memperbarui", description: userMessage(e), tone: "danger" })
+    } finally {
+      setManaging(false)
+    }
+  }
+
   const c = detail?.client ?? null
   const keys = detail?.keys ?? []
   const endpoints = detail?.endpoints ?? []
+  const usage = detail?.usage
 
   return (
     <div className="flex flex-col gap-6">
@@ -219,12 +378,12 @@ export default function PartnerClientDetailPage() {
           ← Kembali ke daftar klien
         </a>
         <h1 className="mt-2 text-title font-bold text-text-primary">
-          {c?.name ?? "Memuat…"}
+          {c?.orgName ?? "Memuat…"}
         </h1>
         {c ? (
           <div className="mt-2 flex flex-wrap gap-2">
-            <Badge tone={c.environment === "PRODUCTION" ? "info" : "neutral"}>{c.environment}</Badge>
-            <Badge tone={c.status === "ACTIVE" ? "success" : "danger"}>{c.status}</Badge>
+            <Badge tone={c.isSandbox ? "neutral" : "info"}>{c.isSandbox ? "SANDBOX" : "PRODUCTION"}</Badge>
+            <Badge tone={clientStatusTone(c.status)}>{c.status}</Badge>
           </div>
         ) : null}
       </div>
@@ -239,16 +398,72 @@ export default function PartnerClientDetailPage() {
             <CardHeader title="Ringkasan" />
             <CardBody>
               <dl>
-                <KeyValue label="Scope" value={(c.scopes ?? []).join(", ")} />
-                <KeyValue label="Kuota harian" value={c.dailyQuota != null ? String(c.dailyQuota) : "—"} mono />
-                <KeyValue label="Request hari ini" value={String(detail?.usage.requestsToday ?? 0)} mono />
+                <KeyValue label="Kuota harian" value={String(c.quotaPerDay)} mono />
+                <KeyValue label="Rate limit/menit" value={String(c.rateLimitPerMinute)} mono />
+                {/* ADM-308/326: todayCalls + errorRatePct dari backend. */}
+                <KeyValue label="Request hari ini" value={String(usage?.todayCalls ?? 0)} mono />
                 <KeyValue
                   label="Pemakaian kuota"
-                  value={detail?.usage.quotaUsedPct != null ? `${detail.usage.quotaUsedPct}%` : "—"}
+                  value={usage?.quotaUsedPct != null ? `${usage.quotaUsedPct}%` : "—"}
                   mono
                 />
+                <KeyValue
+                  label="Tingkat error"
+                  value={usage?.errorRatePct != null ? `${usage.errorRatePct}%` : "—"}
+                  mono
+                />
+                <KeyValue label="ID pemilik" value={c.ownerUserId ?? "—"} mono />
                 <KeyValue label="Dibuat" value={formatDateTimeWIB(c.createdAt)} />
               </dl>
+            </CardBody>
+          </Card>
+
+          {/* ADM-313 — kelola klien: suspend/aktifkan/cabut + kuota + rate limit */}
+          <Card padded={false}>
+            <CardHeader title="Kelola klien" />
+            <CardBody>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Status">
+                  <Select
+                    value={manageForm.status}
+                    onChange={(e) => setManageForm((f) => ({ ...f, status: e.target.value }))}
+                    options={[
+                      { value: "ACTIVE", label: "Aktif" },
+                      { value: "SUSPENDED", label: "Ditangguhkan" },
+                      { value: "REVOKED", label: "Dicabut" },
+                    ]}
+                  />
+                </Field>
+                <Field label="Alasan perubahan status (wajib bila status berubah, min. 10 char)">
+                  <Input
+                    value={manageForm.reason}
+                    onChange={(e) => setManageForm((f) => ({ ...f, reason: e.target.value }))}
+                    placeholder="Contoh: penyalahgunaan kuota oleh mitra…"
+                  />
+                </Field>
+                <Field label="Kuota harian">
+                  <Input
+                    value={manageForm.quotaPerDay}
+                    onChange={(e) => setManageForm((f) => ({ ...f, quotaPerDay: e.target.value }))}
+                    inputMode="numeric"
+                  />
+                </Field>
+                <Field label="Rate limit per menit">
+                  <Input
+                    value={manageForm.rateLimitPerMinute}
+                    onChange={(e) => setManageForm((f) => ({ ...f, rateLimitPerMinute: e.target.value }))}
+                    inputMode="numeric"
+                  />
+                </Field>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <Button variant="primary" size="sm" fullWidth={false} loading={managing} onClick={() => void handleManage()}>
+                  Simpan perubahan
+                </Button>
+              </div>
+              <p className="mt-2 text-caption text-text-secondary">
+                Suspended/Revoked memblokir pemakaian kunci; semua perubahan dicatat di audit log.
+              </p>
             </CardBody>
           </Card>
 
@@ -268,27 +483,29 @@ export default function PartnerClientDetailPage() {
               ) : (
                 <DataTable
                   columns={[
-                    { key: "col1", header: "Label", render: (k) => k.label ?? "—" },
-                    { key: "col2", header: "Prefix", render: (k) => <span className="font-mono">{k.keyPrefix}</span> },
-                    { key: "col3", header: "Scope", render: (k) => (k.scopes ?? []).join(", ") },
-                    { key: "col4", header: "Kedaluwarsa", render: (k) => (k.expiresAt ? formatDateTimeWIB(k.expiresAt) : "—") },
+                    { key: "col1", header: "Nama", render: (k: PartnerKeySummary) => k.name ?? "—" },
+                    { key: "col2", header: "Prefix", render: (k: PartnerKeySummary) => <span className="font-mono">{k.keyPrefix}</span> },
+                    { key: "col3", header: "Scope", render: (k: PartnerKeySummary) => (k.scopes ?? []).join(", ") },
+                    { key: "col4", header: "Kedaluwarsa", render: (k: PartnerKeySummary) => (k.expiresAt ? formatDateTimeWIB(k.expiresAt) : "—") },
                     { key: "col5", header: "Status",
-                      render: (k) =>
+                      render: (k: PartnerKeySummary) =>
                         k.revokedAt ? (
                           <Badge tone="danger">Dicabut</Badge>
+                        ) : k.validUntil ? (
+                          <Badge tone="warning">Overlap rotasi</Badge>
                         ) : (
                           <Badge tone="success">Aktif</Badge>
                         ),
                     },
                     { key: "col6", header: "",
-                      render: (k) =>
+                      render: (k: PartnerKeySummary) =>
                         !k.revokedAt ? (
                           <div className="flex gap-2">
                             <button
                               type="button"
                               className="text-body text-info-text hover:underline"
                               disabled={acting}
-                              onClick={() => void handleRotate(k.id)}
+                              onClick={() => setRotatingKey(k)}
                             >
                               Rotasi
                             </button>
@@ -326,18 +543,18 @@ export default function PartnerClientDetailPage() {
               ) : (
                 <DataTable
                   columns={[
-                    { key: "col7", header: "URL", render: (e) => <span className="font-mono text-caption">{e.url}</span> },
-                    { key: "col8", header: "Event", render: (e) => (e.events ?? []).join(", ") },
+                    { key: "col7", header: "URL", render: (e: PartnerWebhookEndpoint) => <span className="font-mono text-caption">{e.url}</span> },
+                    { key: "col8", header: "Event", render: (e: PartnerWebhookEndpoint) => (e.events ?? []).join(", ") },
                     { key: "col9", header: "Status",
-                      render: (e) => (
+                      render: (e: PartnerWebhookEndpoint) => (
                         <Badge tone={e.status === "ACTIVE" ? "success" : e.status === "CHALLENGED" ? "warning" : "neutral"}>
                           {e.status}
                         </Badge>
                       ),
                     },
-                    { key: "col10", header: "Pengiriman terakhir", render: (e) => e.lastDeliveryAt ? formatDateTimeWIB(e.lastDeliveryAt) : "—" },
+                    { key: "col10", header: "Pengiriman terakhir", render: (e: PartnerWebhookEndpoint) => e.lastDeliveryAt ? formatDateTimeWIB(e.lastDeliveryAt) : "—" },
                     { key: "col11", header: "",
-                      render: (e) => (
+                      render: (e: PartnerWebhookEndpoint) => (
                         <div className="flex gap-2">
                           <button
                             type="button"
@@ -373,6 +590,26 @@ export default function PartnerClientDetailPage() {
                           >
                             Uji
                           </button>
+                          {/* ADM-322: edit & hapus endpoint */}
+                          <button
+                            type="button"
+                            className="text-body text-info-text hover:underline"
+                            disabled={acting}
+                            onClick={() => {
+                              setEditingEndpoint(e)
+                              setEditEndpointForm({ url: e.url, events: (e.events ?? []).join(", "), isActive: e.isActive })
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="text-body text-danger-text hover:underline"
+                            disabled={acting}
+                            onClick={() => setDeletingEndpoint(e)}
+                          >
+                            Hapus
+                          </button>
                         </div>
                       ),
                     },
@@ -384,7 +621,7 @@ export default function PartnerClientDetailPage() {
             </CardBody>
           </Card>
 
-          {/* G466–G468 — pengiriman & replay */}
+          {/* G466–G468 — pengiriman & replay (ADM-311) */}
           <Card padded={false}>
             <CardHeader title={`Pengiriman webhook (${deliveries.length})`} />
             <CardBody>
@@ -393,20 +630,18 @@ export default function PartnerClientDetailPage() {
               ) : (
                 <DataTable
                   columns={[
-                    { key: "col12", header: "Event", render: (d) => d.eventType },
+                    { key: "col12", header: "Event", render: (d: PartnerDelivery) => d.eventType },
                     { key: "col13", header: "Status",
-                      render: (d) => (
-                        <Badge tone={d.status === "DELIVERED" ? "success" : d.status === "DEAD_LETTER" ? "danger" : "warning"}>
-                          {d.status}
-                        </Badge>
+                      render: (d: PartnerDelivery) => (
+                        <Badge tone={deliveryStatusTone(d.status)}>{deliveryStatusLabel(d.status)}</Badge>
                       ),
                     },
-                    { key: "col14", header: "Percobaan", render: (d) => String(d.attempts) },
-                    { key: "col15", header: "Retry berikut", render: (d) => (d.nextRetryAt ? formatDateTimeWIB(d.nextRetryAt) : "—") },
-                    { key: "col16", header: "Waktu", render: (d) => formatDateTimeWIB(d.createdAt) },
+                    { key: "col14", header: "Percobaan", render: (d: PartnerDelivery) => String(d.attempt) },
+                    { key: "col15", header: "Retry berikut", render: (d: PartnerDelivery) => (d.nextRetryAt ? formatDateTimeWIB(d.nextRetryAt) : "—") },
+                    { key: "col16", header: "Waktu", render: (d: PartnerDelivery) => formatDateTimeWIB(d.createdAt) },
                     { key: "col17", header: "",
-                      render: (d) =>
-                        d.status === "FAILED" || d.status === "DEAD_LETTER" ? (
+                      render: (d: PartnerDelivery) =>
+                        deliveryCanReplay(d.status) ? (
                           <button
                             type="button"
                             className="text-body text-info-text hover:underline"
@@ -434,7 +669,7 @@ export default function PartnerClientDetailPage() {
             </CardBody>
           </Card>
 
-          {/* G455 — audit */}
+          {/* G455 — audit (ADM-312: description + ipAddress) */}
           <Card padded={false}>
             <CardHeader title={`Audit log (${audit.length})`} />
             <CardBody>
@@ -446,7 +681,8 @@ export default function PartnerClientDetailPage() {
                     <li key={a.id} className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border py-2 last:border-b-0">
                       <div>
                         <Badge tone="neutral">{a.action}</Badge>
-                        {a.detail ? <p className="mt-1 text-body text-text-primary">{a.detail}</p> : null}
+                        {a.description ? <p className="mt-1 text-body text-text-primary">{a.description}</p> : null}
+                        {a.ipAddress ? <p className="mt-1 font-mono text-caption text-text-secondary">IP: {a.ipAddress}</p> : null}
                       </div>
                       <p className="text-caption text-text-secondary">{formatDateTimeWIB(a.createdAt)}</p>
                     </li>
@@ -460,7 +696,7 @@ export default function PartnerClientDetailPage() {
         <EmptyState title="Tidak ditemukan" description="Klien mitra tidak ada." />
       )}
 
-      {/* Dialog terbitkan kunci */}
+      {/* Dialog terbitkan kunci (ADM-306: name wajib) */}
       <Dialog
         open={showKeyDialog}
         onClose={() => {
@@ -470,10 +706,10 @@ export default function PartnerClientDetailPage() {
         description="Plaintext kunci hanya ditampilkan SATU KALI setelah ini. Simpan di tempat aman."
         footer={
           <div className="flex flex-col gap-3">
-            <Field label="Label (opsional)">
+            <Field label="Nama kunci (wajib)">
               <Input
-                value={keyForm.label}
-                onChange={(e) => setKeyForm((f) => ({ ...f, label: e.target.value }))}
+                value={keyForm.name}
+                onChange={(e) => setKeyForm((f) => ({ ...f, name: e.target.value }))}
                 placeholder="mis. production-key-1"
               />
             </Field>
@@ -507,10 +743,7 @@ export default function PartnerClientDetailPage() {
       {/* Dialog tampil sekali: plaintext kunci */}
       <Dialog
         open={plaintext !== null}
-        onClose={() => {
-          setPlaintext(null)
-          setPlaintextKeyId(null)
-        }}
+        onClose={() => setPlaintext(null)}
         title="Kunci API baru — simpan sekarang"
         description="Kunci ini TIDAK akan ditampilkan lagi. Salin sebelum menutup."
         footer={
@@ -525,10 +758,7 @@ export default function PartnerClientDetailPage() {
               <Button
                 variant="primary"
                 fullWidth={false}
-                onClick={() => {
-                  setPlaintext(null)
-                  setPlaintextKeyId(null)
-                }}
+                onClick={() => setPlaintext(null)}
               >
                 Saya sudah menyimpan
               </Button>
@@ -569,6 +799,94 @@ export default function PartnerClientDetailPage() {
                 Daftarkan
               </Button>
             </div>
+          </div>
+        }
+      />
+
+      {/* ADM-322: dialog edit endpoint */}
+      <Dialog
+        open={editingEndpoint !== null}
+        onClose={() => {
+          if (!acting) setEditingEndpoint(null)
+        }}
+        title="Edit endpoint webhook"
+        description="URL baru memicu re-verifikasi otomatis di backend."
+        footer={
+          <div className="flex flex-col gap-3">
+            <Field label="URL (wajib, HTTPS)">
+              <Input
+                value={editEndpointForm.url}
+                onChange={(e) => setEditEndpointForm((f) => ({ ...f, url: e.target.value }))}
+              />
+            </Field>
+            <Field label="Event (koma, wajib)">
+              <Input
+                value={editEndpointForm.events}
+                onChange={(e) => setEditEndpointForm((f) => ({ ...f, events: e.target.value }))}
+              />
+            </Field>
+            <Field label="Status">
+              <Select
+                value={editEndpointForm.isActive ? "true" : "false"}
+                onChange={(e) => setEditEndpointForm((f) => ({ ...f, isActive: e.target.value === "true" }))}
+                options={[
+                  { value: "true", label: "Aktif" },
+                  { value: "false", label: "Nonaktif" },
+                ]}
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" fullWidth={false} disabled={acting} onClick={() => setEditingEndpoint(null)}>
+                Batal
+              </Button>
+              <Button variant="primary" fullWidth={false} loading={acting} onClick={() => void handleEditEndpoint()}>
+                Simpan
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      {/* ADM-322: dialog hapus endpoint (konfirmasi) */}
+      <Dialog
+        open={deletingEndpoint !== null}
+        onClose={() => {
+          if (!acting) setDeletingEndpoint(null)
+        }}
+        title="Hapus endpoint webhook"
+        description={deletingEndpoint ? `Hapus endpoint ${deletingEndpoint.url}? Pengiriman ke endpoint ini berhenti.` : ""}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" fullWidth={false} disabled={acting} onClick={() => setDeletingEndpoint(null)}>
+              Batal
+            </Button>
+            <Button variant="destructive" fullWidth={false} loading={acting} onClick={() => void handleDeleteEndpoint()}>
+              Hapus
+            </Button>
+          </div>
+        }
+      />
+
+      {/* ADM-321: dialog konfirmasi rotasi kunci */}
+      <Dialog
+        open={rotatingKey !== null}
+        onClose={() => {
+          if (!acting) setRotatingKey(null)
+        }}
+        title="Rotasi kunci API"
+        description={
+          rotatingKey
+            ? `Rotasi kunci "${rotatingKey.name ?? rotatingKey.keyPrefix}"? Kunci lama tetap berlaku 24 jam (overlap), mitra harus mengganti kredensial sebelum kedaluwarsa.`
+            : ""
+        }
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" fullWidth={false} disabled={acting} onClick={() => setRotatingKey(null)}>
+              Batal
+            </Button>
+            <Button variant="primary" fullWidth={false} loading={acting} onClick={() => void handleRotate()}>
+              Rotasi sekarang
+            </Button>
           </div>
         }
       />

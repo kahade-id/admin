@@ -204,6 +204,16 @@ export default function ShowcaseReportDetailPage() {
 
   const handleAction = async () => {
     if (!dialogAction) return
+    // ADM-320: takedown = permanen → catatan resolusi WAJIB min. 10 karakter
+    // (backend juga memvalidasi — fail closed).
+    if (dialogAction === "takedown" && resolution.trim().length < 10) {
+      toast.show({
+        title: "Catatan resolusi wajib",
+        description: "Takedown bersifat permanen — tulis alasan minimal 10 karakter.",
+        tone: "danger",
+      })
+      return
+    }
     setActing(true)
     try {
       const res = await reviewShowcaseReport(id, {
@@ -438,11 +448,9 @@ export default function ShowcaseReportDetailPage() {
     } catch (e) {
       const status = (e as { status?: number }).status
       if (status === 404) {
-        toast.show({
-          title: "Fitur restore belum tersedia di backend",
-          description: "Endpoint restore-takedown belum aktif. Minta tim backend mengaktifkannya.",
-          tone: "info",
-        })
+        // ADM-323: endpoint restore SUDAH ada (SH-A-003); 404 kini berarti
+        // item tidak ditemukan / bukan hasil takedown — pesan generik.
+        toast.show({ title: "Item tidak ditemukan", description: userMessage(e), tone: "danger" })
       } else {
         toast.show({ title: "Gagal membatalkan takedown", description: userMessage(e), tone: "danger" })
       }
@@ -1077,7 +1085,8 @@ export default function ShowcaseReportDetailPage() {
         footer={
           <div className="flex flex-col gap-3">
             <TextArea
-              label="Catatan resolusi (opsional)"
+              // ADM-320: wajib min. 10 char khusus untuk takedown.
+              label={dialogAction === "takedown" ? "Catatan resolusi (WAJIB — min. 10 karakter)" : "Catatan resolusi (opsional)"}
               value={resolution}
               onChange={(e) => setResolution(e.target.value)}
               placeholder="Catatan internal untuk keputusan moderasi…"

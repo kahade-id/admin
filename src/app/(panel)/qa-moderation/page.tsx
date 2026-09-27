@@ -63,13 +63,15 @@ import {
 const PAGE_SIZE = 20
 const QA_ALLOWED_ROLES = ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] as const
 
-type Tab = "queue" | "appeals" | "spam" | "metrics"
+type Tab = "queue" | "appeals" | "spam" | "metrics" | "delete-requests"
 
-const TABS: { value: Tab; label: string }[] = [
+const TABS: { value: Tab; label: string; superAdminOnly?: boolean }[] = [
   { value: "queue", label: "Antrean" },
   { value: "appeals", label: "Keberatan" },
   { value: "spam", label: "Kandidat spam" },
   { value: "metrics", label: "Metrik" },
+  // ADM-314: antrean global request hapus permanen (two-man-rule G435).
+  { value: "delete-requests", label: "Hapus permanen", superAdminOnly: true },
 ]
 
 const TARGET_LABEL: Record<QaReportTarget, string> = {
@@ -108,7 +110,7 @@ const DEFAULT_FILTERS: QueueFilters = {
 }
 
 export default function QaModerationPage() {
-  const { state, role } = useAuth()
+  const { state, role, profile } = useAuth()
   const toast = useToast()
 
   const allowed = QA_ALLOWED_ROLES.includes(role as (typeof QA_ALLOWED_ROLES)[number])
@@ -144,7 +146,7 @@ export default function QaModerationPage() {
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {TABS.map((t) => (
+        {TABS.filter((t) => !t.superAdminOnly || isSuperAdmin).map((t) => (
           <Button
             key={t.value}
             variant={tab === t.value ? "primary" : "secondary"}
@@ -161,6 +163,9 @@ export default function QaModerationPage() {
       {tab === "appeals" && <AppealsSection toast={toast} />}
       {tab === "spam" && <SpamSection toast={toast} />}
       {tab === "metrics" && <MetricsSection toast={toast} isSuperAdmin={isSuperAdmin} />}
+      {tab === "delete-requests" && isSuperAdmin && (
+        <DeleteRequestsSection toast={toast} myAdminId={profile?.adminId ?? null} />
+      )}
     </div>
   )
 }
@@ -619,6 +624,8 @@ function QaDetailDialog({
   const [note, setNote] = useState("")
   const [busy, setBusy] = useState(false)
   const [deleteReason, setDeleteReason] = useState("")
+  // ADM-317: konfirmasi hide/unhide dengan alasan terpilih.
+  const [confirmAction, setConfirmAction] = useState<"HIDE" | "UNHIDE" | null>(null)
   const [assignInputs, setAssignInputs] = useState<Record<string, string>>({})
 
   const reload = useCallback(async () => {
@@ -661,13 +668,14 @@ function QaDetailDialog({
     data?.targetType === "QUESTION" ? data?.comments : data?.threadContext?.comments
 
   return (
-    <Dialog
-      open
-      onClose={onClose}
-      title={`${TARGET_LABEL[targetType]} — detail moderasi`}
-      description="Konteks thread (maks 10), laporan, histori aksi, keberatan."
-      className="max-w-3xl"
-    >
+    <>
+      <Dialog
+        open
+        onClose={onClose}
+        title={`${TARGET_LABEL[targetType]} — detail moderasi`}
+        description="Konteks thread (maks 10), laporan, histori aksi, keberatan."
+        className="max-w-3xl"
+      >
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-10">
           <Spinner size="md" />
@@ -734,14 +742,8 @@ function QaDetailDialog({
                   size="sm"
                   fullWidth={false}
                   loading={busy}
-                  onClick={() =>
-                    runAction("Hide", () =>
-                      hideQaTarget(targetType, targetId, {
-                        reasonCode: reason,
-                        note: note.trim() || undefined,
-                      }),
-                    )
-                  }
+                  // ADM-317: hide perlu konfirmasi berisi alasan yang dipilih.
+                  onClick={() => setConfirmAction("HIDE")}
                 >
                   Sembunyikan
                 </Button>
@@ -751,11 +753,8 @@ function QaDetailDialog({
                   size="sm"
                   fullWidth={false}
                   loading={busy}
-                  onClick={() =>
-                    runAction("Unhide", () =>
-                      unhideQaTarget(targetType, targetId, note.trim() || undefined),
-                    )
-                  }
+                  // ADM-317: unhide juga dikonfirmasi (notifikasi ke penulis).
+                  onClick={() => setConfirmAction("UNHIDE")}
                 >
                   Tampilkan kembali
                 </Button>
@@ -1025,7 +1024,51 @@ function QaDetailDialog({
           )}
         </div>
       )}
-    </Dialog>
+      </Dialog>
+      {/* ADM-317: konfirmasi hide/unhide berisi alasan yang dipilih. */}
+      <Dialog
+        open={confirmAction !== null}
+        onClose={() => {
+          if (!busy) setConfirmAction(null)
+        }}
+        title={confirmAction === "HIDE" ? "Konfirmasi sembunyikan" : "Konfirmasi tampilkan kembali"}
+        description={
+          confirmAction === "HIDE"
+            ? `Konten disembunyikan dan penulis mendapat notifikasi netral. Alasan: ${QA_REASON_LABEL[reason] ?? reason}${note.trim() ? ` — catatan: ${note.trim()}` : ""}`
+            : "Konten ditampilkan kembali ke publik."
+        }
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" fullWidth={false} disabled={busy} onClick={() => setConfirmAction(null)}>
+              Batal
+            </Button>
+            <Button
+              variant="primary"
+              fullWidth={false}
+              loading={busy}
+              onClick={() => {
+                const action = confirmAction
+                setConfirmAction(null)
+                if (action === "HIDE") {
+                  void runAction("Hide", () =>
+                    hideQaTarget(targetType, targetId, {
+                      reasonCode: reason,
+                      note: note.trim() || undefined,
+                    }),
+                  )
+                } else if (action === "UNHIDE") {
+                  void runAction("Unhide", () =>
+                    unhideQaTarget(targetType, targetId, note.trim() || undefined),
+                  )
+                }
+              }}
+            >
+              {confirmAction === "HIDE" ? "Sembunyikan" : "Tampilkan kembali"}
+            </Button>
+          </div>
+        }
+      />
+    </>
   )
 }
 
@@ -1435,6 +1478,183 @@ function MetricsSection({
           </p>
         )}
       </Card>
+    </div>
+  )
+}
+
+/* ================================================================== */
+/* ADM-314 — Antrean global request hapus permanen (two-man-rule G435) */
+/* ================================================================== */
+
+function DeleteRequestsSection({
+  toast,
+  myAdminId,
+}: {
+  toast: ReturnType<typeof useToast>
+  myAdminId: string | null
+}) {
+  const [loading, setLoading] = useState(true)
+  const [requests, setRequests] = useState<QaDeleteRequest[]>([])
+  const [deciding, setDeciding] = useState<string | null>(null)
+  const [noteDialog, setNoteDialog] = useState<{ id: string; approve: boolean } | null>(null)
+  const [note, setNote] = useState("")
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      setRequests(await listQaDeleteRequests("PENDING"))
+    } catch (e) {
+      toast.show({ title: "Gagal memuat request hapus permanen", description: userMessage(e), tone: "danger" })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const decide = async (id: string, approve: boolean, noteText: string) => {
+    setDeciding(id)
+    try {
+      await decideQaDeleteRequest(id, approve, noteText.trim() || undefined)
+      toast.show({
+        title: approve ? "Request disetujui" : "Request ditolak",
+        tone: approve ? "success" : "info",
+      })
+      setNoteDialog(null)
+      setNote("")
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal memutus request", description: userMessage(e), tone: "danger" })
+    } finally {
+      setDeciding(null)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[30vh] items-center justify-center">
+        <Spinner size="md" />
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <Card className="mb-4 p-4">
+        <h3 className="font-semibold">Two-man rule (G435)</h3>
+        <p className="mt-1 text-caption text-text-secondary">
+          Hapus permanen butuh dua orang berbeda: satu SUPER_ADMIN meminta, SUPER_ADMIN
+          <strong> lain</strong> menyetujui/menolak. Anda tidak boleh memutus request yang Anda ajukan sendiri.
+        </p>
+      </Card>
+
+      {requests.length === 0 ? (
+        <Card>
+          <EmptyState title="Tidak ada request pending" description="Semua request hapus permanen sudah diputus." />
+        </Card>
+      ) : (
+        <Card>
+          <DataTable<QaDeleteRequest>
+            columns={[
+              {
+                key: "target_type", header: "Target",
+                render: (r) => `${TARGET_LABEL[r.target_type] ?? r.target_type} · ${r.target_id}`,
+              },
+              {
+                key: "requested_by_admin_id", header: "Diminta oleh",
+                render: (r) => (
+                  <div className="flex flex-col">
+                    <span>{r.requester_admin_name ?? r.requested_by_admin_id}</span>
+                    {myAdminId && r.requested_by_admin_id === myAdminId ? (
+                      <Badge tone="warning">Request Anda sendiri</Badge>
+                    ) : null}
+                  </div>
+                ),
+              },
+              { key: "reason", header: "Alasan", render: (r) => r.reason ?? "—" },
+              { key: "created_at", header: "Diajukan", render: (r) => formatDateTimeWIB(r.created_at) },
+              {
+                key: "id", header: "Aksi",
+                render: (r) => (
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      fullWidth={false}
+                      disabled={deciding === r.id || (myAdminId != null && r.requested_by_admin_id === myAdminId)}
+                      title={
+                        myAdminId != null && r.requested_by_admin_id === myAdminId
+                          ? "Anda pengaju — putusan harus oleh admin lain (two-man rule)"
+                          : undefined
+                      }
+                      onClick={() => setNoteDialog({ id: r.id, approve: true })}
+                    >
+                      Setujui
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      fullWidth={false}
+                      disabled={deciding === r.id || (myAdminId != null && r.requested_by_admin_id === myAdminId)}
+                      onClick={() => setNoteDialog({ id: r.id, approve: false })}
+                    >
+                      Tolak
+                    </Button>
+                  </div>
+                ),
+              },
+            ]}
+            rows={requests}
+            rowKey={(r) => r.id}
+          />
+        </Card>
+      )}
+
+      <Dialog
+        open={noteDialog !== null}
+        onClose={() => {
+          if (!deciding) {
+            setNoteDialog(null)
+            setNote("")
+          }
+        }}
+        title={noteDialog?.approve ? "Setujui hapus permanen" : "Tolak request hapus permanen"}
+        description="Hapus permanen TIDAK dapat dibatalkan. Catatan keputusan diaudit."
+        footer={
+          <div className="flex flex-col gap-3">
+            <TextArea
+              label="Catatan keputusan (opsional)"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              placeholder="Dasar keputusan…"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                fullWidth={false}
+                disabled={deciding != null}
+                onClick={() => {
+                  setNoteDialog(null)
+                  setNote("")
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                variant={noteDialog?.approve ? "destructive" : "primary"}
+                fullWidth={false}
+                loading={deciding != null}
+                onClick={() => noteDialog && void decide(noteDialog.id, noteDialog.approve, note)}
+              >
+                {noteDialog?.approve ? "Hapus permanen" : "Tolak"}
+              </Button>
+            </div>
+          </div>
+        }
+      />
     </div>
   )
 }
