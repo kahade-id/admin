@@ -17,30 +17,37 @@ import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
 import { Dialog } from "@/components/ui/dialog"
 import { EmptyState } from "@/components/ui/empty-state"
-import { TextArea } from "@/components/ui/input"
+import { Field, Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
 import { useAuth } from "@/lib/auth-context"
 import {
   addModerationNote,
+  assignShowcaseReport,
   decideAppeal,
   getRelatedReports,
   getReviewerSummary,
   getShowcaseReportDetail,
   getSnapshotDiff,
   reopenShowcaseReport,
+  restrictShowcase,
+  restoreTakedownShowcaseItem,
   reviewShowcaseReport,
   type ModerationEvent,
   type ReportAppeal,
   type ShowcaseReport,
   type ShowcaseReportAction,
-  type ShowcaseReportDetail,
+  type ShowcaseReportDetailWithLifecycle,
+  type SnapshotDiffResult,
 } from "@/lib/api/admin/showcase-reports"
 import { userMessage } from "@/lib/api/response"
 import { formatAge, formatDateTimeWIB, formatNumber } from "@/lib/format"
 
 import {
+  MODERATION_EVENT_ACTION_LABEL,
+  RISK_TIER_LABEL,
+  RISK_TIER_TONE,
   SHOWCASE_REPORT_STATUS_LABEL,
   SHOWCASE_REPORT_STATUS_TONE,
 } from "../maps"
@@ -51,6 +58,13 @@ const FINAL_STATUSES = new Set([
   "RESOLVED_NO_ACTION",
   "DISMISSED",
 ])
+
+/** SH-A-017 — batas backend AddModerationNoteDto (MODERATION_NOTE_MAX_LENGTH). */
+const MODERATION_NOTE_MAX_LENGTH = 2000
+
+/** SH-A-005 — batas backend RESTRICT_MIN/MAX_DAYS. */
+const RESTRICT_MIN_DAYS = 1
+const RESTRICT_MAX_DAYS = 30
 
 const ACTION_META: Record<
   ShowcaseReportAction,
@@ -104,27 +118,24 @@ function formatPrice(v: unknown): string {
   return `Rp${formatNumber(Math.round(n))}`
 }
 
+/** SLA assignment lewat bila timestamp-nya sudah lampau. */
+function isOverdue(iso: string | null | undefined): boolean {
+  if (!iso) return false
+  return new Date(iso).getTime() < Date.now()
+}
+
 export default function ShowcaseReportDetailPage() {
   const { id } = useParams<{ id: string }>()
   const toast = useToast()
-  const { role } = useAuth()
+  const { role, profile } = useAuth()
   const isSuperAdmin = role === "SUPER_ADMIN"
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [report, setReport] = useState<
-    (ShowcaseReportDetail & {
-      moderationEvents?: ModerationEvent[]
-      activeAssignment?: {
-        assigneeAdminId: string
-        assignedAt: string
-        slaDueAt?: string | null
-        riskScore?: number | null
-        riskTier?: string | null
-      } | null
-      appeals?: ReportAppeal[]
-    }) | null
-  >(null)
+  // SH-A-018 — pakai tipe dari lib, bukan duplikasi inline.
+  const [report, setReport] = useState<ShowcaseReportDetailWithLifecycle | null>(
+    null,
+  )
 
   const [dialogAction, setDialogAction] = useState<ShowcaseReportAction | null>(null)
   const [resolution, setResolution] = useState("")
@@ -136,11 +147,41 @@ export default function ShowcaseReportDetailPage() {
   const [showNote, setShowNote] = useState(false)
   const [noteText, setNoteText] = useState("")
   const [related, setRelated] = useState<ShowcaseReport[] | null>(null)
-  const [diff, setDiff] = useState<
-    { changed: { field: string; from: unknown; to: unknown }[] } | null
-  >(null)
+  const [diff, setDiff] = useState<SnapshotDiffResult | null>(null)
   const [decidingAppeal, setDecidingAppeal] = useState<string | null>(null)
-  const [decisionNote, setDecisionNote] = useState("")
+  // SH-A-012 — catatan putusan per-appeal (bukan satu state bersama).
+  const [decisionNotes, setDecisionNotes] = useState<Record<string, string>>({})
+
+  // SH-A-015 — loading state per panel lazy-load.
+  const [loadingRelated, setLoadingRelated] = useState(false)
+  const [loadingDiff, setLoadingDiff] = useState(false)
+  const [loadingSummary, setLoadingSummary] = useState(false)
+
+  // SH-A-005 — batasi sementara (restrict G423).
+  const [showRestrict, setShowRestrict] = useState(false)
+  const [restrictDays, setRestrictDays] = useState(7)
+  const [restrictReason, setRestrictReason] = useState("")
+
+  // SH-A-003 — batalkan takedown (restore).
+  const [showRestore, setShowRestore] = useState(false)
+  const [restoreNote, setRestoreNote] = useState("")
+
+  // SH-A-006 — assign / handoff.
+  const [showAssign, setShowAssign] = useState(false)
+  const [assignAdminId, setAssignAdminId] = useState("")
+
+  // SH-A-021 — thumbnail rusak → placeholder.
+  const [imgError, setImgError] = useState(false)
+
+  /**
+   * SH-A-016 — panel related/diff memuat snapshot pra-aksi; reset setelah
+   * aksi moderasi berhasil agar tidak menampilkan data basi.
+   */
+  const resetPanelCaches = useCallback(() => {
+    setRelated(null)
+    setDiff(null)
+    setImgError(false)
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -176,6 +217,7 @@ export default function ShowcaseReportDetailPage() {
       })
       setDialogAction(null)
       setResolution("")
+      resetPanelCaches()
       await load()
     } catch (e) {
       const msg = userMessage(e)
@@ -190,6 +232,12 @@ export default function ShowcaseReportDetailPage() {
   const dialogMeta = dialogAction ? ACTION_META[dialogAction] : null
   const events = report?.moderationEvents ?? []
   const appeals = report?.appeals ?? []
+  const assignment = report?.activeAssignment ?? null
+  // SH-A-003 — restore hanya relevan bila item pernah di-takedown & masih nonaktif.
+  const wasTakedown = events.some((e) => e.action === "TAKEDOWN")
+  // SH-A-011 — reviewer banding tidak boleh = moderator keputusan awal.
+  const isOriginalReviewer = !!profile?.adminId && profile.adminId === report?.reviewedBy
+  const assignmentOverdue = isOverdue(assignment?.slaDueAt)
 
   const handleReopen = async () => {
     if (reopenReason.trim().length < 10) {
@@ -206,6 +254,7 @@ export default function ShowcaseReportDetailPage() {
       toast.show({ title: "Berhasil", description: res.message ?? "Laporan dibuka kembali.", tone: "success" })
       setShowReopen(false)
       setReopenReason("")
+      resetPanelCaches()
       await load()
     } catch (e) {
       toast.show({ title: "Gagal membuka kembali", description: userMessage(e), tone: "danger" })
@@ -225,6 +274,7 @@ export default function ShowcaseReportDetailPage() {
       toast.show({ title: "Berhasil", description: "Catatan moderasi ditambahkan.", tone: "success" })
       setShowNote(false)
       setNoteText("")
+      resetPanelCaches()
       await load()
     } catch (e) {
       toast.show({ title: "Gagal menambah catatan", description: userMessage(e), tone: "danger" })
@@ -234,7 +284,8 @@ export default function ShowcaseReportDetailPage() {
   }
 
   const handleDecideAppeal = async (appealId: string, decision: "APPROVED" | "REJECTED") => {
-    if (decisionNote.trim().length < 10) {
+    const note = (decisionNotes[appealId] ?? "").trim()
+    if (note.length < 10) {
       toast.show({
         title: "Catatan putusan wajib",
         description: "Tulis alasan putusan minimal 10 karakter.",
@@ -244,13 +295,18 @@ export default function ShowcaseReportDetailPage() {
     }
     setDecidingAppeal(appealId)
     try {
-      await decideAppeal(appealId, { decision, decisionNote: decisionNote.trim() })
+      await decideAppeal(appealId, { decision, decisionNote: note })
       toast.show({
         title: "Berhasil",
         description: decision === "APPROVED" ? "Banding disetujui — item dipulihkan." : "Banding ditolak.",
         tone: "success",
       })
-      setDecisionNote("")
+      setDecisionNotes((prev) => {
+        const next = { ...prev }
+        delete next[appealId]
+        return next
+      })
+      resetPanelCaches()
       await load()
     } catch (e) {
       toast.show({ title: "Gagal memutus banding", description: userMessage(e), tone: "danger" })
@@ -260,33 +316,160 @@ export default function ShowcaseReportDetailPage() {
   }
 
   const loadRelated = async () => {
+    if (loadingRelated) return
+    setLoadingRelated(true)
     try {
       const res = await getRelatedReports(id)
-      setRelated(res.related ?? [])
+      // SH-A-001 — backend mengirim key `reports`, bukan `related`.
+      setRelated(res.reports ?? [])
     } catch (e) {
       toast.show({ title: "Gagal memuat laporan terkait", description: userMessage(e), tone: "danger" })
+    } finally {
+      setLoadingRelated(false)
     }
   }
 
   const loadDiff = async () => {
+    if (loadingDiff) return
+    setLoadingDiff(true)
     try {
       const res = await getSnapshotDiff(id)
       setDiff(res)
     } catch (e) {
       toast.show({ title: "Gagal memuat diff", description: userMessage(e), tone: "danger" })
+    } finally {
+      setLoadingDiff(false)
     }
   }
 
   const loadReviewerSummary = async () => {
+    if (loadingSummary) return
+    setLoadingSummary(true)
     try {
       const res = await getReviewerSummary(id)
+      // SH-A-004 — backend mengirim `itemSnapshot` / `moderationEvents`,
+      // bukan `snapshot` / `events`.
+      const eventCount = Array.isArray(res.moderationEvents) ? res.moderationEvents.length : 0
+      const appealCount = Array.isArray(res.appeals) ? res.appeals.length : 0
       toast.show({
         title: "Ringkasan reviewer",
-        description: `Snapshot: ${res.snapshot ? "ada" : "tidak ada"}, event: ${Array.isArray(res.events) ? res.events.length : 0}, banding: ${Array.isArray(res.appeals) ? res.appeals.length : 0}.`,
+        description: `Snapshot: ${res.itemSnapshot ? "ada" : "tidak ada"} (${res.snapshotSource ?? "—"}), event: ${eventCount}, banding: ${appealCount}.`,
         tone: "info",
       })
     } catch (e) {
       toast.show({ title: "Gagal memuat ringkasan", description: userMessage(e), tone: "danger" })
+    } finally {
+      setLoadingSummary(false)
+    }
+  }
+
+  // SH-A-005 — batasi sementara (G423): default aman pengganti takedown permanen.
+  const handleRestrict = async () => {
+    const days = Math.floor(Number(restrictDays))
+    if (!Number.isFinite(days) || days < RESTRICT_MIN_DAYS || days > RESTRICT_MAX_DAYS) {
+      toast.show({
+        title: "Durasi tidak valid",
+        description: `Durasi ${RESTRICT_MIN_DAYS}–${RESTRICT_MAX_DAYS} hari.`,
+        tone: "danger",
+      })
+      return
+    }
+    if (restrictReason.trim().length < 10) {
+      toast.show({
+        title: "Alasan wajib",
+        description: "Tulis alasan pembatasan minimal 10 karakter.",
+        tone: "danger",
+      })
+      return
+    }
+    setActing(true)
+    try {
+      const res = await restrictShowcase(id, {
+        days,
+        reason: restrictReason.trim(),
+      })
+      toast.show({
+        title: "Item dibatasi sementara",
+        description: `${res.message ?? "Berhasil."} Auto-restore: ${res.restrictUntil ? formatDateTimeWIB(res.restrictUntil) : "—"}.`,
+        tone: "success",
+      })
+      setShowRestrict(false)
+      setRestrictReason("")
+      resetPanelCaches()
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal membatasi item", description: userMessage(e), tone: "danger" })
+    } finally {
+      setActing(false)
+    }
+  }
+
+  // SH-A-003 — batalkan takedown (restore item). Backend mencatat event
+  // RESTORED; endpoint mungkin belum tersedia → 404 ditangani graceful.
+  const handleRestoreTakedown = async () => {
+    const itemId = report?.showcaseId
+    if (!itemId) {
+      toast.show({ title: "Tidak bisa restore", description: "ID item tidak tersedia.", tone: "danger" })
+      return
+    }
+    setActing(true)
+    try {
+      const res = await restoreTakedownShowcaseItem(itemId)
+      // Catatan audit client-side: tempelkan konteks restore ke riwayat
+      // catatan moderasi bila admin menulisnya (best-effort).
+      if (restoreNote.trim()) {
+        try {
+          await addModerationNote(id, {
+            note: `[restore-takedown] ${restoreNote.trim().slice(0, MODERATION_NOTE_MAX_LENGTH - 20)}`,
+          })
+        } catch {
+          /* catatan opsional — kegagalan tidak menggagalkan restore */
+        }
+      }
+      toast.show({
+        title: "Takedown dibatalkan",
+        description: res.ok ? "Item dipulihkan dan tampil kembali." : "Restore selesai.",
+        tone: "success",
+      })
+      setShowRestore(false)
+      setRestoreNote("")
+      resetPanelCaches()
+      await load()
+    } catch (e) {
+      const status = (e as { status?: number }).status
+      if (status === 404) {
+        toast.show({
+          title: "Fitur restore belum tersedia di backend",
+          description: "Endpoint restore-takedown belum aktif. Minta tim backend mengaktifkannya.",
+          tone: "info",
+        })
+      } else {
+        toast.show({ title: "Gagal membatalkan takedown", description: userMessage(e), tone: "danger" })
+      }
+    } finally {
+      setActing(false)
+    }
+  }
+
+  // SH-A-006 — assign / handoff (kosong = auto-assign by beban backend).
+  const handleAssign = async () => {
+    setActing(true)
+    try {
+      const res = await assignShowcaseReport(id, {
+        assigneeAdminId: assignAdminId.trim() || null,
+      })
+      toast.show({
+        title: "Laporan ditugaskan",
+        description: `${res.message ?? "Berhasil."} Risiko ${res.riskTier ?? "—"}, SLA ${res.slaDueAt ? formatDateTimeWIB(res.slaDueAt) : "—"}.`,
+        tone: "success",
+      })
+      setShowAssign(false)
+      setAssignAdminId("")
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal menugaskan", description: userMessage(e), tone: "danger" })
+    } finally {
+      setActing(false)
     }
   }
 
@@ -337,6 +520,16 @@ export default function ShowcaseReportDetailPage() {
             </Button>
             {itemActive ? (
               <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                onClick={() => setShowRestrict(true)}
+              >
+                Batasi sementara
+              </Button>
+            ) : null}
+            {itemActive && isSuperAdmin ? (
+              <Button
                 variant="primary"
                 size="sm"
                 fullWidth={false}
@@ -345,6 +538,14 @@ export default function ShowcaseReportDetailPage() {
                 Takedown
               </Button>
             ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              fullWidth={false}
+              onClick={() => setShowAssign(true)}
+            >
+              Assign / Handoff
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -364,6 +565,16 @@ export default function ShowcaseReportDetailPage() {
             >
               Tambah catatan
             </Button>
+            {isSuperAdmin && wasTakedown && !itemActive ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                onClick={() => setShowRestore(true)}
+              >
+                Batalkan takedown
+              </Button>
+            ) : null}
             {isSuperAdmin ? (
               <Button
                 variant="secondary"
@@ -377,6 +588,12 @@ export default function ShowcaseReportDetailPage() {
           </div>
         ) : null}
       </div>
+      {report && !isFinal && !isSuperAdmin ? (
+        <p className="mb-4 text-caption text-text-secondary">
+          Takedown permanen hanya untuk Super Admin — untuk kasus ringan gunakan
+          “Batasi sementara”.
+        </p>
+      ) : null}
 
       {loading ? (
         <div className="flex min-h-[40vh] items-center justify-center gap-2">
@@ -424,12 +641,13 @@ export default function ShowcaseReportDetailPage() {
               <CardHeader title="Item etalase" />
               <CardBody>
                 <div className="flex gap-4">
-                  {report.showcase?.images?.[0]?.imageUrl ? (
+                  {report.showcase?.images?.[0]?.imageUrl && !imgError ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={report.showcase.images[0].imageUrl}
                       alt={report.showcase.title ?? "Thumbnail item etalase"}
                       className="h-32 w-32 shrink-0 rounded-sm border border-border object-cover"
+                      onError={() => setImgError(true)}
                     />
                   ) : (
                     <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded-sm border border-border bg-surface-elevated text-caption text-text-tertiary">
@@ -532,6 +750,76 @@ export default function ShowcaseReportDetailPage() {
             </Card>
           </div>
 
+          {/* SH-A-006 — kartu penugasan aktif (assignee, SLA, risk tier) */}
+          <Card padded={false}>
+            <CardHeader
+              title="Penugasan"
+              action={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  fullWidth={false}
+                  onClick={() => setShowAssign(true)}
+                >
+                  Assign / Handoff
+                </Button>
+              }
+            />
+            <CardBody>
+              {assignment ? (
+                <dl>
+                  <KeyValue
+                    label="Ditugaskan ke"
+                    value={assignment.assigneeAdminId}
+                    mono
+                  />
+                  <KeyValue
+                    label="Sejak"
+                    value={formatDateTimeWIB(assignment.assignedAt)}
+                  />
+                  <KeyValue
+                    label="Batas SLA"
+                    value={
+                      assignment.slaDueAt ? (
+                        <span className="flex items-center justify-end gap-2">
+                          {assignmentOverdue ? (
+                            <Badge tone="danger">Overdue</Badge>
+                          ) : null}
+                          {formatDateTimeWIB(assignment.slaDueAt)}
+                        </span>
+                      ) : (
+                        "—"
+                      )
+                    }
+                  />
+                  <KeyValue
+                    label="Tingkat risiko"
+                    value={
+                      assignment.riskTier ? (
+                        <span className="flex items-center justify-end gap-2">
+                          <Badge tone={RISK_TIER_TONE[assignment.riskTier] ?? "neutral"}>
+                            {RISK_TIER_LABEL[assignment.riskTier] ?? assignment.riskTier}
+                          </Badge>
+                          {assignment.riskScore != null ? (
+                            <span className="tabular-nums">skor {assignment.riskScore}</span>
+                          ) : null}
+                        </span>
+                      ) : (
+                        "—"
+                      )
+                    }
+                  />
+                </dl>
+              ) : (
+                <p className="text-body text-text-secondary">
+                  Belum ditugaskan. Gunakan “Assign / Handoff” untuk menugaskan
+                  ke admin tertentu, atau kosongkan ID admin untuk auto-assign
+                  berdasarkan beban antrean.
+                </p>
+              )}
+            </CardBody>
+          </Card>
+
           {/* GAP-F G420 — histori semua aksi moderasi (append-only) */}
           <Card padded={false}>
             <CardHeader title={`Histori moderasi (${events.length})`} />
@@ -546,7 +834,7 @@ export default function ShowcaseReportDetailPage() {
                       className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border py-2 last:border-b-0"
                     >
                       <div className="min-w-0">
-                        <Badge tone="neutral">{ev.action}</Badge>
+                        <Badge tone="neutral">{MODERATION_EVENT_ACTION_LABEL[ev.action] ?? ev.action}</Badge>
                         {ev.stateFrom || ev.stateTo ? (
                           <span className="ml-2 text-caption text-text-secondary">
                             {ev.stateFrom ?? "—"} → {ev.stateTo ?? "—"}
@@ -577,6 +865,19 @@ export default function ShowcaseReportDetailPage() {
             <Card padded={false}>
               <CardHeader title={`Banding (${appeals.length})`} />
               <CardBody>
+                {/* SH-A-011 — keputusan awal agar reviewer tahu siapa moderator sebelumnya. */}
+                {report.reviewedByAdmin?.fullName || report.reviewedBy ? (
+                  <p className="mb-4 text-caption text-text-secondary">
+                    Keputusan awal oleh{" "}
+                    <span className="font-semibold text-text-primary">
+                      {report.reviewedByAdmin?.fullName ?? report.reviewedBy}
+                    </span>
+                    {report.reviewedAt ? ` pada ${formatDateTimeWIB(report.reviewedAt)}` : ""}.
+                    {isOriginalReviewer
+                      ? " Anda adalah moderator awal — minta reviewer lain memutus banding."
+                      : ""}
+                  </p>
+                ) : null}
                 <div className="flex flex-col gap-4">
                   {appeals.map((ap: ReportAppeal) => (
                     <div key={ap.id} className="rounded-sm border border-border p-3">
@@ -594,6 +895,15 @@ export default function ShowcaseReportDetailPage() {
                         <span className="font-semibold">Alasan: </span>
                         {ap.reason}
                       </p>
+                      {/* SH-A-020 — bukti baru banding. */}
+                      {ap.newEvidence != null && String(ap.newEvidence).trim() !== "" ? (
+                        <p className="mt-2 rounded-sm border border-border bg-surface-elevated p-2 text-body text-text-primary">
+                          <span className="font-semibold">Bukti baru: </span>
+                          {typeof ap.newEvidence === "string"
+                            ? ap.newEvidence
+                            : JSON.stringify(ap.newEvidence).slice(0, 500)}
+                        </p>
+                      ) : null}
                       {ap.decisionNote ? (
                         <p className="mt-1 text-body text-text-secondary">
                           <span className="font-semibold">Putusan: </span>
@@ -604,17 +914,20 @@ export default function ShowcaseReportDetailPage() {
                         <div className="mt-3 flex flex-col gap-2">
                           <TextArea
                             label="Catatan putusan (wajib, min. 10 karakter)"
-                            value={decisionNote}
-                            onChange={(e) => setDecisionNote(e.target.value)}
+                            value={decisionNotes[ap.id] ?? ""}
+                            onChange={(e) =>
+                              setDecisionNotes((prev) => ({ ...prev, [ap.id]: e.target.value }))
+                            }
                             rows={2}
                             placeholder="Alasan mempertahankan / membalikkan keputusan…"
                           />
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <Button
                               variant="primary"
                               size="sm"
                               fullWidth={false}
                               loading={decidingAppeal === ap.id}
+                              disabled={isOriginalReviewer}
                               onClick={() => void handleDecideAppeal(ap.id, "APPROVED")}
                             >
                               Setujui (pulihkan item)
@@ -624,10 +937,16 @@ export default function ShowcaseReportDetailPage() {
                               size="sm"
                               fullWidth={false}
                               loading={decidingAppeal === ap.id}
+                              disabled={isOriginalReviewer}
                               onClick={() => void handleDecideAppeal(ap.id, "REJECTED")}
                             >
                               Tolak
                             </Button>
+                            {isOriginalReviewer ? (
+                              <span className="text-caption text-warning-text">
+                                Anda moderator awal — putusan harus oleh reviewer lain.
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                       ) : null}
@@ -644,7 +963,14 @@ export default function ShowcaseReportDetailPage() {
               <CardHeader
                 title="Perubahan item sejak keputusan"
                 action={
-                  <Button variant="ghost" size="sm" fullWidth={false} onClick={() => void loadDiff()}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    fullWidth={false}
+                    loading={loadingDiff}
+                    disabled={loadingDiff}
+                    onClick={() => void loadDiff()}
+                  >
                     Muat diff
                   </Button>
                 }
@@ -654,15 +980,19 @@ export default function ShowcaseReportDetailPage() {
                   <p className="text-body text-text-secondary">
                     Bandingkan snapshot saat keputusan final dengan kondisi item saat ini.
                   </p>
-                ) : diff.changed.length === 0 ? (
+                ) : diff.itemDeleted ? (
+                  <p className="text-body text-text-secondary">
+                    Item sudah dihapus setelah snapshot keputusan diambil.
+                  </p>
+                ) : diff.changedFields.length === 0 ? (
                   <p className="text-body text-text-secondary">Tidak ada perubahan terdeteksi.</p>
                 ) : (
                   <dl>
-                    {diff.changed.map((c) => (
+                    {diff.changedFields.map((c) => (
                       <KeyValue
                         key={c.field}
                         label={c.field}
-                        value={`${String(c.from ?? "—")} → ${String(c.to ?? "—")}`}
+                        value={`${String(c.snapshot ?? "—")} → ${String(c.current ?? "—")}`}
                         mono
                       />
                     ))}
@@ -674,7 +1004,14 @@ export default function ShowcaseReportDetailPage() {
               <CardHeader
                 title="Laporan terkait"
                 action={
-                  <Button variant="ghost" size="sm" fullWidth={false} onClick={() => void loadRelated()}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    fullWidth={false}
+                    loading={loadingRelated}
+                    disabled={loadingRelated}
+                    onClick={() => void loadRelated()}
+                  >
                     Muat
                   </Button>
                 }
@@ -713,7 +1050,14 @@ export default function ShowcaseReportDetailPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" size="sm" fullWidth={false} onClick={() => void loadReviewerSummary()}>
+            <Button
+              variant="ghost"
+              size="sm"
+              fullWidth={false}
+              loading={loadingSummary}
+              disabled={loadingSummary}
+              onClick={() => void loadReviewerSummary()}
+            >
               Ringkasan untuk reviewer kedua
             </Button>
           </div>
@@ -822,13 +1166,19 @@ export default function ShowcaseReportDetailPage() {
         description="Catatan ditambahkan ke riwayat tanpa menimpa resolusi awal."
         footer={
           <div className="flex flex-col gap-3">
-            <TextArea
-              label="Catatan"
-              value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              placeholder="Catatan internal moderator…"
-              rows={3}
-            />
+            <div>
+              <TextArea
+                label="Catatan"
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                placeholder="Catatan internal moderator…"
+                rows={3}
+                maxLength={MODERATION_NOTE_MAX_LENGTH}
+              />
+              <p className="mt-1 text-right text-caption text-text-tertiary tabular-nums">
+                {noteText.length}/{MODERATION_NOTE_MAX_LENGTH}
+              </p>
+            </div>
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"
@@ -848,6 +1198,150 @@ export default function ShowcaseReportDetailPage() {
                 onClick={() => void handleAddNote()}
               >
                 Simpan catatan
+              </Button>
+            </div>
+          </div>
+        }
+      />
+      {/* SH-A-005 — dialog batasi sementara (G423, auto-restore) */}
+      <Dialog
+        open={showRestrict}
+        onClose={() => {
+          if (!acting) {
+            setShowRestrict(false)
+            setRestrictReason("")
+          }
+        }}
+        title="Batasi sementara item"
+        description={`Item disembunyikan ${RESTRICT_MIN_DAYS}–${RESTRICT_MAX_DAYS} hari lalu otomatis tampil kembali (auto-restore). Untuk kasus ringan — alternatif takedown permanen.`}
+        footer={
+          <div className="flex flex-col gap-3">
+            <Field label={`Durasi (hari, ${RESTRICT_MIN_DAYS}–${RESTRICT_MAX_DAYS})`} required>
+              <Input
+                type="number"
+                min={RESTRICT_MIN_DAYS}
+                max={RESTRICT_MAX_DAYS}
+                value={restrictDays}
+                onChange={(e) => setRestrictDays(Number(e.target.value))}
+              />
+            </Field>
+            <TextArea
+              label="Alasan pembatasan (wajib, min. 10 karakter)"
+              value={restrictReason}
+              onChange={(e) => setRestrictReason(e.target.value)}
+              placeholder="Contoh: dugaan barang palsu, menunggu verifikasi penjual…"
+              rows={3}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                fullWidth={false}
+                disabled={acting}
+                onClick={() => {
+                  setShowRestrict(false)
+                  setRestrictReason("")
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                variant="primary"
+                fullWidth={false}
+                loading={acting}
+                onClick={() => void handleRestrict()}
+              >
+                Batasi item
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      {/* SH-A-003 — dialog batalkan takedown (SUPER_ADMIN, tercatat event RESTORED) */}
+      <Dialog
+        open={showRestore}
+        onClose={() => {
+          if (!acting) {
+            setShowRestore(false)
+            setRestoreNote("")
+          }
+        }}
+        title="Batalkan takedown"
+        description="Item yang salah takedown akan dipulihkan dan tampil kembali di publik. Aksi tercatat sebagai event RESTORED di histori moderasi."
+        footer={
+          <div className="flex flex-col gap-3">
+            <TextArea
+              label="Catatan audit (opsional)"
+              value={restoreNote}
+              onChange={(e) => setRestoreNote(e.target.value)}
+              placeholder="Contoh: takedown keliru — bukti baru menunjukkan item asli…"
+              rows={3}
+              maxLength={MODERATION_NOTE_MAX_LENGTH}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                fullWidth={false}
+                disabled={acting}
+                onClick={() => {
+                  setShowRestore(false)
+                  setRestoreNote("")
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                variant="primary"
+                fullWidth={false}
+                loading={acting}
+                onClick={() => void handleRestoreTakedown()}
+              >
+                Pulihkan item
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      {/* SH-A-006 — dialog assign / handoff */}
+      <Dialog
+        open={showAssign}
+        onClose={() => {
+          if (!acting) {
+            setShowAssign(false)
+            setAssignAdminId("")
+          }
+        }}
+        title="Assign / handoff laporan"
+        description="Tugaskan ke admin tertentu, atau kosongkan untuk auto-assign ke admin dengan antrean terbuka tersedikit. SLA: 24 jam (risiko tinggi) / 72 jam (normal)."
+        footer={
+          <div className="flex flex-col gap-3">
+            <Field label="ID admin tujuan (kosong = auto-assign)">
+              <Input
+                value={assignAdminId}
+                onChange={(e) => setAssignAdminId(e.target.value)}
+                placeholder="cth: adm_01H…"
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                fullWidth={false}
+                disabled={acting}
+                onClick={() => {
+                  setShowAssign(false)
+                  setAssignAdminId("")
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                variant="primary"
+                fullWidth={false}
+                loading={acting}
+                onClick={() => void handleAssign()}
+              >
+                Tugaskan
               </Button>
             </div>
           </div>
