@@ -9,7 +9,7 @@
  */
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -93,6 +93,7 @@ export default function ReferralPage() {
       mode: "initial" | "refresh" = "initial",
       targetPage = page,
       targetActive = activeFilter,
+      targetSearch = debouncedSearch,
     ) => {
       if (mode === "initial") setLoading(true)
       else setRefreshing(true)
@@ -105,6 +106,8 @@ export default function ReferralPage() {
             limit: PAGE_SIZE,
             active:
               targetActive === "all" ? undefined : targetActive === "active",
+            // ADM-221: pencarian server-side (kode / nama / username pemilik).
+            q: targetSearch.trim() ? targetSearch.trim() : undefined,
           }),
         ])
         setStats(s)
@@ -127,12 +130,24 @@ export default function ReferralPage() {
         setRefreshing(false)
       }
     },
-    [page, activeFilter, toast],
+    [page, activeFilter, debouncedSearch, toast],
   )
 
   useEffect(() => {
     void load("initial")
   }, [load])
+
+  // ADM-221: pencarian server-side — kembali ke halaman 1 saat kata kunci berubah.
+  const searchMounted = useRef(false)
+  useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true
+      return
+    }
+    setPage(1)
+    void load("initial", 1, activeFilter, debouncedSearch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch])
 
   const handleActiveChange = (v: ActiveFilter) => {
     setActiveFilter(v)
@@ -145,17 +160,7 @@ export default function ReferralPage() {
     void load("initial", p, activeFilter)
   }
 
-  // Backend tidak mendukung pencarian — saring lokal pada halaman yang dimuat.
-  const filteredRows = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter((c) => {
-      const haystack = [c.code ?? "", ownerName(c), c.user?.email ?? ""]
-        .join(" ")
-        .toLowerCase()
-      return haystack.includes(q)
-    })
-  }, [rows, debouncedSearch])
+
 
   return (
     <RoleGate href="/referral">
@@ -217,7 +222,7 @@ export default function ReferralPage() {
                 value={formatNumber(num(stats.totalRelations))}
               />
               <StatCard
-                label="Total reward"
+                label="Jumlah reward"
                 value={formatNumber(num(stats.totalRewards))}
               />
               <StatCard
@@ -309,20 +314,14 @@ export default function ReferralPage() {
                 ),
               },
             ]}
-            rows={filteredRows}
+            rows={rows}
             rowKey={(c) => c.id}
             emptyText={
               debouncedSearch.trim()
-                ? "Tidak ada kode yang cocok dengan pencarian pada halaman ini."
+                ? "Tidak ada kode yang cocok dengan pencarian."
                 : "Tidak ada kode referral pada filter ini."
             }
           />
-          {debouncedSearch.trim() ? (
-            <p className="mt-2 text-caption text-text-secondary">
-              Pencarian hanya berlaku pada halaman yang dimuat (backend belum
-              mendukung pencarian global).
-            </p>
-          ) : null}
           <div className="mt-4">
             <Pagination
               page={page}

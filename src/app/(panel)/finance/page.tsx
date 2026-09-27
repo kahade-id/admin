@@ -19,7 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { Dialog } from "@/components/ui/dialog"
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
@@ -46,9 +46,14 @@ import {
   type FinancialSummary,
   type PendingWithdrawal,
   type RevenueBreakdown,
+  type WalletTransactionStatus,
   type WalletTransactionType,
+  downloadFinanceCsv,
+  recheckWithdrawal,
+  type WithdrawalRecheckResult,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
+import { TX_META, txLabel } from "@/lib/tx-labels"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
 const PAGE_SIZE = 20
@@ -71,25 +76,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced
 }
 
-type TxMeta = { label: string; sign: "+" | "−" | "" }
-
-const TX_META: Record<string, TxMeta> = {
-  TOP_UP: { label: "Top up", sign: "+" },
-  WITHDRAW: { label: "Penarikan", sign: "−" },
-  ORDER_LOCK: { label: "Escrow dikunci", sign: "−" },
-  ORDER_RELEASE: { label: "Escrow cair", sign: "+" },
-  ORDER_REFUND: { label: "Refund order", sign: "+" },
-  FEE_DEDUCT: { label: "Fee platform", sign: "−" },
-  REFERRAL_REWARD: { label: "Reward referral", sign: "+" },
-  SUBSCRIPTION_PAYMENT: { label: "Langganan", sign: "−" },
-  ADMIN_CREDIT: { label: "Kredit admin", sign: "+" },
-  ADMIN_DEBIT: { label: "Debit admin", sign: "−" },
-  DISPUTE_RELEASE: { label: "Cair sengketa", sign: "+" },
-  TRANSFER_SENT: { label: "Transfer keluar", sign: "−" },
-  TRANSFER_RECEIVED: { label: "Transfer masuk", sign: "+" },
-  CAMPAIGN_CASHBACK: { label: "Cashback", sign: "+" },
-  TOPUP_BONUS: { label: "Bonus top up", sign: "+" },
-}
 
 const TX_STATUS_TONE: Record<string, BadgeTone> = {
   SUCCESS: "success",
@@ -104,6 +90,14 @@ const WITHDRAW_STATUS_LABEL: Record<string, string> = {
   SUCCESS: "Berhasil",
   FAILED: "Gagal",
 }
+
+// ADM-214: filter status transaksi (backend `listTransactions` mendukung `status`).
+const TX_STATUS_FILTERS: Array<{ value: WalletTransactionStatus | ""; label: string }> = [
+  { value: "", label: "Semua status" },
+  { value: "PENDING", label: "Pending" },
+  { value: "SUCCESS", label: "Berhasil" },
+  { value: "FAILED", label: "Gagal" },
+]
 
 const TYPE_FILTERS: Array<{ value: WalletTransactionType | ""; label: string }> = [
   { value: "", label: "Semua tipe" },
@@ -300,12 +294,23 @@ export default function FinancePage() {
     const mapKey = `${actionKind}:${actionTx.txId}`
     try {
       if (actionKind === "approve") {
-        await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
-        toast.show({
-          title: "Penarikan disetujui",
-          description: formatRupiah(actionTx.amount),
-          tone: "success",
-        })
+        const res = await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
+        // ADM-205: persetujuan pertama belum mengeksekusi payout.
+        if (res?.status === "AWAITING_SECOND_APPROVAL") {
+          toast.show({
+            title: "Persetujuan tercatat",
+            description:
+              res.message ??
+              `Menunggu persetujuan ${(res.requiredApprovals ?? 2) - (res.approvals ?? 1)} admin lain sebelum payout dieksekusi.`,
+            tone: "info",
+          })
+        } else {
+          toast.show({
+            title: res?.status === "ALREADY_EXECUTED" ? "Payout sudah dieksekusi" : "Penarikan disetujui",
+            description: formatRupiah(actionTx.amount),
+            tone: "success",
+          })
+        }
       } else {
         await rejectWithdrawal(actionTx.txId, trimmed, actionKeyFor(actionTx.txId, actionKind))
         toast.show({
@@ -337,6 +342,8 @@ export default function FinancePage() {
   const [search, setSearch] = useState("")
   const debouncedSearch = useDebouncedValue(search, 400)
   const [typeFilter, setTypeFilter] = useState<WalletTransactionType | "">("")
+  // ADM-214
+  const [txStatusFilter, setTxStatusFilter] = useState<WalletTransactionStatus | "">("")
   const [dateInputs, setDateInputs] = useState(defaultDateInputs)
   const [dateError, setDateError] = useState<string | null>(null)
   const [range, setRange] = useState(() =>
@@ -357,6 +364,7 @@ export default function FinancePage() {
           page,
           limit: PAGE_SIZE,
           type: typeFilter || undefined,
+          status: txStatusFilter || undefined,
           q: debouncedSearch.trim() || undefined,
           startDate: range.start,
           endDate: range.end,
@@ -377,7 +385,7 @@ export default function FinancePage() {
         setTxLoading(false)
       }
     },
-    [debouncedSearch, typeFilter, range, toast],
+    [debouncedSearch, typeFilter, txStatusFilter, range, toast],
   )
 
   useEffect(() => {
@@ -387,6 +395,80 @@ export default function FinancePage() {
   const handleTypeChange = (value: string) => {
     setTypeFilter(value as WalletTransactionType | "")
     setTxPage(1)
+  }
+
+  // ADM-214: filter status transaksi
+  const handleTxStatusChange = (value: string) => {
+    setTxStatusFilter(value as WalletTransactionStatus | "")
+    setTxPage(1)
+  }
+
+  // ADM-213: recheck manual SATU withdrawal PROCESSING (bukan retry payout).
+  const [recheckTx, setRecheckTx] = useState<AdminTransactionItem | null>(null)
+  const [rechecking, setRechecking] = useState(false)
+  const [recheckKey, setRecheckKey] = useState<string | null>(null)
+  const openRecheck = (r: AdminTransactionItem) => {
+    setRecheckTx(r)
+    setRecheckKey(newIdempotencyKey())
+  }
+  const closeRecheck = () => {
+    if (rechecking) return
+    setRecheckTx(null)
+    setRecheckKey(null)
+  }
+  const handleRecheck = async () => {
+    if (!recheckTx || rechecking) return
+    setRechecking(true)
+    try {
+      const res: WithdrawalRecheckResult = await recheckWithdrawal(
+        recheckTx.txId,
+        recheckKey ?? undefined,
+      )
+      const outcomeMsg: Record<string, string> = {
+        CONFIRMED: `Payout dikonfirmasi provider (${res.providerStatus}) — status SUCCESS.`,
+        FAILED_REFUNDED: `Payout dinyatakan gagal oleh provider (${res.providerStatus}) — dana dikembalikan ke wallet.`,
+        STILL_PROCESSING: `Masih diproses provider (${res.providerStatus}) — tetap PROCESSING, tanpa perubahan.`,
+        UNKNOWN: `Status tidak diketahui provider (${res.providerStatus}) — tetap PROCESSING, perlu investigasi manual.`,
+      }
+      toast.show({
+        title: "Hasil cek status payout",
+        description: outcomeMsg[String(res.outcome)] ?? String(res.outcome ?? "—"),
+        tone: res.outcome === "FAILED_REFUNDED" ? "danger" : res.outcome === "CONFIRMED" ? "success" : "info",
+      })
+      setRecheckTx(null)
+      setRecheckKey(null)
+      void loadTransactions(txPage)
+    } catch (e) {
+      toast.show({
+        title: "Gagal mengecek status payout",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setRechecking(false)
+    }
+  }
+
+  // ADM-215: unduh export CSV ledger (terotentikasi, rentang = filter tanggal).
+  const [csvLoading, setCsvLoading] = useState(false)
+  const handleCsvExport = async () => {
+    setCsvLoading(true)
+    try {
+      await downloadFinanceCsv(range.start, range.end)
+      toast.show({
+        title: "CSV diunduh",
+        description: "Export ledger untuk rentang tanggal terpilih.",
+        tone: "success",
+      })
+    } catch (e) {
+      toast.show({
+        title: "Gagal mengunduh CSV",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setCsvLoading(false)
+    }
   }
 
   const handleDateChange = (nextStart: string, nextEnd: string) => {
@@ -482,15 +564,17 @@ export default function FinancePage() {
               value={formatRupiah(escrow?.totalEscrowBalance)}
               hint={`${formatNumber(escrow?.activeEscrowOrders ?? 0)} order aktif`}
             />
+            {/* ADM-211: revenue gabungan (fee + langganan) dengan breakdown — kartu
+                lama hanya menampilkan fee platform sehingga pendapatan mengecil. */}
             <StatCard
               label="Revenue hari ini"
-              value={formatRupiah(summary?.totalPlatformFeeToday)}
-              hint="Fee platform"
+              value={formatRupiah(summary?.totalRevenueToday)}
+              hint={`Fee ${formatRupiah(summary?.totalPlatformFeeToday)} + langganan ${formatRupiah(summary?.totalSubscriptionRevenueToday)}`}
             />
             <StatCard
               label="Revenue bulan ini"
-              value={formatRupiah(summary?.totalPlatformFeeThisMonth)}
-              hint="Fee platform"
+              value={formatRupiah(summary?.totalRevenueThisMonth)}
+              hint={`Fee ${formatRupiah(summary?.totalPlatformFeeThisMonth)} + langganan ${formatRupiah(summary?.totalSubscriptionRevenueThisMonth)}`}
             />
             <StatCard
               label="Antrean penarikan"
@@ -665,25 +749,57 @@ export default function FinancePage() {
                   // pertahanan UI agar baris non-pending tidak bisa di-aksi.
                   render: (r) => {
                     const status = String(r.withdrawStatus)
-                    if (status !== "PENDING_PROCESS" && status !== "PENDING_OTP") return null
+                    // ADM-207: PENDING_OTP tidak punya aksi — backend menolaknya
+                    // (400). Tampilkan label status, bukan tombol rusak.
+                    if (status === "PENDING_OTP") {
+                      return (
+                        <span className="text-caption text-text-secondary">
+                          Menunggu OTP pengguna
+                        </span>
+                      )
+                    }
+                    if (status !== "PENDING_PROCESS") return null
+                    // ADM-205: tampilkan kuorum dual approval; admin yang sudah
+                    // menyetujui tidak bisa menyetujui lagi.
+                    const info = r.approvalInfo
+                    const quorum = info
+                      ? `${info.approvals}/${info.requiredApprovals} persetujuan`
+                      : null
                     return (
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          fullWidth={false}
-                          onClick={() => openAction(r, "reject")}
-                        >
-                          Tolak
-                        </Button>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          fullWidth={false}
-                          onClick={() => openAction(r, "approve")}
-                        >
-                          Setujui
-                        </Button>
+                      <div className="flex flex-col items-end gap-1">
+                        {quorum ? (
+                          <span className="text-caption text-text-secondary">{quorum}</span>
+                        ) : null}
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            fullWidth={false}
+                            onClick={() => openAction(r, "reject")}
+                          >
+                            Tolak
+                          </Button>
+                          {info?.approvedByMe ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              fullWidth={false}
+                              disabled
+                              title="Anda sudah menyetujui — menunggu admin lain"
+                            >
+                              Sudah disetujui ✓
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              fullWidth={false}
+                              onClick={() => openAction(r, "approve")}
+                            >
+                              Setujui
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     )
                   },
@@ -715,9 +831,21 @@ export default function FinancePage() {
           <CardHeader
             title="Transaksi"
             subtitle="Pencarian server-side: txId, deskripsi, order, referensi eksternal (Midtrans/Flash/Iris). Klik Detail untuk timeline."
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                loading={csvLoading}
+                onClick={() => void handleCsvExport()}
+                title="Unduh export CSV ledger untuk rentang tanggal terpilih"
+              >
+                Unduh CSV
+              </Button>
+            }
           />
           <CardBody>
-            <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               <Input
                 label="Cari"
                 placeholder="Cari txId, nama, nominal…"
@@ -732,6 +860,13 @@ export default function FinancePage() {
                 value={typeFilter}
                 onChange={(e) => handleTypeChange(e.target.value)}
                 options={TYPE_FILTERS}
+              />
+              {/* ADM-214: filter status */}
+              <Select
+                label="Status"
+                value={txStatusFilter}
+                onChange={(e) => handleTxStatusChange(e.target.value)}
+                options={TX_STATUS_FILTERS}
               />
               <Input
                 label="Dari"
@@ -830,9 +965,23 @@ export default function FinancePage() {
                   key: "aksi",
                   header: "Aksi",
                   render: (r) => (
-                    <Button variant="secondary" size="sm" fullWidth={false} onClick={() => setDetailTxId(r.txId)}>
-                      Detail
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="secondary" size="sm" fullWidth={false} onClick={() => setDetailTxId(r.txId)}>
+                        Detail
+                      </Button>
+                      {/* ADM-213: recheck manual — hanya untuk PROCESSING; bukan retry payout */}
+                      {String(r.withdrawStatus) === "PROCESSING" ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          fullWidth={false}
+                          onClick={() => openRecheck(r)}
+                          title="Tanyakan status payout ke Midtrans Iris. Tidak mengirim payout baru."
+                        >
+                          Cek status
+                        </Button>
+                      ) : null}
+                    </div>
                   ),
                 },
               ]}
@@ -860,6 +1009,23 @@ export default function FinancePage() {
 
       {/* E3: Dialog detail transaksi + timeline */}
       <TransactionDetailDialog txId={detailTxId} onClose={() => setDetailTxId(null)} />
+
+      {/* ADM-213: konfirmasi recheck manual payout PROCESSING */}
+      <ConfirmDialog
+        open={recheckTx !== null}
+        onClose={closeRecheck}
+        title="Cek status payout ke provider?"
+        description={
+          recheckTx
+            ? `Menanyakan status payout ${recheckTx.txId} (${formatRupiah(recheckTx.amount)}) ke Midtrans Iris. TIDAK mengirim payout baru. ` +
+              `Bila provider menyatakan completed → SUCCESS; failed → FAILED + dana dikembalikan; selain itu tetap PROCESSING tanpa perubahan.`
+            : undefined
+        }
+        confirmLabel="Ya, cek status"
+        cancelLabel="Batal"
+        loading={rechecking}
+        onConfirm={() => void handleRecheck()}
+      />
 
       {/* Dialog Setujui / Tolak penarikan */}
       <Dialog
@@ -898,10 +1064,18 @@ export default function FinancePage() {
             Tulis alasan yang jelas.
           </p>
         ) : (
-          <p className="text-body text-text-secondary">
-            Penarikan yang disetujui akan diproses ke rekening tujuan. Tindakan
-            ini tidak bisa dibatalkan.
-          </p>
+          <div className="flex flex-col gap-2">
+            <p className="text-body text-text-secondary">
+              {actionTx?.approvalInfo
+                ? `Persetujuan ${actionTx.approvalInfo.approvals}/${actionTx.approvalInfo.requiredApprovals} — payout ke rekening tujuan dieksekusi setelah ${actionTx.approvalInfo.requiredApprovals} admin BERBEDA menyetujui. Tindakan ini tidak bisa dibatalkan.`
+                : "Penarikan yang disetujui akan diproses ke rekening tujuan. Tindakan ini tidak bisa dibatalkan."}
+            </p>
+            {actionTx?.approvalInfo?.approvedByMe ? (
+              <p className="text-caption text-warning-text">
+                Anda sudah menyetujui penarikan ini — menunggu persetujuan admin lain.
+              </p>
+            ) : null}
+          </div>
         )}
         <div className="mt-4">
           <TextArea

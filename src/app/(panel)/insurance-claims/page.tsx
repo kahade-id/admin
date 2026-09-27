@@ -5,7 +5,8 @@
  * + paginasi bernomor. Tombol "Tinjau" membuka detail klaim (pengguna, order
  * terkait, tipe, nominal, cap, catatan) beserta aksi review:
  * setujui → APPROVED, tolak → REJECTED (keduanya dari status SUBMITTED),
- * dan tandai dibayar → PAID (dari status APPROVED), dengan catatan opsional.
+ * dan bayar klaim → PAID (dari status APPROVED; mengeksekusi payout nyata
+ * ke wallet — wajib dialog konfirmasi ADM-210), dengan catatan opsional.
  *
  * Kontrak backend (Kahade+, tetap):
  * - GET /v1/admin/insurance-claims?page&limit&status → {data, pagination}
@@ -18,7 +19,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Dialog } from "@/components/ui/dialog"
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
@@ -33,6 +34,7 @@ import {
   type InsuranceClaim,
   type InsuranceClaimStatus,
 } from "@/lib/api/admin/insurance-claims"
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 
@@ -129,8 +131,10 @@ const ACTION_META: Record<
     variant: "destructive",
   },
   PAID: {
-    label: "Tandai dibayar",
-    description: "Klaim ditandai sudah dibayar ke pengguna.",
+    // ADM-210: copy lama ("Tandai dibayar") menyesatkan — aksi ini yang
+    // MENGEKSEKUSI pembayaran (kredit wallet atomik), bukan sekadar penanda.
+    label: "Bayar klaim",
+    description: "MENGEKSEKUSI pembayaran: mengkredit wallet pengguna sebesar nominal klaim.",
     variant: "primary",
   },
 }
@@ -158,6 +162,8 @@ export default function InsuranceClaimsPage() {
   const [selected, setSelected] = useState<InsuranceClaim | null>(null)
   const [note, setNote] = useState("")
   const [acting, setActing] = useState<Action | null>(null)
+  // ADM-210: PAID mengeksekusi payout nyata — wajib dialog konfirmasi terpisah.
+  const [confirmPaid, setConfirmPaid] = useState(false)
 
   const load = useCallback(
     async (
@@ -209,10 +215,13 @@ export default function InsuranceClaimsPage() {
     void load("initial", p, statusFilter)
   }
 
+  const [reviewKey, setReviewKey] = useState<string | null>(null)
   const openReview = (claim: InsuranceClaim) => {
     setSelected(claim)
     setNote("")
     setActing(null)
+    // ADM-227: satu kunci idempotency per sesi dialog; retry memakai kunci sama.
+    setReviewKey(newIdempotencyKey())
   }
 
   const closeReview = () => {
@@ -225,10 +234,14 @@ export default function InsuranceClaimsPage() {
     if (!selected || acting) return
     setActing(action)
     try {
-      await updateInsuranceClaimStatus(selected.id, {
-        status: action,
-        note: note.trim() || undefined,
-      })
+      await updateInsuranceClaimStatus(
+        selected.id,
+        {
+          status: action,
+          note: note.trim() || undefined,
+        },
+        reviewKey ?? undefined,
+      )
       toast.show({
         title: ACTION_META[action].label,
         description: `Klaim ${selected.id} → ${STATUS_LABEL[action]}.`,
@@ -236,6 +249,7 @@ export default function InsuranceClaimsPage() {
       })
       setSelected(null)
       setNote("")
+      setReviewKey(null)
       await load("refresh")
     } catch (e) {
       toast.show({
@@ -451,7 +465,9 @@ export default function InsuranceClaimsPage() {
                       variant={ACTION_META[action].variant}
                       loading={acting === action}
                       disabled={acting != null}
-                      onClick={() => handleAction(action)}
+                      onClick={() =>
+                        action === "PAID" ? setConfirmPaid(true) : handleAction(action)
+                      }
                       title={ACTION_META[action].description}
                     >
                       {ACTION_META[action].label}
@@ -480,6 +496,30 @@ export default function InsuranceClaimsPage() {
           </div>
         ) : null}
       </Dialog>
+
+      {/* ADM-210: konfirmasi eksekusi payout klaim — nominal, cap, penerima, irreversible */}
+      {selected ? (
+        <ConfirmDialog
+          open={confirmPaid}
+          onClose={() => {
+            if (acting) return
+            setConfirmPaid(false)
+          }}
+          title="Bayar klaim — eksekusi payout?"
+          description={
+            `Tindakan ini MENGKREDIT wallet ${claimUser(selected)} sebesar ` +
+            `${formatRupiah(claimAmount(selected))} (cap pertanggungan ${formatRupiah(claimCap(selected))}). ` +
+            `Payout bersifat final dan tidak bisa dibatalkan. Pastikan nominal dan penerima sudah benar.`
+          }
+          confirmLabel={`Ya, bayar ${formatRupiah(claimAmount(selected))}`}
+          cancelLabel="Batal"
+          loading={acting === "PAID"}
+          onConfirm={() => {
+            setConfirmPaid(false)
+            void handleAction("PAID")
+          }}
+        />
+      ) : null}
     </RoleGate>
   )
 }

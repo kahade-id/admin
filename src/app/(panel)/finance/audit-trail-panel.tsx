@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { txLabel } from "@/lib/tx-labels"
 
 /** Rentang maksimum yang diizinkan backend (hari). */
 const MAX_RANGE_DAYS = 365
@@ -194,7 +195,8 @@ export function AuditTrailPanel() {
                     header: "Tipe",
                     render: (r) => (
                       <div>
-                        <p className="font-semibold">{String(r.type)}</p>
+                        {/* ADM-230: label Indonesia, bukan raw enum */}
+                        <p className="font-semibold" title={String(r.type)}>{txLabel(String(r.type))}</p>
                         <p className="text-caption text-text-secondary">
                           {r.txId}
                         </p>

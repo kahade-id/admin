@@ -105,10 +105,22 @@ export type GrantSubscriptionInput = {
   reason: string
 }
 
+/**
+ * ADM-225: bentuk aktual respons backend grantSubscription — objek
+ * subscription ({...subscription, price, feeSavingsUsed, feeSavingsLimit}),
+ * BUKAN envelope {message, subscriptionId, status}.
+ */
 export type GrantSubscriptionResult = {
-  message: string
-  subscriptionId: string
+  id: string
+  userId: string
+  plan: string
   status: string
+  price: string
+  feeSavingsUsed: string
+  feeSavingsLimit: string
+  startDate?: string | null
+  endDate?: string | null
+  [key: string]: unknown
 }
 
 /** Daftar subscription Kahade+; filter status & pencarian pengguna. */
@@ -169,5 +181,89 @@ export function grantSubscription(
       durationDays: input.durationDays,
       reason: input.reason.trim(),
     },
+  )
+}
+
+/**
+ * ADM-212: kode promo langganan gratis (keputusan produk 2026-09-26).
+ * Kontrak backend (`admin-subscriptions.controller.ts`, tetap):
+ * - POST /v1/admin/subscriptions/promo-codes {code, durationDays, maxRedemptions?, assignedUserId?, expiresAt?, note?}
+ * - GET  /v1/admin/subscriptions/promo-codes?page&limit → paginated {data,total,page,limit,totalPages}
+ * - POST /v1/admin/subscriptions/promo-codes/:id/disable
+ * - POST /v1/admin/subscriptions/promo-codes/:id/enable
+ */
+
+export type PromoCodeStatus = "ACTIVE" | "DISABLED"
+
+export type PromoCode = {
+  id: string
+  code: string
+  durationDays: number
+  maxRedemptions?: number | null
+  currentRedemptions?: number
+  assignedUserId?: string | null
+  assignedUser?: { id?: string; username?: string | null } | null
+  status?: PromoCodeStatus | string
+  expiresAt?: string | null
+  note?: string | null
+  createdAt?: string
+  updatedAt?: string
+  [key: string]: unknown
+}
+
+export type CreatePromoCodeInput = {
+  /** 3–32 karakter: A-Z, 0-9, _, - (dinormalisasi UPPERCASE oleh backend). */
+  code: string
+  /** Durasi langganan gratis dalam hari (1–366). */
+  durationDays: number
+  /** Batas total pemakaian; null = tak terbatas. Default 1 (sekali pakai). */
+  maxRedemptions?: number | null
+  /** Kunci kode hanya untuk user ini (opsional). */
+  assignedUserId?: string
+  /** Masa berlaku kode (ISO 8601, opsional). */
+  expiresAt?: string
+  /** Catatan admin, mis. nama penerima (opsional). */
+  note?: string
+}
+
+/** Daftar kode promo (terbaru dulu). */
+export function listPromoCodes(
+  page = 1,
+  limit = 20,
+): Promise<Paginated<PromoCode>> {
+  return adminHttp.get<Paginated<PromoCode>>(
+    "/v1/admin/subscriptions/promo-codes",
+    { query: { page, limit } },
+  )
+}
+
+/** Buat kode promo baru. */
+export function createPromoCode(
+  input: CreatePromoCodeInput,
+): Promise<PromoCode> {
+  const body: Record<string, unknown> = {
+    code: input.code.trim(),
+    durationDays: input.durationDays,
+  }
+  if (input.maxRedemptions !== undefined) body.maxRedemptions = input.maxRedemptions
+  if (input.assignedUserId?.trim()) body.assignedUserId = input.assignedUserId.trim()
+  if (input.expiresAt) body.expiresAt = input.expiresAt
+  if (input.note?.trim()) body.note = input.note.trim()
+  return adminHttp.post<PromoCode>("/v1/admin/subscriptions/promo-codes", body)
+}
+
+/** Nonaktifkan kode promo (status → DISABLED). */
+export function disablePromoCode(id: string): Promise<PromoCode> {
+  return adminHttp.post<PromoCode>(
+    `/v1/admin/subscriptions/promo-codes/${encodeURIComponent(id)}/disable`,
+    {},
+  )
+}
+
+/** Aktifkan kembali kode promo (status → ACTIVE). */
+export function enablePromoCode(id: string): Promise<PromoCode> {
+  return adminHttp.post<PromoCode>(
+    `/v1/admin/subscriptions/promo-codes/${encodeURIComponent(id)}/enable`,
+    {},
   )
 }

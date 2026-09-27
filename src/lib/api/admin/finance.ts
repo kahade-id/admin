@@ -58,6 +58,11 @@ export type FinancialSummary = {
   totalFeeCount: number
   totalPlatformFeeToday: number
   totalPlatformFeeThisMonth: number
+  /** ADM-211: breakdown revenue langganan + revenue gabungan (fee + langganan). */
+  totalSubscriptionRevenueToday: number
+  totalSubscriptionRevenueThisMonth: number
+  totalRevenueToday: number
+  totalRevenueThisMonth: number
   totalWithdrawalsToday: number
   totalEscrowBalance: number
   pendingWithdrawals: number
@@ -149,6 +154,12 @@ export type AdminTransactionDetail = AdminTransactionItem & {
 export type PendingWithdrawal = AdminTransactionItem & {
   withdrawStatus: WithdrawStatus | string
   wallet: { userId?: string; user?: AdminTransactionUser | null }
+  /** ADM-205: kuorum dual approval untuk baris ini. */
+  approvalInfo?: {
+    approvals: number
+    requiredApprovals: number
+    approvedByMe: boolean
+  }
 }
 
 export type AuditTrailRow = {
@@ -195,6 +206,19 @@ export type WithdrawalActionResult = {
   txId?: string
   status?: string
   [key: string]: unknown
+}
+
+/**
+ * ADM-205: respons approve withdrawal dengan dual control.
+ * - `AWAITING_SECOND_APPROVAL`: persetujuan tercatat, payout BELUM dieksekusi.
+ * - `ALREADY_EXECUTED`: payout sudah dieksekusi persetujuan admin lain.
+ * - selain itu: objek transaksi (kuorum tercapai, payout dieksekusi).
+ */
+export type WithdrawalApproveResponse = WithdrawalActionResult & {
+  approvals?: number
+  requiredApprovals?: number
+  executed?: boolean
+  message?: string
 }
 
 /**
@@ -278,6 +302,35 @@ export function getTransactionDetail(txId: string): Promise<AdminTransactionDeta
   )
 }
 
+/** ADM-213: hasil recheck manual SATU withdrawal PROCESSING ke provider. */
+export type WithdrawalRecheckResult = {
+  txId?: string
+  /** Status mentah dari Midtrans Iris: completed/processed/failed/rejected/queued/processing/not_found/unknown. */
+  providerStatus?: string
+  /** CONFIRMED | FAILED_REFUNDED | STILL_PROCESSING | UNKNOWN */
+  outcome?: string
+  /** true bila recheck mengubah status transaksi. */
+  changed?: boolean
+  [key: string]: unknown
+}
+
+/**
+ * ADM-213: cek ulang status payout ke Midtrans Iris untuk SATU withdrawal
+ * PROCESSING. BUKAN retry — tidak pernah mengirim payout baru; hanya query
+ * status lalu menerapkan transisi aman (completed→SUCCESS, failed→FAILED+refund,
+ * selain itu tetap PROCESSING). Idempoten via Idempotency-Key.
+ */
+export function recheckWithdrawal(
+  txId: string,
+  idempotencyKey?: string,
+): Promise<WithdrawalRecheckResult> {
+  return adminHttp.post<WithdrawalRecheckResult>(
+    `/v1/admin/finance/withdrawals/${encodeURIComponent(txId)}/recheck`,
+    {},
+    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
+  )
+}
+
 /** Antrean penarikan berstatus pending (terlama dulu). */
 export function listPendingWithdrawals(params?: {
   page?: number
@@ -289,13 +342,15 @@ export function listPendingWithdrawals(params?: {
   )
 }
 
-/** Setujui penarikan pending (idempoten). Catatan admin opsional. */
+/** Setujui penarikan pending — ADM-205 dual control (idempoten). Catatan admin opsional.
+ * Persetujuan PERTAMA mengembalikan AWAITING_SECOND_APPROVAL tanpa payout;
+ * payout dieksekusi hanya setelah kuorum admin BERBEDA tercapai. */
 export function approveWithdrawal(
   txId: string,
   note?: string,
   idempotencyKey?: string,
-): Promise<WithdrawalActionResult> {
-  return adminHttp.post<WithdrawalActionResult>(
+): Promise<WithdrawalApproveResponse> {
+  return adminHttp.post<WithdrawalApproveResponse>(
     `/v1/admin/finance/withdrawals/${encodeURIComponent(txId)}/approve`,
     note ? { adminNote: note } : {},
     { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
@@ -442,14 +497,44 @@ export function acknowledgeFinding(
   )
 }
 
-/** Unduh CSV temuan (tanpa PII — nama pengguna menjadi inisial). */
-export function exportFindingsCsvUrl(query: FindingsQuery = {}): string {
+/** URL export CSV ledger (GET /v1/admin/finance/export/csv). */
+export function buildFinanceCsvUrl(from?: string, to?: string): string {
   const params = new URLSearchParams()
-  for (const [k, v] of Object.entries(query)) {
-    if (v !== undefined && v !== null && v !== "") params.set(k, String(v))
-  }
+  if (from) params.set("from", from)
+  if (to) params.set("to", to)
   const qs = params.toString()
-  return `/v1/admin/finance/reconcile/findings/export/csv${qs ? `?${qs}` : ""}`
+  return `${API_BASE_URL}/v1/admin/finance/export/csv${qs ? `?${qs}` : ""}`
+}
+
+/**
+ * ADM-215: unduh export CSV ledger dengan bearer token (backend membatasi
+ * ke SUPER_ADMIN/FINANCE_ADMIN; rentang maks 365 hari, default 30 hari
+ * terakhir). Menggantikan builder URL publik tanpa auth (ADM-216).
+ */
+export async function downloadFinanceCsv(from?: string, to?: string): Promise<void> {
+  const token = getAdminAccessToken()
+  const res = await fetch(buildFinanceCsvUrl(from, to), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const body = await res.json()
+      if (body?.message) detail = String(body.message)
+      else if (body?.code) detail = String(body.code)
+    } catch {
+      /* abaikan — pakai detail default */
+    }
+    throw new Error(`Gagal mengunduh CSV: ${detail}`)
+  }
+  const blob = await res.blob()
+  const a = document.createElement("a")
+  a.href = URL.createObjectURL(blob)
+  a.download = `finance-export-${(from ?? "30d").slice(0, 10)}-to-${(to ?? "now").slice(0, 10)}.csv`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(a.href)
 }
 
 export type CorrectionType = "CREDIT" | "DEBIT"
@@ -477,8 +562,8 @@ export type LedgerCorrection = {
  * Minta kata sandi admin sebelum submit koreksi.
  *
  * PERINGATAN: verifikasi kata sandi ini HANYA di sisi UI (konfirmasi
- * sadar). Verifikasi server-side terhadap hash kata sandi admin BELUM
- * tersedia — dicatat sebagai tindak lanjut (follow-up) di backend.
+ * sadar). ADM-206: kata sandi DIVERIFIKASI server-side (bcrypt + rate
+ * limit 5x/15 mnt) — bukan lagi token palsu.
  */
 export type RequestCorrectionInput = {
   userId: string
@@ -487,8 +572,8 @@ export type RequestCorrectionInput = {
   reason: string
   ticketRef: string
   idempotencyKey: string
-  /** Diteruskan ke backend; belum diverifikasi server-side (follow-up). */
-  reauthToken?: string
+  /** ADM-206: kata sandi admin — DIVERIFIKASI server-side (bcrypt + rate limit). Wajib. */
+  reauthPassword: string
 }
 
 /**
@@ -527,7 +612,7 @@ export function getCorrection(id: string): Promise<LedgerCorrection> {
  */
 export function decideCorrection(
   id: string,
-  body: { decision: CorrectionDecision; notes?: string; reauthToken?: string },
+  body: { decision: CorrectionDecision; notes?: string; reauthPassword: string },
   idempotencyKey?: string,
 ): Promise<LedgerCorrection> {
   return adminHttp.post<LedgerCorrection>(

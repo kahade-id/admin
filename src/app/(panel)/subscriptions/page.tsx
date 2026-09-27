@@ -24,7 +24,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Dialog } from "@/components/ui/dialog"
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
@@ -35,8 +35,13 @@ import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import {
   cancelSubscription,
+  createPromoCode,
+  disablePromoCode,
+  enablePromoCode,
   grantSubscription,
+  listPromoCodes,
   listSubscriptions,
+  type PromoCode,
   type SubscriptionItem,
   type SubscriptionPlan,
 } from "@/lib/api/admin/subscriptions"
@@ -149,6 +154,8 @@ export default function SubscriptionsPage() {
   const [cancelling, setCancelling] = useState(false)
 
   const [grantOpen, setGrantOpen] = useState(false)
+  // ADM-212: kelola kode promo langganan gratis
+  const [promoOpen, setPromoOpen] = useState(false)
 
   const load = useCallback(
     async (
@@ -277,6 +284,14 @@ export default function SubscriptionsPage() {
             onClick={() => setGrantOpen(true)}
           >
             Beri manual
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth={false}
+            onClick={() => setPromoOpen(true)}
+          >
+            Kode promo
           </Button>
         </div>
       </div>
@@ -491,6 +506,16 @@ export default function SubscriptionsPage() {
       >
         <GrantForm key="grant-form" onDone={handleGranted} />
       </Dialog>
+
+      {/* ADM-212: kelola kode promo langganan gratis */}
+      <Dialog
+        open={promoOpen}
+        onClose={() => setPromoOpen(false)}
+        title="Kode promo langganan"
+        description="Buat kode promo durasi gratis (3/7/14/30 hari dst.), batasi pemakaian, atau nonaktifkan/aktifkan kembali. Setiap perubahan tercatat di audit log."
+      >
+        {promoOpen ? <PromoCodesPanel key="promo-panel" /> : null}
+      </Dialog>
     </RoleGate>
   )
 }
@@ -541,14 +566,25 @@ function GrantForm({ onDone }: { onDone: () => void }) {
   }, [debouncedQuery])
 
   const duration = Number.parseInt(durationDays, 10)
+  // ADM-224: batas UI 730 hari mengikuti @Max(730) backend; pratinjau wajib
+  // sebelum eksekusi agar admin tidak mengisi 1000 hari lalu baru tahu saat 400.
+  const durationTooLong = Number.isFinite(duration) && duration > 730
   const valid =
     userId.trim().length > 0 &&
     Number.isFinite(duration) &&
     duration >= 1 &&
+    !durationTooLong &&
     reason.trim().length > 0
+
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const selectedUserLabel =
+    candidates.find((u) => u.userId === userId)?.fullName?.trim() ||
+    candidates.find((u) => u.userId === userId)?.username ||
+    userId
 
   const handleSubmit = async () => {
     if (!valid || submitting) return
+    setConfirmOpen(false)
     setSubmitting(true)
     try {
       await grantSubscription({
@@ -624,9 +660,11 @@ function GrantForm({ onDone }: { onDone: () => void }) {
           label="Durasi (hari)"
           type="number"
           min={1}
+          max={730}
           value={durationDays}
           onChange={(e) => setDurationDays(e.target.value)}
           disabled={submitting}
+          hint="Maksimal 730 hari (2 tahun)."
         />
       </div>
 
@@ -645,16 +683,291 @@ function GrantForm({ onDone }: { onDone: () => void }) {
           variant="primary"
           loading={submitting}
           disabled={!valid}
-          onClick={handleSubmit}
+          onClick={() => setConfirmOpen(true)}
         >
-          Berikan subscription
+          Pratinjau & berikan
         </Button>
       </div>
-      {!valid ? (
+      {durationTooLong ? (
+        <p className="text-caption text-danger-text">
+          Durasi maksimal 730 hari — backend menolak nilai lebih besar.
+        </p>
+      ) : !valid ? (
         <p className="text-caption text-text-secondary">
-          Lengkapi: pengguna terpilih, durasi minimal 1 hari, dan alasan.
+          Lengkapi: pengguna terpilih, durasi 1–730 hari, dan alasan.
         </p>
       ) : null}
+
+      {/* ADM-224: pratinjau eksplisit sebelum grant dieksekusi */}
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Berikan subscription?"
+        description={`Pengguna: ${selectedUserLabel}. Plan ${PLAN_LABEL[plan]} selama ${Number.isFinite(duration) ? duration : "—"} hari. Alasan: ${reason.trim() || "—"}`}
+        confirmLabel="Ya, berikan"
+        cancelLabel="Batal"
+        loading={submitting}
+        onConfirm={() => void handleSubmit()}
+      />
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* ADM-212: panel kelola kode promo langganan gratis                   */
+/* ------------------------------------------------------------------ */
+
+const PROMO_TONE: Record<string, BadgeTone> = {
+  ACTIVE: "success",
+  DISABLED: "neutral",
+}
+
+function promoRedemptions(p: PromoCode): string {
+  const used = p.currentRedemptions ?? 0
+  return p.maxRedemptions == null ? `${used} / ∞` : `${used} / ${p.maxRedemptions}`
+}
+
+function PromoCodesPanel() {
+  const toast = useToast()
+  const [rows, setRows] = useState<PromoCode[]>([])
+  const [loading, setLoading] = useState(true)
+  const [actingId, setActingId] = useState<string | null>(null)
+
+  const [code, setCode] = useState("")
+  const [durationDays, setDurationDays] = useState("30")
+  const [maxRedemptions, setMaxRedemptions] = useState("1")
+  const [expiresAt, setExpiresAt] = useState("")
+  const [note, setNote] = useState("")
+  const [creating, setCreating] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await listPromoCodes(1, 20)
+      setRows(res.data ?? [])
+    } catch (e) {
+      toast.show({
+        title: "Gagal memuat kode promo",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const codeValid = /^[A-Z0-9_-]{3,32}$/i.test(code.trim())
+  const daysValid =
+    Number.isInteger(Number(durationDays)) &&
+    Number(durationDays) >= 1 &&
+    Number(durationDays) <= 366
+  const maxValid =
+    maxRedemptions.trim() === "" ||
+    (Number.isInteger(Number(maxRedemptions)) && Number(maxRedemptions) >= 1)
+  const formValid = codeValid && daysValid && maxValid
+
+  const handleCreate = async () => {
+    if (!formValid || creating) return
+    setCreating(true)
+    try {
+      await createPromoCode({
+        code: code.trim().toUpperCase(),
+        durationDays: Number(durationDays),
+        maxRedemptions:
+          maxRedemptions.trim() === "" ? null : Number(maxRedemptions),
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+        note: note.trim() || undefined,
+      })
+      toast.show({
+        title: "Kode promo dibuat",
+        description: code.trim().toUpperCase(),
+        tone: "success",
+      })
+      setCode("")
+      setDurationDays("30")
+      setMaxRedemptions("1")
+      setExpiresAt("")
+      setNote("")
+      await load()
+    } catch (e) {
+      toast.show({
+        title: "Gagal membuat kode promo",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleToggle = async (p: PromoCode) => {
+    if (actingId) return
+    setActingId(p.id)
+    try {
+      if (String(p.status) === "ACTIVE") await disablePromoCode(p.id)
+      else await enablePromoCode(p.id)
+      toast.show({
+        title: String(p.status) === "ACTIVE" ? "Kode dinonaktifkan" : "Kode diaktifkan",
+        description: p.code,
+        tone: "success",
+      })
+      await load()
+    } catch (e) {
+      toast.show({
+        title: "Gagal mengubah status kode",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setActingId(null)
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Form buat kode */}
+      <div>
+        <p className="text-caption font-semibold text-text-secondary">
+          Buat kode promo baru
+        </p>
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Input
+            label="Kode (3–32: A–Z, 0–9, _, -)"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="KAHADPLUS-VIP-001"
+            maxLength={32}
+            disabled={creating}
+          />
+          <Input
+            label="Durasi gratis (hari, 1–366)"
+            type="number"
+            min={1}
+            max={366}
+            value={durationDays}
+            onChange={(e) => setDurationDays(e.target.value)}
+            disabled={creating}
+          />
+          <Input
+            label="Batas pakai (kosong = tak terbatas)"
+            type="number"
+            min={1}
+            value={maxRedemptions}
+            onChange={(e) => setMaxRedemptions(e.target.value)}
+            placeholder="1"
+            disabled={creating}
+          />
+          <Input
+            label="Kedaluwarsa (opsional)"
+            type="date"
+            value={expiresAt}
+            onChange={(e) => setExpiresAt(e.target.value)}
+            disabled={creating}
+          />
+        </div>
+        <div className="mt-3">
+          <TextArea
+            label="Catatan (opsional)"
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Cth. Untuk pemenang giveaway September…"
+            maxLength={500}
+            disabled={creating}
+          />
+        </div>
+        <div className="mt-3">
+          <Button
+            variant="primary"
+            loading={creating}
+            disabled={!formValid}
+            onClick={() => void handleCreate()}
+          >
+            Buat kode promo
+          </Button>
+          {!formValid ? (
+            <p className="mt-1 text-caption text-text-secondary">
+              Kode 3–32 karakter (A–Z, 0–9, _, -) dan durasi 1–366 hari.
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Daftar kode */}
+      <div>
+        <p className="mb-2 text-caption font-semibold text-text-secondary">
+          Kode promo (terbaru dulu)
+        </p>
+        {loading ? (
+          <div className="flex items-center gap-2 py-6 text-body text-text-secondary">
+            <Spinner size="sm" /> Memuat…
+          </div>
+        ) : (
+          <DataTable<PromoCode>
+            columns={[
+              {
+                key: "code",
+                header: "Kode",
+                render: (p) => (
+                  <span className="font-mono font-semibold">{p.code}</span>
+                ),
+              },
+              {
+                key: "duration",
+                header: "Durasi",
+                render: (p) => <span>{p.durationDays} hari</span>,
+              },
+              {
+                key: "redemptions",
+                header: "Terpakai",
+                render: (p) => <span>{promoRedemptions(p)}</span>,
+              },
+              {
+                key: "status",
+                header: "Status",
+                render: (p) => (
+                  <Badge tone={PROMO_TONE[String(p.status)] ?? "neutral"}>
+                    {String(p.status) === "ACTIVE" ? "Aktif" : "Nonaktif"}
+                  </Badge>
+                ),
+              },
+              {
+                key: "expires",
+                header: "Kedaluwarsa",
+                render: (p) => (
+                  <span className="text-caption text-text-secondary">
+                    {p.expiresAt ? formatDateTimeWIB(p.expiresAt) : "—"}
+                  </span>
+                ),
+              },
+              {
+                key: "action",
+                header: "",
+                align: "right",
+                render: (p) => (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    loading={actingId === p.id}
+                    disabled={actingId != null}
+                    onClick={() => void handleToggle(p)}
+                  >
+                    {String(p.status) === "ACTIVE" ? "Nonaktifkan" : "Aktifkan"}
+                  </Button>
+                ),
+              },
+            ]}
+            rows={rows}
+            rowKey={(p) => p.id}
+            emptyText="Belum ada kode promo."
+          />
+        )}
+      </div>
     </div>
   )
 }
