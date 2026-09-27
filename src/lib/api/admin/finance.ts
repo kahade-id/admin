@@ -7,15 +7,20 @@
  * Catatan kontrak:
  * - `listTransactions` mewajibkan `startDate` & `endDate` (ISO 8601, rentang
  *   maks 90 hari). Bila tidak diisi, default 30 hari terakhir.
- * - Backend TIDAK menyediakan pencarian server-side untuk transaksi; param
- *   `q` difilter client-side terhadap halaman yang diambil ("pencarian
- *   sederhana").
+ * - `listTransactions` mendukung pencarian server-side via param `q`
+ *   (txId, deskripsi, orderId, midtransOrderId, flashTransactionId,
+ *   irisPayoutId, irisRef).
  * - `approveWithdrawal` / `rejectWithdrawal` mewajibkan header
  *   `Idempotency-Key: <UUID v4>` (interceptor idempotency global) — kunci
  *   dibuat per panggilan agar double-tap tidak mengeksekusi dua payout.
  * - Nominal sudah dikonversi backend dari sen (BigInt) ke Rupiah (number).
  */
-import { adminHttp } from "@/lib/api/admin-client"
+import {
+  adminHttp,
+  AdminAuthError,
+  getAdminAccessToken,
+} from "@/lib/api/admin-client"
+import { API_BASE_URL } from "@/lib/api/config"
 import type { Paginated } from "@/lib/api/admin/kyc"
 
 export type WalletTransactionType =
@@ -108,12 +113,37 @@ export type AdminTransactionItem = {
 }
 
 export type AdminTransactionDetail = AdminTransactionItem & {
+  owner?: AdminTransactionUser | null
+  externalRefs?: TransactionExternalRefs | null
+  providerStatus?: {
+    provider?: string | null
+    status?: string | null
+    fraudStatus?: string | null
+    webhookReceivedAt?: string | null
+    paidAt?: string | null
+    settledAt?: string | null
+    failedAt?: string | null
+    expiredAt?: string | null
+  } | null
+  webhooks?: Array<{
+    id: string
+    source: string
+    event: string
+    receivedAt: string
+    processingStatus?: string | null
+  }>
   paymentTx?: {
     id?: string
     midtransOrderId?: string | null
+    flashTransactionId?: string | null
+    vaNumber?: string | null
+    vaBank?: string | null
+    provider?: string | null
     method?: string | null
     status?: string | null
   } | null
+  reversalTx?: AdminTransactionItem | null
+  reversals?: AdminTransactionItem[]
 }
 
 export type PendingWithdrawal = AdminTransactionItem & {
@@ -218,8 +248,8 @@ export type ListTransactionsQuery = {
   startDate?: string
   endDate?: string
   /**
-   * Pencarian sederhana (client-side, terhadap halaman yang diambil):
-   * cocok dengan txId, deskripsi, nama/email user, atau nominal.
+   * Pencarian server-side (E3): cocok dengan txId, deskripsi, orderId,
+   * midtransOrderId, flashTransactionId, irisPayoutId, atau irisRef.
    */
   q?: string
 }
@@ -228,8 +258,8 @@ export type ListTransactionsQuery = {
 export async function listTransactions(
   query: ListTransactionsQuery = {},
 ): Promise<Paginated<AdminTransactionItem>> {
-  const { q, startDate, endDate, ...rest } = query
-  const page = await adminHttp.get<Paginated<AdminTransactionItem>>(
+  const { startDate, endDate, ...rest } = query
+  return adminHttp.get<Paginated<AdminTransactionItem>>(
     "/v1/admin/finance/transactions",
     {
       query: {
@@ -239,24 +269,6 @@ export async function listTransactions(
       },
     },
   )
-  const term = q?.trim().toLowerCase()
-  if (!term) return page
-  return {
-    ...page,
-    data: page.data.filter((tx) => {
-      const haystack = [
-        tx.txId,
-        tx.description ?? "",
-        String(tx.amount),
-        tx.wallet?.user?.fullName ?? "",
-        tx.wallet?.user?.email ?? "",
-        tx.order?.orderId ?? "",
-      ]
-        .join(" ")
-        .toLowerCase()
-      return haystack.includes(term)
-    }),
-  }
 }
 
 /** Detail satu transaksi wallet (termasuk pemilik wallet & entitas terkait). */
@@ -328,12 +340,259 @@ export function getAuditTrail(
 }
 
 /**
- * Rekonsiliasi satu wallet user (SUPER_ADMIN): hitung ulang saldo ekspektasi
+ * Rekonsiliasi satu wallet user: hitung ulang saldo ekspektasi
  * dari transaksi dan bandingkan dengan saldo aktual.
+ *
+ * E3: hasil selisih kini disimpan sebagai temuan rekonsiliasi
+ * (dedup per user) dan dapat dilihat di daftar temuan.
+ * Hanya SUPER_ADMIN (lihat backend @AdminRoles).
  */
 export function reconcileUser(userId: string): Promise<ReconcileResult> {
   return adminHttp.post<ReconcileResult>(
     `/v1/admin/finance/reconcile/user/${encodeURIComponent(userId)}`,
     {},
   )
+}
+
+// ============================================================
+// E3 (G326–G350): detail & timeline transaksi, temuan,
+// koreksi ledger dual-approval, batch rekonsiliasi.
+// ============================================================
+
+export type TimelineEventKind = "LEDGER" | "WEBHOOK" | "PROVIDER" | "REVERSAL"
+
+export type TimelineEvent = {
+  at: string
+  kind: TimelineEventKind
+  label: string
+  detail: string | null
+}
+
+export type TransactionTimeline = {
+  txId: string
+  events: TimelineEvent[]
+}
+
+export type TransactionExternalRefs = {
+  midtransOrderId: string | null
+  irisPayoutId: string | null
+  irisRef: string | null
+  flashTransactionId: string | null
+  vaNumber: string | null
+  vaBank: string | null
+}
+
+/** Timeline kronologis satu transaksi: ledger + provider + webhook + reversal. */
+export function getTransactionTimeline(txId: string): Promise<TransactionTimeline> {
+  return adminHttp.get<TransactionTimeline>(
+    `/v1/admin/finance/transactions/${encodeURIComponent(txId)}/timeline`,
+  )
+}
+
+export type FindingStatus = "NEW" | "INVESTIGATING" | "RESOLVED" | "ACCEPTED"
+
+export type ReconciliationFinding = {
+  id: string
+  userId: string
+  recordedBalanceIdr: number
+  computedBalanceIdr: number
+  differenceIdr: number
+  urgent: boolean
+  violatedInvariants: string[]
+  status: FindingStatus
+  batchId: string | null
+  acknowledgedBy: string | null
+  acknowledgedAt: string | null
+  notes: string | null
+  ageDays: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type FindingsQuery = {
+  page?: number
+  limit?: number
+  status?: FindingStatus
+  minDifferenceIdr?: number
+  maxAgeDays?: number
+  invariant?: string
+  urgentOnly?: boolean
+}
+
+/** Daftar temuan rekonsiliasi (tanpa PII di payload). */
+export function listFindings(
+  query: FindingsQuery = {},
+): Promise<Paginated<ReconciliationFinding>> {
+  return adminHttp.get<Paginated<ReconciliationFinding>>("/v1/admin/finance/findings", {
+    query: query as Record<string, string | number | boolean | undefined>,
+  })
+}
+
+/**
+ * Acknowledge temuan: NEW → INVESTIGATING|RESOLVED|ACCEPTED,
+ * INVESTIGATING → RESOLVED|ACCEPTED.
+ */
+export function acknowledgeFinding(
+  id: string,
+  body: { status: "INVESTIGATING" | "RESOLVED" | "ACCEPTED"; notes?: string },
+): Promise<ReconciliationFinding> {
+  return adminHttp.post<ReconciliationFinding>(
+    `/v1/admin/finance/findings/${encodeURIComponent(id)}/acknowledge`,
+    body,
+  )
+}
+
+/** Unduh CSV temuan (tanpa PII — nama pengguna menjadi inisial). */
+export function exportFindingsCsvUrl(query: FindingsQuery = {}): string {
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(query)) {
+    if (v !== undefined && v !== null && v !== "") params.set(k, String(v))
+  }
+  const qs = params.toString()
+  return `/v1/admin/finance/reconcile/findings/export/csv${qs ? `?${qs}` : ""}`
+}
+
+export type CorrectionType = "CREDIT" | "DEBIT"
+export type CorrectionDecision = "APPROVE" | "REJECT"
+export type CorrectionStatus = "PENDING_APPROVAL" | "APPROVED" | "REJECTED"
+
+export type LedgerCorrection = {
+  id: string
+  userId: string
+  amountIdr: number
+  type: CorrectionType
+  reason: string
+  ticketRef: string
+  idempotencyKey: string
+  status: CorrectionStatus
+  requestedBy: string
+  requestedAt: string
+  decidedBy: string | null
+  decidedAt: string | null
+  decisionNotes: string | null
+  executedTxId: string | null
+}
+
+/**
+ * Minta kata sandi admin sebelum submit koreksi.
+ *
+ * PERINGATAN: verifikasi kata sandi ini HANYA di sisi UI (konfirmasi
+ * sadar). Verifikasi server-side terhadap hash kata sandi admin BELUM
+ * tersedia — dicatat sebagai tindak lanjut (follow-up) di backend.
+ */
+export type RequestCorrectionInput = {
+  userId: string
+  amountIdr: number
+  type: CorrectionType
+  reason: string
+  ticketRef: string
+  idempotencyKey: string
+  /** Diteruskan ke backend; belum diverifikasi server-side (follow-up). */
+  reauthToken?: string
+}
+
+/**
+ * Ajukan koreksi ledger (langkah 1 dari 2). TIDAK memutasi saldo —
+ * hanya membuat request PENDING_APPROVAL yang butuh persetujuan
+ * admin BERBEDA.
+ */
+export function requestCorrection(
+  input: RequestCorrectionInput,
+): Promise<LedgerCorrection> {
+  return adminHttp.post<LedgerCorrection>("/v1/admin/finance/corrections", input, {
+    headers: { "Idempotency-Key": input.idempotencyKey },
+  })
+}
+
+/** Daftar pengajuan koreksi (filter status opsional). */
+export function listCorrections(
+  query: { page?: number; limit?: number; status?: CorrectionStatus } = {},
+): Promise<Paginated<LedgerCorrection>> {
+  return adminHttp.get<Paginated<LedgerCorrection>>("/v1/admin/finance/corrections", {
+    query: query as Record<string, string | number | undefined>,
+  })
+}
+
+/** Detail satu pengajuan koreksi beserta keputusannya (bila ada). */
+export function getCorrection(id: string): Promise<LedgerCorrection> {
+  return adminHttp.get<LedgerCorrection>(
+    `/v1/admin/finance/corrections/${encodeURIComponent(id)}`,
+  )
+}
+
+/**
+ * Putuskan koreksi (langkah 2 dari 2). APPROVE mengeksekusi mutasi ledger;
+ * REJECT membatalkan. Approver HARUS berbeda dari requester (self-approve
+ * ditolak 403) — UI menonaktifkan tombol untuk requester sendiri.
+ */
+export function decideCorrection(
+  id: string,
+  body: { decision: CorrectionDecision; notes?: string; reauthToken?: string },
+  idempotencyKey?: string,
+): Promise<LedgerCorrection> {
+  return adminHttp.post<LedgerCorrection>(
+    `/v1/admin/finance/corrections/${encodeURIComponent(id)}/approve`,
+    body,
+    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
+  )
+}
+
+export type ReconciliationBatch = {
+  id: string
+  startedAt: string
+  finishedAt: string
+  triggeredBy: string
+  checked: number
+  clean: number
+  problematic: number
+  findingsCreated: number
+  durationMs: number
+}
+
+/** Snapshot batch rekonsiliasi terjadwal (terbaru dulu, maks 20). */
+export function listReconciliationBatches(): Promise<{ batches: ReconciliationBatch[] }> {
+  return adminHttp.get<{ batches: ReconciliationBatch[] }>(
+    "/v1/admin/finance/reconcile/batches",
+  )
+}
+
+/** Drill-down: temuan yang tercatat untuk satu batch. */
+export function getBatchDiscrepancies(
+  batchId: string,
+  query: { page?: number; limit?: number } = {},
+): Promise<Paginated<ReconciliationFinding>> {
+  return adminHttp.get<Paginated<ReconciliationFinding>>(
+    `/v1/admin/finance/reconcile/batches/${encodeURIComponent(batchId)}/discrepancies`,
+    { query: query as Record<string, number | undefined> },
+  )
+}
+
+/**
+ * Unduh CSV temuan rekonsiliasi via jalur authenticated (bearer token +
+ * cookie, bukan URL polos). Backend mengembalikan `text/csv` yang memakai
+ * inisial — tanpa userId/email/nama.
+ */
+export function downloadFindingsCsv(query: FindingsQuery = {}): Promise<string> {
+  const token = getAdminAccessToken()
+  const url = new URL(`${API_BASE_URL}/v1/admin/finance/reconcile/findings/export/csv`)
+  if (query.status) url.searchParams.set("status", query.status)
+  if (query.urgentOnly) url.searchParams.set("urgentOnly", "true")
+  if (query.minDifferenceIdr !== undefined) {
+    url.searchParams.set("minDifferenceIdr", String(query.minDifferenceIdr))
+  }
+  if (query.maxAgeDays !== undefined) {
+    url.searchParams.set("maxAgeDays", String(query.maxAgeDays))
+  }
+  if (query.invariant) url.searchParams.set("invariant", query.invariant)
+  return fetch(url.toString(), {
+    headers: {
+      Accept: "text/csv",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: "include",
+  }).then(async (res) => {
+    if (res.status === 401) throw new AdminAuthError()
+    if (!res.ok) throw new Error(`Unduhan CSV temuan gagal (${res.status})`)
+    return res.text()
+  })
 }

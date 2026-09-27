@@ -29,6 +29,26 @@ export function formatNumber(n: unknown): string {
   return Math.trunc(n).toLocaleString("id-ID")
 }
 
+/**
+ * "Rp1.234.567" — format mata uang IDR gaya Indonesia (tanpa desimal).
+ * Non-finite → "—".
+ */
+export function formatIDR(n: unknown): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
+  return `Rp${Math.trunc(n).toLocaleString("id-ID")}`
+}
+
+/**
+ * "Rp1.234" — nilai dalam SEN (1/100 rupiah) → rupiah.
+ * Backend returns/refund memakai sen; string|number diterima.
+ */
+export function formatIdrSen(sen: string | number | null | undefined): string {
+  if (sen == null) return "—"
+  const n = typeof sen === "string" ? Number(sen) : sen
+  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
+  return formatIDR(Math.round(n / 100))
+}
+
 /** Angka aman untuk statistik dasbor. */
 export function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0

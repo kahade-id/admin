@@ -10,6 +10,7 @@
  */
 "use client"
 
+import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -312,6 +313,26 @@ function TeamPageContent() {
           <p className="mt-1 text-body text-text-secondary">
             Kelola akun admin yang bisa mengakses panel ini.
           </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href="/team/access-review"
+              className="rounded-sm border border-border px-3 py-1.5 text-body font-medium text-text-primary hover:bg-surface-elevated"
+            >
+              Review akses periodik
+            </Link>
+            <Link
+              href="/team/emergency-grants"
+              className="rounded-sm border border-border px-3 py-1.5 text-body font-medium text-text-primary hover:bg-surface-elevated"
+            >
+              Akses darurat
+            </Link>
+            <Link
+              href="/team/activity-log"
+              className="rounded-sm border border-border px-3 py-1.5 text-body font-medium text-text-primary hover:bg-surface-elevated"
+            >
+              Log aktivitas admin
+            </Link>
+          </div>
         </div>
         <Button fullWidth={false} onClick={() => setCreateOpen(true)}>
           Tambah admin
@@ -360,7 +381,12 @@ function TeamPageContent() {
                 render: (r) => (
                   <div>
                     <p className="font-semibold">
-                      {r.fullName}
+                      <Link
+                        href={`/team/${r.id}`}
+                        className="text-info-text hover:underline"
+                      >
+                        {r.fullName}
+                      </Link>
                       {isSelf(r) ? (
                         <span className="ml-2 text-caption text-text-tertiary">(Anda)</span>
                       ) : null}

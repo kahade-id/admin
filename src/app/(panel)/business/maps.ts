@@ -16,3 +16,19 @@ export const BUSINESS_STATUS_TONE: Record<
   REJECTED: "danger",
   REVOKED: "neutral",
 }
+
+/**
+ * Alasan pencabutan standar (dropdown di dialog cabut persetujuan).
+ * "Lainnya" membuka kolom teks bebas. Semua opsi >= 10 karakter
+ * (syarat backend RevokeBusinessVerificationDto).
+ */
+export const BUSINESS_REVOKE_REASONS = [
+  "Dokumen legalitas tidak valid atau kedaluwarsa",
+  "Data badan usaha tidak sesuai dengan dokumen pendukung",
+  "NPWP terindikasi ganda atau disalahgunakan",
+  "Badan usaha telah dibubarkan",
+  "Atas permintaan pemohon",
+  "Lainnya (tulis manual)",
+]
+
+export const BUSINESS_REVOKE_CUSTOM = "Lainnya (tulis manual)"

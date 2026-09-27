@@ -25,13 +25,25 @@ import { Spinner } from "./spinner"
 export type TableProps = TableHTMLAttributes<HTMLTableElement> & {
   children?: ReactNode
   className?: string
+  /**
+   * G517/G518: label unik untuk landmark region (diambil dari caption bila
+   * ada). Tanpa label unik, banyak tabel di satu halaman melanggar
+   * axe landmark-unique — jadi role="region" hanya dipasang bila label ada.
+   */
+  regionLabel?: string
 }
 
-export function Table({ children, className, ...rest }: TableProps) {
+export function Table({ children, className, regionLabel, ...rest }: TableProps) {
+  // G517 (reflow): overflow-x-auto — di viewport sempit / zoom 400% tabel
+  // lebar bisa di-scroll horizontal, bukan terpotong. tabindex=0 agar region
+  // scroll bisa dicapai & dioperasikan keyboard.
   return (
     <div
+      role={regionLabel ? "region" : undefined}
+      aria-label={regionLabel}
+      tabIndex={0}
       className={cn(
-        "w-full overflow-hidden rounded-md border border-border bg-background",
+        "w-full overflow-x-auto rounded-md border border-border bg-background",
         className,
       )}
     >
@@ -133,6 +145,8 @@ export type DataTableProps<Row extends Record<string, unknown>> = {
   loading?: boolean
   emptyText?: string
   className?: string
+  /** G518: caption untuk screen reader (WCAG 1.3.1) — tidak wajib tampil visual. */
+  caption?: string
 }
 
 const alignTextClass: Record<DataTableAlign, string> = {
@@ -148,17 +162,21 @@ export function DataTable<Row extends Record<string, unknown>>({
   loading = false,
   emptyText = "Tidak ada data",
   className,
+  caption,
 }: DataTableProps<Row>) {
   const cellContent = (col: DataTableColumn<Row>, row: Row): ReactNode =>
     col.render ? col.render(row) : String(row[col.key] ?? "")
 
   return (
-    <Table className={className}>
+    <Table className={className} regionLabel={caption}>
+      {caption ? <caption className="sr-only">{caption}</caption> : null}
       <THead>
         <TR>
           {columns.map((col) => (
+            // G513/axe empty-table-header: kolom tanpa header visual (kolom
+            // aksi/checkbox) tetap butuh label untuk screen reader.
             <TH key={col.key} className={alignTextClass[col.align ?? "left"]}>
-              {col.header}
+              {col.header ? col.header : <span className="sr-only">Aksi</span>}
             </TH>
           ))}
         </TR>

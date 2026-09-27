@@ -10,6 +10,7 @@ import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
@@ -26,6 +27,7 @@ import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
 import { ErrorBlock, LoadingBlock, PageHeader } from "../_components/admin-ui"
+import { ExportUsersDialog } from "./_components/export-users-dialog"
 
 const PAGE_SIZE = 20
 const DEBOUNCE_MS = 400
@@ -85,6 +87,7 @@ export default function UsersListPage() {
   const [rows, setRows] = useState<AdminUserSummary[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
+  const [exportOpen, setExportOpen] = useState(false)
 
   const load = useCallback(
     async (
@@ -140,6 +143,16 @@ export default function UsersListPage() {
       <PageHeader
         title="Pengguna"
         description="Kelola akun pengguna Kahade: cari, filter status, dan tinjau detail."
+        actions={
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth={false}
+            onClick={() => setExportOpen(true)}
+          >
+            Ekspor CSV
+          </Button>
+        }
         onRefresh={() => {
           void load("refresh", page, filter, debouncedQuery)
         }}
@@ -261,6 +274,13 @@ export default function UsersListPage() {
           </div>
         </>
       )}
+
+      <ExportUsersDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        q={debouncedQuery}
+        status={filter === "all" ? undefined : filter}
+      />
     </RoleGate>
   )
 }

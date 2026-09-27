@@ -139,3 +139,154 @@ export function reviewShowcaseReport(
     { headers: idempotencyHeaders() },
   )
 }
+
+// ---------------------------------------------------------------------------
+// GAP-F (G401–G425): lifecycle moderasi pasca-final.
+// ---------------------------------------------------------------------------
+
+export type ModerationEvent = {
+  id: string
+  action: string
+  stateFrom?: string | null
+  stateTo?: string | null
+  reasonCode?: string | null
+  note?: string | null
+  actorAdminId?: string | null
+  actorAdminName?: string | null
+  createdAt: string
+  [key: string]: unknown
+}
+
+export type ReportAppeal = {
+  id: string
+  reportId: string
+  appellantType: "OWNER" | "REPORTER"
+  reason: string
+  newEvidence?: unknown
+  status: "PENDING" | "APPROVED" | "REJECTED"
+  reviewerAdminId?: string | null
+  decidedAt?: string | null
+  decisionNote?: string | null
+  createdAt: string
+  [key: string]: unknown
+}
+
+export type ShowcaseReportDetailWithLifecycle = ShowcaseReportDetail & {
+  moderationEvents?: ModerationEvent[]
+  activeAssignment?: {
+    assigneeAdminId: string
+    assignedAt: string
+    slaDueAt?: string | null
+    riskScore?: number | null
+    riskTier?: string | null
+  } | null
+  appeals?: ReportAppeal[]
+  [key: string]: unknown
+}
+
+/** G401 — buka kembali laporan final → UNDER_REVIEW (SUPER_ADMIN saja). */
+export function reopenShowcaseReport(
+  reportId: string,
+  input: { reason: string; reasonCode?: string },
+): Promise<ReviewShowcaseReportResult> {
+  return adminHttp.post<ReviewShowcaseReportResult>(
+    `/v1/admin/showcase-reports/${encodeURIComponent(reportId)}/reopen`,
+    input,
+    { headers: idempotencyHeaders() },
+  )
+}
+
+/** G402 — tambah catatan moderasi (append-only). */
+export function addModerationNote(
+  reportId: string,
+  input: { note: string },
+): Promise<{ message: string }> {
+  return adminHttp.post<{ message: string }>(
+    `/v1/admin/showcase-reports/${encodeURIComponent(reportId)}/notes`,
+    input,
+  )
+}
+
+/** G411 — assign / handoff laporan ke admin. */
+export function assignShowcaseReport(
+  reportId: string,
+  input: { assigneeAdminId?: string | null; reasonCode?: string },
+): Promise<{ message: string; [key: string]: unknown }> {
+  return adminHttp.post(
+    `/v1/admin/showcase-reports/${encodeURIComponent(reportId)}/assign`,
+    input,
+  )
+}
+
+/** G423 — batasi sementara item N hari (auto-restore). */
+export function restrictShowcase(
+  reportId: string,
+  input: { days: number; reason: string; reasonCode?: string },
+): Promise<ReviewShowcaseReportResult> {
+  return adminHttp.post<ReviewShowcaseReportResult>(
+    `/v1/admin/showcase-reports/${encodeURIComponent(reportId)}/restrict`,
+    input,
+    { headers: idempotencyHeaders() },
+  )
+}
+
+/** G405 — antrean banding PENDING. */
+export function listPendingAppeals(params?: {
+  page?: number
+  limit?: number
+}): Promise<Paginated<ReportAppeal>> {
+  return adminHttp.get<Paginated<ReportAppeal>>(
+    "/v1/admin/showcase-reports/appeals/pending",
+    { query: params },
+  )
+}
+
+/** G405–G408 — putusan banding (reviewer ≠ moderator awal; APPROVED → restore). */
+export function decideAppeal(
+  appealId: string,
+  input: { decision: "APPROVED" | "REJECTED"; decisionNote: string },
+): Promise<{ message: string; [key: string]: unknown }> {
+  return adminHttp.post(
+    `/v1/admin/showcase-reports/appeals/${encodeURIComponent(appealId)}/decide`,
+    input,
+  )
+}
+
+/** G414 — laporan lain untuk item/pemilik yang sama. */
+export function getRelatedReports(
+  reportId: string,
+): Promise<{ related: ShowcaseReport[]; [key: string]: unknown }> {
+  return adminHttp.get(
+    `/v1/admin/showcase-reports/${encodeURIComponent(reportId)}/related`,
+  )
+}
+
+/** G418 — ringkasan bukti untuk reviewer kedua (PII diminimalkan). */
+export function getReviewerSummary(
+  reportId: string,
+): Promise<{ [key: string]: unknown }> {
+  return adminHttp.get(
+    `/v1/admin/showcase-reports/${encodeURIComponent(reportId)}/reviewer-summary`,
+  )
+}
+
+/** G409/G410 — diff snapshot keputusan vs kondisi item saat ini. */
+export function getSnapshotDiff(
+  reportId: string,
+): Promise<{ changed: { field: string; from: unknown; to: unknown }[]; [key: string]: unknown }> {
+  return adminHttp.get(
+    `/v1/admin/showcase-reports/${encodeURIComponent(reportId)}/snapshot-diff`,
+  )
+}
+
+/** G411/G419 — antrean prioritas moderasi (skor risiko + overdue). */
+export function getModerationQueue(params?: {
+  page?: number
+  limit?: number
+  riskTier?: string
+  overdueOnly?: boolean
+  sort?: string
+  assigneeAdminId?: string
+}): Promise<Paginated<ShowcaseReport & { [key: string]: unknown }>> {
+  return adminHttp.get("/v1/admin/showcase-reports/queue", { query: params })
+}

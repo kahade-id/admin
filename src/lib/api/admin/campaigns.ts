@@ -34,6 +34,9 @@ export interface AdminCampaignItem {
   maxRedemptions?: number | null
   currentRedemptions?: number
   rolloutPercent?: number | null
+  /** Nama/id pembuat kampanye (bila backend mengembalikannya). */
+  createdBy?: string | null
+  createdByName?: string | null
   createdAt?: string
   updatedAt?: string
 }
@@ -82,11 +85,34 @@ export interface CampaignActivationResult extends AdminCampaignItem {
   }
 }
 
+/** Satu entri riwayat versi/audit perubahan kampanye. */
+export interface CampaignVersionChange {
+  field: string
+  from?: unknown
+  to?: unknown
+}
+
+export interface AdminCampaignVersion {
+  id?: string
+  version?: number
+  changedAt: string
+  changedBy?: string | null
+  actorName?: string | null
+  action?: string | null
+  note?: string | null
+  changes?: CampaignVersionChange[] | Record<string, unknown> | string[] | null
+}
+
 /** GET /v1/admin/campaigns — daftar kampanye. */
 export function listCampaigns(params?: {
   page?: number
   limit?: number
   status?: AdminCampaignStatus
+  /** Filter pembuat (diteruskan ke backend bila didukung). */
+  createdBy?: string
+  /** Rentang tanggal mulai kampanye, "YYYY-MM-DD" (diteruskan ke backend bila didukung). */
+  startsFrom?: string
+  startsTo?: string
 }): Promise<Paginated<AdminCampaignItem>> {
   return adminHttp.get<Paginated<AdminCampaignItem>>("/v1/admin/campaigns", {
     query: params,
@@ -142,4 +168,42 @@ export function pauseCampaign(campaignId: string): Promise<AdminCampaignItem> {
   return adminHttp.post<AdminCampaignItem>(
     `/v1/admin/campaigns/${encodeURIComponent(campaignId)}/pause`,
   )
+}
+
+/**
+ * POST /v1/admin/campaigns/:campaignId/duplicate — duplikasi kampanye ke
+ * draf baru. Backend mengembalikan kampanye draf hasil duplikasi.
+ */
+export function duplicateCampaign(
+  campaignId: string,
+): Promise<AdminCampaignItem> {
+  return adminHttp.post<AdminCampaignItem>(
+    `/v1/admin/campaigns/${encodeURIComponent(campaignId)}/duplicate`,
+  )
+}
+
+function unwrapVersionList(
+  raw: unknown,
+): AdminCampaignVersion[] {
+  if (Array.isArray(raw)) return raw as AdminCampaignVersion[]
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>
+    if (Array.isArray(r.versions)) return r.versions as AdminCampaignVersion[]
+    if (Array.isArray(r.data)) return r.data as AdminCampaignVersion[]
+  }
+  return []
+}
+
+/**
+ * GET /v1/admin/campaigns/:campaignId/versions — riwayat versi + audit
+ * perubahan kampanye. Melempar bila endpoint belum tersedia (404) —
+ * pemanggil sebaiknya try/catch dan menyembunyikan section.
+ */
+export async function getCampaignVersions(
+  campaignId: string,
+): Promise<AdminCampaignVersion[]> {
+  const raw = await adminHttp.get<unknown>(
+    `/v1/admin/campaigns/${encodeURIComponent(campaignId)}/versions`,
+  )
+  return unwrapVersionList(raw)
 }

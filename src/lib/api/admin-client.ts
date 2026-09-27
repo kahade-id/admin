@@ -135,6 +135,13 @@ async function request<T>(
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(opts.headers ?? {}),
   }
+  // G478: correlation ID end-to-end (tidak menimpa bila pemanggil sudah menyetel).
+  if (!Object.keys(headers).some((name) => name.toLowerCase() === "x-request-id")) {
+    headers["X-Request-Id"] =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  }
   const res = await fetch(buildUrl(path, opts.query), {
     method,
     headers,

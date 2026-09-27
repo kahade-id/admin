@@ -19,6 +19,18 @@
  * - admin-campaigns.controller.ts:26  → SUPER_ADMIN
  * - admin-insurance-claims.controller.ts:18 → SUPER_ADMIN, FINANCE_ADMIN, CUSTOMER_SUPPORT
  * - admin-support.controller.ts:19    → SUPER_ADMIN, CUSTOMER_SUPPORT
+ * - admin-feedback.controller.ts       → (worker lain; kontrak asumsi di
+ *   src/lib/api/admin/feedback.ts) SUPER_ADMIN, CUSTOMER_SUPPORT
+ * - admin-milestones.controller.ts     → (worker lain; kontrak asumsi di
+ *   src/lib/api/admin/milestones.ts) SUPER_ADMIN, FINANCE_ADMIN
+ * - admin-qa-moderation.controller.ts  → SUPER_ADMIN, CUSTOMER_SUPPORT
+ *   (hapus permanen & ekspor agregat: SUPER_ADMIN-only, method-level)
+ * - admin-partner.controller.ts        → SUPER_ADMIN (semua endpoint CRUD/kunci)
+ * - observability.controller.ts        → SUPER_ADMIN untuk endpoint detail
+ *   (latency per-route, spans, queues); agregat (latency/summary,
+ *   dependencies, alerts) ALL_ROLES. Halaman admin memanggil endpoint detail
+ *   sehingga nav dibatasi SUPER_ADMIN-only (konservatif; sesuai instruksi
+ *   integrasi).
  *
  * Catatan: KYC_ADMIN boleh revoke/restore tier abu via endpoint users
  * (method-level `@AdminRoles('SUPER_ADMIN','KYC_ADMIN')` di
@@ -48,10 +60,16 @@ export const MENU: MenuItem[] = [
   { label: "Antrean KYC", href: "/kyc", roles: ["SUPER_ADMIN", "KYC_ADMIN"] },
   { label: "Verifikasi Bisnis", href: "/business", roles: ["SUPER_ADMIN", "KYC_ADMIN"] },
   { label: "Sengketa", href: "/disputes", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
+  { label: "Retur", href: "/returns", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
+  { label: "Kurir & Pengiriman", href: "/courier", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "CUSTOMER_SUPPORT"] },
+  { label: "Produk & Stok", href: "/products", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Tiket Bantuan", href: "/tickets", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  { label: "Masukan", href: "/feedback", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  { label: "Milestone", href: "/milestones", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Laporan Pengguna", href: "/reports", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Laporan Etalase", href: "/reports/showcase", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Moderasi Chat", href: "/chat", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
+  { label: "Moderasi Q&A", href: "/qa-moderation", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Badge & Verifikasi", href: "/badges", roles: ["SUPER_ADMIN"] },
   { label: "Keuangan & Escrow", href: "/finance", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Pesanan", href: "/orders", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
@@ -63,6 +81,8 @@ export const MENU: MenuItem[] = [
   { label: "Klaim Asuransi", href: "/insurance-claims", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Analitik", href: "/analytics", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Sistem & Konfigurasi", href: "/system", roles: ["SUPER_ADMIN"] },
+  { label: "Klien Mitra", href: "/partner-clients", roles: ["SUPER_ADMIN"] },
+  { label: "Observabilitas", href: "/observability", roles: ["SUPER_ADMIN"] },
   { label: "Tim Admin", href: "/team", roles: ["SUPER_ADMIN"] },
 ]
 

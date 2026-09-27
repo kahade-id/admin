@@ -338,3 +338,230 @@ export async function exportUsersCsv(
   if (!res.ok) throw new Error(`Ekspor CSV gagal (${res.status})`)
   return res.text()
 }
+
+/* ---------------------------------------------------------------------- */
+/* E5a — Moderasi pengguna + ekspor CSV diperkuat (grup E, audit 2026-09-26) */
+/*                                                                        */
+/* KONTRAK ASUMSI: worker backend paralel (grup E) sedang membangun       */
+/* endpoint di bawah. Path & shape didefinisikan bersama sesuai brief      */
+/* G376–G400; UI ini siap dipasang dan diverifikasi begitu backend         */
+/* selesai. Fungsi lama di atas TIDAK diubah.                              */
+/* ---------------------------------------------------------------------- */
+
+/** Sumber event moderasi: tindakan otomatis sistem vs tindakan manual admin. */
+export type UserModerationEventKind = "system" | "admin"
+
+export type UserModerationEvent = {
+  id: string
+  kind: UserModerationEventKind
+  /** Tipe event mentah dari backend (mis. USER_BANNED, AUTO_FLAG_SUSPICIOUS). */
+  eventType: string
+  actorId: string | null
+  /** Nama admin pelaksana; null untuk event sistem. */
+  actorName: string | null
+  description: string | null
+  /**
+   * Catatan internal — backend hanya mengembalikannya untuk role berhak;
+   * UI menyembunyikannya dari CUSTOMER_SUPPORT sebagai lapis pertahanan
+   * tambahan (lihat moderation-tab.tsx).
+   */
+  internalNote: string | null
+  createdAt: string
+}
+
+export type ListUserModerationEventsQuery = {
+  kind?: UserModerationEventKind
+  /** Filter aktor (nama/ID admin). */
+  actor?: string
+  /** ISO date (dari). */
+  from?: string
+  /** ISO date (sampai). */
+  to?: string
+  page?: number
+  limit?: number
+}
+
+/**
+ * GET /v1/admin/users/:userId/moderation-events — timeline gabungan
+ * event sistem & tindakan admin untuk pengguna.
+ */
+export function listUserModerationTimeline(
+  userId: string,
+  query: ListUserModerationEventsQuery = {},
+): Promise<AdminPaginated<UserModerationEvent>> {
+  return adminHttp.get<AdminPaginated<UserModerationEvent>>(
+    `/v1/admin/users/${encodeURIComponent(userId)}/moderation-events`,
+    { query: { kind: query.kind, actor: query.actor, from: query.from, to: query.to, page: query.page, limit: query.limit } },
+  )
+}
+
+/* ------------------------- Ekspor CSV diperkuat ------------------------- */
+
+/** Kolom yang didukung backend untuk ekspor pengguna. */
+export type ExportableUserColumn = {
+  key: string
+  label: string
+  /** Data PII — backend meng-mask saat flag masking aktif. */
+  masked: boolean
+}
+
+export const EXPORTABLE_USER_COLUMNS: readonly ExportableUserColumn[] = [
+  { key: "fullName", label: "Nama lengkap", masked: false },
+  { key: "username", label: "Username", masked: false },
+  { key: "email", label: "Email", masked: true },
+  { key: "phoneNumber", label: "No. HP", masked: true },
+  { key: "kycStatus", label: "Status KYC", masked: false },
+  { key: "isBanned", label: "Diblokir", masked: false },
+  { key: "totalOrdersAsBuyer", label: "Order (beli)", masked: false },
+  { key: "totalOrdersAsSeller", label: "Order (jual)", masked: false },
+  { key: "createdAt", label: "Terdaftar", masked: false },
+  { key: "lastLoginAt", label: "Login terakhir", masked: false },
+] as const
+
+export type UsersExportRequest = {
+  /** Alasan ekspor — WAJIB (dicatat backend di audit). */
+  reason: string
+  /** Subset dari EXPORTABLE_USER_COLUMNS; kosong/undefined = semua. */
+  columns?: string[]
+  q?: string
+  status?: AdminUserStatusFilter
+}
+
+export type UsersExportResult =
+  | { type: "csv"; csv: string }
+  | { type: "job"; jobId: string }
+
+export type UsersExportJobStatus = {
+  jobId: string
+  status: "pending" | "done" | "failed"
+  /** 0–100 untuk ekspor besar. */
+  progress?: number | null
+  /** URL unduh saat status=done (relatif ke API_BASE_URL atau absolut). */
+  downloadUrl?: string | null
+  error?: string | null
+}
+
+/**
+ * POST /v1/admin/users/export — ekspor CSV diperkuat (alasan wajib,
+ * pilihan kolom, masking server-side). Ekspor besar me-return 202
+ * `{ jobId }` → polling `getUsersExportJob` sampai done.
+ */
+export async function requestUsersExport(
+  input: UsersExportRequest,
+): Promise<UsersExportResult> {
+  const token = await getAdminAccessToken()
+  const res = await fetch(`${API_BASE_URL}/v1/admin/users/export`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/csv, application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: "include",
+    body: JSON.stringify({
+      reason: input.reason.trim(),
+      columns: input.columns && input.columns.length > 0 ? input.columns : undefined,
+      search: input.q?.trim() || undefined,
+      status: input.status,
+    }),
+  })
+  if (res.status === 401) throw new AdminAuthError()
+  if (res.status === 202) {
+    const data = (await res.json().catch(() => null)) as { jobId?: string } | null
+    if (!data?.jobId) throw new Error("Backend me-return 202 tanpa jobId.")
+    return { type: "job", jobId: data.jobId }
+  }
+  if (!res.ok) throw new Error(`Ekspor CSV gagal (${res.status})`)
+  return { type: "csv", csv: await res.text() }
+}
+
+/** GET /v1/admin/users/export/jobs/:jobId — status job ekspor besar. */
+export function getUsersExportJob(
+  jobId: string,
+): Promise<UsersExportJobStatus> {
+  return adminHttp.get<UsersExportJobStatus>(
+    `/v1/admin/users/export/jobs/${encodeURIComponent(jobId)}`,
+  )
+}
+
+/** Unduh file hasil ekspor via URL yang dikembalikan job (bukan JSON). */
+export async function downloadExportFile(downloadUrl: string): Promise<string> {
+  const token = await getAdminAccessToken()
+  const url = /^https?:\/\//i.test(downloadUrl)
+    ? downloadUrl
+    : `${API_BASE_URL}${downloadUrl.startsWith("/") ? "" : "/"}${downloadUrl}`
+  const res = await fetch(url, {
+    headers: {
+      Accept: "text/csv",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: "include",
+  })
+  if (res.status === 401) throw new AdminAuthError()
+  if (!res.ok) throw new Error(`Unduhan ekspor gagal (${res.status})`)
+  return res.text()
+}
+
+/* ── GAP-A: status penghapusan akun + legal hold (G067/G071) ─────────── */
+
+export type DeletionRequestStatus =
+  | "PENDING"
+  | "REQUESTED"
+  | "CANCELLED"
+  | "PURGED"
+  | "ON_HOLD"
+
+export type DeletionStatusHistoryEntry = {
+  id: string
+  fromStatus: DeletionRequestStatus | null
+  toStatus: DeletionRequestStatus
+  actorType: string
+  actorUserId: string | null
+  reason: string | null
+  createdAt: string
+}
+
+export type AdminDeletionRequest = {
+  id: string
+  referenceCode: string
+  status: DeletionRequestStatus
+  requestedAt: string
+  purgeAt: string
+  cancelledAt: string | null
+  purgedAt: string | null
+  legalHoldReason: string | null
+  history?: DeletionStatusHistoryEntry[]
+} | null
+
+export type AdminDeletionStatus = {
+  userId: string
+  request: AdminDeletionRequest
+  history: DeletionStatusHistoryEntry[]
+}
+
+/** GET /v1/admin/users/:userId/deletion — status + riwayat (read-only). */
+export function getDeletionStatus(userId: string): Promise<AdminDeletionStatus> {
+  return adminHttp.get<AdminDeletionStatus>(
+    `/v1/admin/users/${encodeURIComponent(userId)}/deletion`,
+  )
+}
+
+/** POST /v1/admin/users/:userId/deletion/legal-hold — tahan purge (ON_HOLD). */
+export function placeDeletionLegalHold(
+  userId: string,
+  reason: string,
+): Promise<{ message?: string }> {
+  return adminHttp.post<{ message?: string }>(
+    `/v1/admin/users/${encodeURIComponent(userId)}/deletion/legal-hold`,
+    { reason },
+  )
+}
+
+/** POST /v1/admin/users/:userId/deletion/release-hold — lepas hold. */
+export function releaseDeletionLegalHold(
+  userId: string,
+): Promise<{ message?: string }> {
+  return adminHttp.post<{ message?: string }>(
+    `/v1/admin/users/${encodeURIComponent(userId)}/deletion/release-hold`,
+  )
+}

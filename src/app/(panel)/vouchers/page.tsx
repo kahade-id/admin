@@ -13,6 +13,7 @@
 "use client"
 
 import { Suspense, useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
@@ -43,12 +44,26 @@ import {
   createCampaign,
   activateCampaign,
   pauseCampaign,
+  duplicateCampaign,
   type AdminCampaignItem,
   type AdminCampaignType,
   type AdminCampaignStatus,
   type AdminMembershipRank,
   type CreateCampaignInput,
 } from "@/lib/api/admin/campaigns"
+import {
+  CAMPAIGN_TYPES,
+  CAMPAIGN_STATUSES,
+  MEMBERSHIP_RANKS,
+  campaignTypeLabel,
+  campaignStatusTone,
+  campaignStatusLabel,
+  campaignKey,
+  dayToISO,
+  parseIntInput,
+  parseNumberInput,
+  quotaRatio,
+} from "../campaigns/lib"
 
 const PAGE_SIZE = 20
 
@@ -60,28 +75,6 @@ const idr = new Intl.NumberFormat("id-ID", {
 
 function formatIDR(value: number | null | undefined): string {
   return value == null ? "—" : idr.format(value)
-}
-
-function parseIntInput(input: string): number | undefined {
-  const t = input.trim()
-  if (!t) return undefined
-  const n = Number.parseInt(t, 10)
-  return Number.isFinite(n) ? n : undefined
-}
-
-function parseNumberInput(input: string): number | undefined {
-  const t = input.trim().replace(",", ".")
-  if (!t) return undefined
-  const n = Number(t)
-  return Number.isFinite(n) ? n : undefined
-}
-
-/** "YYYY-MM-DD" (native date input) → ISO; endOfDay untuk batas akhir. */
-function dayToISO(day: string, endOfDay: boolean): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null
-  const d = new Date(`${day}T${endOfDay ? "23:59:59" : "00:00:00"}`)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toISOString()
 }
 
 const VOUCHER_TYPES: { value: AdminVoucherType; label: string }[] = [
@@ -99,27 +92,6 @@ const VOUCHER_APPLICABILITIES: { value: AdminVoucherApplicability; label: string
   { value: "DORMANT_USER", label: "Pengguna dormant" },
 ]
 
-const CAMPAIGN_TYPES: { value: AdminCampaignType; label: string }[] = [
-  { value: "FEE_PROMO", label: "Promo fee" },
-  { value: "SUBSCRIPTION_DISCOUNT", label: "Diskon langganan" },
-  { value: "CASHBACK", label: "Cashback" },
-]
-
-const CAMPAIGN_STATUSES: { value: AdminCampaignStatus; label: string }[] = [
-  { value: "DRAFT", label: "Draf" },
-  { value: "ACTIVE", label: "Aktif" },
-  { value: "PAUSED", label: "Dijeda" },
-  { value: "ENDED", label: "Selesai" },
-]
-
-const MEMBERSHIP_RANKS: { value: AdminMembershipRank; label: string }[] = [
-  { value: "BRONZE", label: "Bronze" },
-  { value: "SILVER", label: "Silver" },
-  { value: "GOLD", label: "Gold" },
-  { value: "PLATINUM", label: "Platinum" },
-  { value: "DIAMOND", label: "Diamond" },
-]
-
 function voucherValueLabel(v: AdminVoucherItem): string {
   if (v.discountAmount != null) return formatIDR(v.discountAmount)
   if (v.discountPercent != null)
@@ -129,29 +101,6 @@ function voucherValueLabel(v: AdminVoucherItem): string {
 
 function voucherTypeLabel(t: AdminVoucherType): string {
   return VOUCHER_TYPES.find((x) => x.value === t)?.label ?? t
-}
-
-function campaignStatusTone(
-  status: AdminCampaignStatus,
-): "neutral" | "success" | "warning" | "info" {
-  switch (status) {
-    case "ACTIVE":
-      return "success"
-    case "PAUSED":
-      return "warning"
-    case "ENDED":
-      return "neutral"
-    default:
-      return "info"
-  }
-}
-
-function campaignStatusLabel(status: AdminCampaignStatus): string {
-  return CAMPAIGN_STATUSES.find((s) => s.value === status)?.label ?? status
-}
-
-function campaignKey(c: AdminCampaignItem): string {
-  return c.campaignId || c.id || ""
 }
 
 function isExpiredVoucher(v: AdminVoucherItem): boolean {
@@ -388,6 +337,7 @@ function VouchersTab() {
   const toast = useToast()
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<"all" | "true" | "false">("all")
+  const [search, setSearch] = useState("")
   const [rows, setRows] = useState<AdminVoucherItem[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
@@ -397,9 +347,20 @@ function VouchersTab() {
   const [creating, setCreating] = useState(false)
   const [deactivating, setDeactivating] = useState<AdminVoucherItem | null>(null)
   const [deactivatingNow, setDeactivatingNow] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  /** Filter client-side by kode/nama atas baris yang dimuat. */
+  function applySearchFilter(all: AdminVoucherItem[], q: string): AdminVoucherItem[] {
+    const needle = q.trim().toLowerCase()
+    if (!needle) return all
+    return all.filter(
+      (r) =>
+        r.code.toLowerCase().includes(needle) || r.name.toLowerCase().includes(needle),
+    )
+  }
 
   const load = useCallback(
-    async (targetPage: number, targetFilter: "all" | "true" | "false") => {
+    async (targetPage: number, targetFilter: "all" | "true" | "false", q: string) => {
       setLoading(true)
       setError(null)
       try {
@@ -407,11 +368,14 @@ function VouchersTab() {
           page: targetPage,
           limit: PAGE_SIZE,
           isActive: targetFilter === "all" ? undefined : targetFilter,
+          q: q.trim() || undefined,
         })
-        setRows(res.data ?? [])
-        const t = res.total ?? res.data?.length ?? 0
+        const filtered = applySearchFilter(res.data ?? [], q)
+        setRows(filtered)
+        const searching = q.trim() !== ""
+        const t = searching ? filtered.length : (res.total ?? filtered.length)
         setTotal(t)
-        setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
+        setTotalPages(searching ? 1 : (res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE))))
         setPage(targetPage)
       } catch (e) {
         const msg = userMessage(e)
@@ -425,8 +389,14 @@ function VouchersTab() {
   )
 
   useEffect(() => {
-    void load(1, statusFilter)
+    void load(1, statusFilter, search)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, statusFilter])
+
+  /** Cari saat tombol ditekan / Enter — berlaku pada daftar yang dimuat + diteruskan ke server. */
+  function handleSearch() {
+    void load(1, statusFilter, search)
+  }
 
   async function handleCreate(input: CreateVoucherInput) {
     setCreating(true)
@@ -434,7 +404,7 @@ function VouchersTab() {
       await createVoucher(input)
       setCreateOpen(false)
       toast.show({ title: "Voucher dibuat.", tone: "success" })
-      void load(1, statusFilter)
+      void load(1, statusFilter, search)
     } finally {
       setCreating(false)
     }
@@ -447,7 +417,7 @@ function VouchersTab() {
       await deactivateVoucher(deactivating.voucherId ?? deactivating.id)
       setDeactivating(null)
       toast.show({ title: "Voucher dinonaktifkan.", tone: "success" })
-      void load(page, statusFilter)
+      void load(page, statusFilter, search)
     } catch (e) {
       toast.show({ title: "Gagal menonaktifkan voucher", description: userMessage(e), tone: "danger" })
     } finally {
@@ -455,27 +425,128 @@ function VouchersTab() {
     }
   }
 
+  /**
+   * Ekspor CSV agregat performa per jenis/periode (tanpa PII): mengambil
+   * semua halaman voucher lalu mengagregasi per tipe × bulan berlaku-dari.
+   */
+  async function handleExportCsv() {
+    setExporting(true)
+    try {
+      const all: AdminVoucherItem[] = []
+      const limit = 100
+      let p = 1
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const res = await listVouchers({ page: p, limit, isActive: statusFilter === "all" ? undefined : statusFilter })
+        all.push(...(res.data ?? []))
+        const totalPagesGuess = res.totalPages ?? 1
+        if (p >= totalPagesGuess || (res.data ?? []).length < limit) break
+        p += 1
+        if (p > 50) break // pengaman
+      }
+      type Agg = { count: number; quota: number; used: number; quotaCapped: number }
+      const byKey = new Map<string, Agg>()
+      for (const v of all) {
+        const d = new Date(v.validFrom)
+        const period = Number.isNaN(d.getTime())
+          ? "—"
+          : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+        const key = `${v.voucherType}|${period}`
+        const agg = byKey.get(key) ?? { count: 0, quota: 0, used: 0, quotaCapped: 0 }
+        agg.count += 1
+        agg.used += v.usageCount ?? 0
+        if (v.maxUsageTotal != null) {
+          agg.quota += v.maxUsageTotal
+          agg.quotaCapped += 1
+        }
+        byKey.set(key, agg)
+      }
+      const header = ["Tipe voucher", "Periode", "Jumlah voucher", "Total kuota", "Total terpakai", "% terpakai"]
+      const lines = [...byKey.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, agg]) => {
+          const [type, period] = key.split("|")
+          const pct = agg.quota > 0 ? ((agg.used / agg.quota) * 100).toFixed(1) : ""
+          return [
+            voucherTypeLabel(type as AdminVoucherType),
+            period,
+            String(agg.count),
+            agg.quotaCapped > 0 ? String(agg.quota) : "Tanpa batas",
+            String(agg.used),
+            pct,
+          ]
+            .map((c) => `"${String(c).replace(/"/g, '""')}"`)
+            .join(",")
+        })
+      const blob = new Blob([[header.join(","), ...lines].join("\n")], {
+        type: "text/csv;charset=utf-8",
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `voucher-agregat-${new Date().toISOString().slice(0, 10)}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.show({ title: "CSV agregat diunduh (tanpa PII).", tone: "success" })
+    } catch (e) {
+      toast.show({ title: "Gagal mengekspor CSV", description: userMessage(e), tone: "danger" })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  /** Badge alarm bila kuota >80% terpakai. */
+  function quotaAlarm(r: AdminVoucherItem) {
+    const ratio = quotaRatio(r.usageCount ?? 0, r.maxUsageTotal)
+    if (ratio == null || ratio <= 0.8) return null
+    return (
+      <Badge tone="warning" dot>
+        Kuota {Math.round(ratio * 100)}% terpakai
+      </Badge>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Select
-          label="Filter status"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as "all" | "true" | "false")}
-          options={[
-            { value: "all", label: "Semua status" },
-            { value: "true", label: "Aktif" },
-            { value: "false", label: "Nonaktif" },
-          ]}
-          className="w-56"
-        />
-        <Button fullWidth={false} onClick={() => setCreateOpen(true)}>
-          Buat voucher
-        </Button>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <Select
+            label="Filter status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "all" | "true" | "false")}
+            options={[
+              { value: "all", label: "Semua status" },
+              { value: "true", label: "Aktif" },
+              { value: "false", label: "Nonaktif" },
+            ]}
+            className="w-44"
+          />
+          <Input
+            label="Cari kode/nama"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSearch()
+            }}
+            placeholder="cth. HEMAT50"
+            className="w-56"
+          />
+          <Button variant="secondary" fullWidth={false} onClick={handleSearch}>
+            Cari
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" fullWidth={false} loading={exporting} onClick={handleExportCsv}>
+            Ekspor CSV agregat
+          </Button>
+          <Button fullWidth={false} onClick={() => setCreateOpen(true)}>
+            Buat voucher
+          </Button>
+        </div>
       </div>
 
       {error && !loading ? (
-        <ErrorCard message={error} onRetry={() => load(page, statusFilter)} />
+        <ErrorCard message={error} onRetry={() => load(page, statusFilter, search)} />
       ) : (
         <>
           <DataTable<VoucherRow>
@@ -485,7 +556,12 @@ function VouchersTab() {
                 header: "Kode",
                 render: (r) => (
                   <div>
-                    <p className="font-mono text-[13px] font-semibold">{r.code}</p>
+                    <Link
+                      href={`/vouchers/${encodeURIComponent(r.voucherId ?? r.id)}`}
+                      className="font-mono text-[13px] font-semibold text-primary hover:underline"
+                    >
+                      {r.code}
+                    </Link>
                     <p className="text-caption text-text-secondary">{r.name}</p>
                     <p className="text-caption text-text-tertiary">{voucherTypeLabel(r.voucherType)}</p>
                   </div>
@@ -500,8 +576,14 @@ function VouchersTab() {
                 key: "quota",
                 header: "Kuota",
                 align: "right",
-                render: (r) =>
-                  r.maxUsageTotal != null ? formatNumber(r.maxUsageTotal) : "Tanpa batas",
+                render: (r) => (
+                  <div className="flex flex-col items-end gap-1">
+                    <span>
+                      {r.maxUsageTotal != null ? formatNumber(r.maxUsageTotal) : "Tanpa batas"}
+                    </span>
+                    {quotaAlarm(r)}
+                  </div>
+                ),
               },
               {
                 key: "used",
@@ -530,19 +612,25 @@ function VouchersTab() {
                 key: "action",
                 header: "",
                 align: "right",
-                render: (r) =>
-                  r.isActive ? (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      fullWidth={false}
-                      onClick={() => setDeactivating(r)}
-                    >
-                      Nonaktifkan
-                    </Button>
-                  ) : (
-                    <span className="text-caption text-text-tertiary">—</span>
-                  ),
+                render: (r) => (
+                  <div className="flex justify-end gap-2">
+                    <Link href={`/vouchers/${encodeURIComponent(r.voucherId ?? r.id)}`}>
+                      <Button variant="secondary" size="sm" fullWidth={false}>
+                        Detail
+                      </Button>
+                    </Link>
+                    {r.isActive ? (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        fullWidth={false}
+                        onClick={() => setDeactivating(r)}
+                      >
+                        Nonaktifkan
+                      </Button>
+                    ) : null}
+                  </div>
+                ),
               },
             ]}
             rows={rows as VoucherRow[]}
@@ -555,7 +643,7 @@ function VouchersTab() {
             totalPages={totalPages}
             total={total}
             pageSize={PAGE_SIZE}
-            onPageChange={(p) => load(p, statusFilter)}
+            onPageChange={(p) => load(p, statusFilter, search)}
             disabled={loading}
           />
         </>
@@ -802,8 +890,12 @@ function CampaignForm({
 
 export function CampaignsTab() {
   const toast = useToast()
+  const router = useRouter()
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<"" | AdminCampaignStatus>("")
+  const [creatorFilter, setCreatorFilter] = useState("")
+  const [startsFromFilter, setStartsFromFilter] = useState("")
+  const [startsToFilter, setStartsToFilter] = useState("")
   const [rows, setRows] = useState<AdminCampaignItem[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
@@ -815,21 +907,64 @@ export function CampaignsTab() {
     { kind: "activate" | "pause"; item: AdminCampaignItem } | null
   >(null)
   const [confirming, setConfirming] = useState(false)
+  const [duplicateTarget, setDuplicateTarget] = useState<AdminCampaignItem | null>(null)
+  const [duplicating, setDuplicating] = useState(false)
+
+  interface CampaignFilters {
+    status: "" | AdminCampaignStatus
+    creator: string
+    startsFrom: string
+    startsTo: string
+  }
+
+  const filters: CampaignFilters = {
+    status: statusFilter,
+    creator: creatorFilter.trim(),
+    startsFrom: startsFromFilter,
+    startsTo: startsToFilter,
+  }
+
+  /** Filter client-side atas baris yang dimuat (fallback bila backend belum mendukung param). */
+  function applyLocalFilters(all: AdminCampaignItem[], f: CampaignFilters): AdminCampaignItem[] {
+    return all.filter((r) => {
+      if (f.creator) {
+        const hay = `${r.createdByName ?? ""} ${r.createdBy ?? ""}`.toLowerCase()
+        if (!hay.includes(f.creator.toLowerCase())) return false
+      }
+      if (f.startsFrom) {
+        const from = new Date(`${f.startsFrom}T00:00:00`).getTime()
+        if (Number.isNaN(new Date(r.startsAt).getTime()) || new Date(r.startsAt).getTime() < from)
+          return false
+      }
+      if (f.startsTo) {
+        const to = new Date(`${f.startsTo}T23:59:59`).getTime()
+        if (Number.isNaN(new Date(r.startsAt).getTime()) || new Date(r.startsAt).getTime() > to)
+          return false
+      }
+      return true
+    })
+  }
 
   const load = useCallback(
-    async (targetPage: number, targetFilter: "" | AdminCampaignStatus) => {
+    async (targetPage: number, f: CampaignFilters) => {
       setLoading(true)
       setError(null)
       try {
         const res: Paginated<AdminCampaignItem> = await listCampaigns({
           page: targetPage,
           limit: PAGE_SIZE,
-          status: targetFilter === "" ? undefined : targetFilter,
+          status: f.status === "" ? undefined : f.status,
+          createdBy: f.creator || undefined,
+          startsFrom: f.startsFrom || undefined,
+          startsTo: f.startsTo || undefined,
         })
-        setRows(res.data ?? [])
-        const t = res.total ?? res.data?.length ?? 0
+        const filtered = applyLocalFilters(res.data ?? [], f)
+        setRows(filtered)
+        // Bila filter lokal aktif, total mencerminkan hasil filter pada halaman ini.
+        const localActive = Boolean(f.creator || f.startsFrom || f.startsTo)
+        const t = localActive ? filtered.length : (res.total ?? filtered.length)
         setTotal(t)
-        setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
+        setTotalPages(localActive ? 1 : (res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE))))
         setPage(targetPage)
       } catch (e) {
         const msg = userMessage(e)
@@ -843,8 +978,9 @@ export function CampaignsTab() {
   )
 
   useEffect(() => {
-    void load(1, statusFilter)
-  }, [load, statusFilter])
+    void load(1, filters)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, statusFilter, creatorFilter, startsFromFilter, startsToFilter])
 
   async function handleCreate(input: CreateCampaignInput) {
     setCreating(true)
@@ -852,9 +988,27 @@ export function CampaignsTab() {
       await createCampaign(input)
       setCreateOpen(false)
       toast.show({ title: "Kampanye dibuat.", tone: "success" })
-      void load(1, statusFilter)
+      void load(1, filters)
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function handleDuplicate() {
+    if (!duplicateTarget) return
+    const id = campaignKey(duplicateTarget)
+    setDuplicating(true)
+    try {
+      const dup = await duplicateCampaign(id)
+      setDuplicateTarget(null)
+      toast.show({ title: "Kampanye diduplikasi ke draf.", tone: "success" })
+      void load(1, filters)
+      router.push(`/campaigns/${encodeURIComponent(campaignKey(dup))}`)
+    } catch (e) {
+      toast.show({ title: "Gagal menduplikasi kampanye", description: userMessage(e), tone: "danger" })
+      setDuplicateTarget(null)
+    } finally {
+      setDuplicating(false)
     }
   }
 
@@ -877,7 +1031,7 @@ export function CampaignsTab() {
         toast.show({ title: "Kampanye dijeda.", tone: "success" })
       }
       setConfirm(null)
-      void load(page, statusFilter)
+      void load(page, filters)
     } catch (e) {
       toast.show({
         title: confirm.kind === "activate" ? "Gagal mengaktifkan kampanye" : "Gagal menjeda kampanye",
@@ -891,24 +1045,47 @@ export function CampaignsTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Select
-          label="Filter status"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as "" | AdminCampaignStatus)}
-          options={[
-            { value: "", label: "Semua status" },
-            ...CAMPAIGN_STATUSES.map((s) => ({ value: s.value, label: s.label })),
-          ]}
-          className="w-56"
-        />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <Select
+            label="Filter status"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "" | AdminCampaignStatus)}
+            options={[
+              { value: "", label: "Semua status" },
+              ...CAMPAIGN_STATUSES.map((s) => ({ value: s.value, label: s.label })),
+            ]}
+            className="w-44"
+          />
+          <Input
+            label="Filter pembuat"
+            value={creatorFilter}
+            onChange={(e) => setCreatorFilter(e.target.value)}
+            placeholder="cth. admin@kahade.id"
+            className="w-56"
+          />
+          <Input
+            label="Mulai dari"
+            type="date"
+            value={startsFromFilter}
+            onChange={(e) => setStartsFromFilter(e.target.value)}
+            className="w-44"
+          />
+          <Input
+            label="Mulai sampai"
+            type="date"
+            value={startsToFilter}
+            onChange={(e) => setStartsToFilter(e.target.value)}
+            className="w-44"
+          />
+        </div>
         <Button fullWidth={false} onClick={() => setCreateOpen(true)}>
           Buat kampanye
         </Button>
       </div>
 
       {error && !loading ? (
-        <ErrorCard message={error} onRetry={() => load(page, statusFilter)} />
+        <ErrorCard message={error} onRetry={() => load(page, filters)} />
       ) : (
         <>
           <DataTable<CampaignRow>
@@ -918,9 +1095,14 @@ export function CampaignsTab() {
                 header: "Kampanye",
                 render: (r) => (
                   <div>
-                    <p className="font-semibold">{r.name}</p>
+                    <Link
+                      href={`/campaigns/${encodeURIComponent(campaignKey(r))}`}
+                      className="font-semibold text-primary hover:underline"
+                    >
+                      {r.name}
+                    </Link>
                     <p className="text-caption text-text-secondary">
-                      {CAMPAIGN_TYPES.find((t) => t.value === r.type)?.label ?? r.type}
+                      {campaignTypeLabel(r.type)}
                       {r.promoCode ? ` · ${r.promoCode}` : ""}
                     </p>
                   </div>
@@ -960,10 +1142,22 @@ export function CampaignsTab() {
                 render: (r) => {
                   const canActivate = r.status === "DRAFT" || r.status === "PAUSED"
                   const canPause = r.status === "ACTIVE"
-                  if (!canActivate && !canPause)
-                    return <span className="text-caption text-text-tertiary">—</span>
                   return (
                     <div className="flex justify-end gap-2">
+                      <Link href={`/campaigns/${encodeURIComponent(campaignKey(r))}`}>
+                        <Button variant="secondary" size="sm" fullWidth={false}>
+                          Detail
+                        </Button>
+                      </Link>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        fullWidth={false}
+                        onClick={() => setDuplicateTarget(r)}
+                        title="Duplikasi kampanye ke draf baru"
+                      >
+                        Duplikasi
+                      </Button>
                       {canActivate ? (
                         <Button
                           size="sm"
@@ -998,7 +1192,7 @@ export function CampaignsTab() {
             totalPages={totalPages}
             total={total}
             pageSize={PAGE_SIZE}
-            onPageChange={(p) => load(p, statusFilter)}
+            onPageChange={(p) => load(p, filters)}
             disabled={loading}
           />
         </>
@@ -1031,6 +1225,20 @@ export function CampaignsTab() {
         confirmLabel={confirm?.kind === "activate" ? "Aktifkan" : "Jeda"}
         onConfirm={handleConfirm}
         loading={confirming}
+      />
+
+      <ConfirmDialog
+        open={duplicateTarget != null}
+        onClose={() => setDuplicateTarget(null)}
+        title="Duplikasi kampanye?"
+        description={
+          duplicateTarget
+            ? `Buat draf kampanye baru dari "${duplicateTarget.name}" dengan pengaturan yang sama.`
+            : undefined
+        }
+        confirmLabel="Duplikasi"
+        onConfirm={handleDuplicate}
+        loading={duplicating}
       />
     </div>
   )

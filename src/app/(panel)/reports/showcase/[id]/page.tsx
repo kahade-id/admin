@@ -21,9 +21,19 @@ import { TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useAuth } from "@/lib/auth-context"
 import {
+  addModerationNote,
+  decideAppeal,
+  getRelatedReports,
+  getReviewerSummary,
   getShowcaseReportDetail,
+  getSnapshotDiff,
+  reopenShowcaseReport,
   reviewShowcaseReport,
+  type ModerationEvent,
+  type ReportAppeal,
+  type ShowcaseReport,
   type ShowcaseReportAction,
   type ShowcaseReportDetail,
 } from "@/lib/api/admin/showcase-reports"
@@ -97,14 +107,40 @@ function formatPrice(v: unknown): string {
 export default function ShowcaseReportDetailPage() {
   const { id } = useParams<{ id: string }>()
   const toast = useToast()
+  const { role } = useAuth()
+  const isSuperAdmin = role === "SUPER_ADMIN"
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [report, setReport] = useState<ShowcaseReportDetail | null>(null)
+  const [report, setReport] = useState<
+    (ShowcaseReportDetail & {
+      moderationEvents?: ModerationEvent[]
+      activeAssignment?: {
+        assigneeAdminId: string
+        assignedAt: string
+        slaDueAt?: string | null
+        riskScore?: number | null
+        riskTier?: string | null
+      } | null
+      appeals?: ReportAppeal[]
+    }) | null
+  >(null)
 
   const [dialogAction, setDialogAction] = useState<ShowcaseReportAction | null>(null)
   const [resolution, setResolution] = useState("")
   const [acting, setActing] = useState(false)
+
+  // GAP-F: lifecycle pasca-final
+  const [showReopen, setShowReopen] = useState(false)
+  const [reopenReason, setReopenReason] = useState("")
+  const [showNote, setShowNote] = useState(false)
+  const [noteText, setNoteText] = useState("")
+  const [related, setRelated] = useState<ShowcaseReport[] | null>(null)
+  const [diff, setDiff] = useState<
+    { changed: { field: string; from: unknown; to: unknown }[] } | null
+  >(null)
+  const [decidingAppeal, setDecidingAppeal] = useState<string | null>(null)
+  const [decisionNote, setDecisionNote] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -152,6 +188,107 @@ export default function ShowcaseReportDetailPage() {
   const isFinal = report ? FINAL_STATUSES.has(report.status) : false
   const itemActive = report?.showcase?.isActive === true
   const dialogMeta = dialogAction ? ACTION_META[dialogAction] : null
+  const events = report?.moderationEvents ?? []
+  const appeals = report?.appeals ?? []
+
+  const handleReopen = async () => {
+    if (reopenReason.trim().length < 10) {
+      toast.show({
+        title: "Alasan terlalu pendek",
+        description: "Alasan pembukaan kembali minimal 10 karakter.",
+        tone: "danger",
+      })
+      return
+    }
+    setActing(true)
+    try {
+      const res = await reopenShowcaseReport(id, { reason: reopenReason.trim() })
+      toast.show({ title: "Berhasil", description: res.message ?? "Laporan dibuka kembali.", tone: "success" })
+      setShowReopen(false)
+      setReopenReason("")
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal membuka kembali", description: userMessage(e), tone: "danger" })
+    } finally {
+      setActing(false)
+    }
+  }
+
+  const handleAddNote = async () => {
+    if (!noteText.trim()) {
+      toast.show({ title: "Catatan kosong", description: "Tulis catatan terlebih dahulu.", tone: "danger" })
+      return
+    }
+    setActing(true)
+    try {
+      await addModerationNote(id, { note: noteText.trim() })
+      toast.show({ title: "Berhasil", description: "Catatan moderasi ditambahkan.", tone: "success" })
+      setShowNote(false)
+      setNoteText("")
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal menambah catatan", description: userMessage(e), tone: "danger" })
+    } finally {
+      setActing(false)
+    }
+  }
+
+  const handleDecideAppeal = async (appealId: string, decision: "APPROVED" | "REJECTED") => {
+    if (decisionNote.trim().length < 10) {
+      toast.show({
+        title: "Catatan putusan wajib",
+        description: "Tulis alasan putusan minimal 10 karakter.",
+        tone: "danger",
+      })
+      return
+    }
+    setDecidingAppeal(appealId)
+    try {
+      await decideAppeal(appealId, { decision, decisionNote: decisionNote.trim() })
+      toast.show({
+        title: "Berhasil",
+        description: decision === "APPROVED" ? "Banding disetujui — item dipulihkan." : "Banding ditolak.",
+        tone: "success",
+      })
+      setDecisionNote("")
+      await load()
+    } catch (e) {
+      toast.show({ title: "Gagal memutus banding", description: userMessage(e), tone: "danger" })
+    } finally {
+      setDecidingAppeal(null)
+    }
+  }
+
+  const loadRelated = async () => {
+    try {
+      const res = await getRelatedReports(id)
+      setRelated(res.related ?? [])
+    } catch (e) {
+      toast.show({ title: "Gagal memuat laporan terkait", description: userMessage(e), tone: "danger" })
+    }
+  }
+
+  const loadDiff = async () => {
+    try {
+      const res = await getSnapshotDiff(id)
+      setDiff(res)
+    } catch (e) {
+      toast.show({ title: "Gagal memuat diff", description: userMessage(e), tone: "danger" })
+    }
+  }
+
+  const loadReviewerSummary = async () => {
+    try {
+      const res = await getReviewerSummary(id)
+      toast.show({
+        title: "Ringkasan reviewer",
+        description: `Snapshot: ${res.snapshot ? "ada" : "tidak ada"}, event: ${Array.isArray(res.events) ? res.events.length : 0}, banding: ${Array.isArray(res.appeals) ? res.appeals.length : 0}.`,
+        tone: "info",
+      })
+    } catch (e) {
+      toast.show({ title: "Gagal memuat ringkasan", description: userMessage(e), tone: "danger" })
+    }
+  }
 
   return (
     <RoleGate href="/reports/showcase">
@@ -206,6 +343,35 @@ export default function ShowcaseReportDetailPage() {
                 onClick={() => setDialogAction("takedown")}
               >
                 Takedown
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="sm"
+              fullWidth={false}
+              onClick={() => setShowNote(true)}
+            >
+              Tambah catatan
+            </Button>
+          </div>
+        ) : report && isFinal ? (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              fullWidth={false}
+              onClick={() => setShowNote(true)}
+            >
+              Tambah catatan
+            </Button>
+            {isSuperAdmin ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                onClick={() => setShowReopen(true)}
+              >
+                Buka kembali (reopen)
               </Button>
             ) : null}
           </div>
@@ -365,6 +531,192 @@ export default function ShowcaseReportDetailPage() {
               </CardBody>
             </Card>
           </div>
+
+          {/* GAP-F G420 — histori semua aksi moderasi (append-only) */}
+          <Card padded={false}>
+            <CardHeader title={`Histori moderasi (${events.length})`} />
+            <CardBody>
+              {events.length === 0 ? (
+                <p className="text-body text-text-secondary">Belum ada aksi moderasi tercatat.</p>
+              ) : (
+                <ol className="flex flex-col gap-2">
+                  {events.map((ev: ModerationEvent) => (
+                    <li
+                      key={ev.id}
+                      className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border py-2 last:border-b-0"
+                    >
+                      <div className="min-w-0">
+                        <Badge tone="neutral">{ev.action}</Badge>
+                        {ev.stateFrom || ev.stateTo ? (
+                          <span className="ml-2 text-caption text-text-secondary">
+                            {ev.stateFrom ?? "—"} → {ev.stateTo ?? "—"}
+                          </span>
+                        ) : null}
+                        {ev.reasonCode ? (
+                          <span className="ml-2 text-caption text-text-secondary">
+                            [{ev.reasonCode}]
+                          </span>
+                        ) : null}
+                        {ev.note ? (
+                          <p className="mt-1 text-body text-text-primary">{ev.note}</p>
+                        ) : null}
+                      </div>
+                      <div className="text-right text-caption text-text-secondary">
+                        <p>{ev.actorAdminName ?? ev.actorAdminId ?? "Sistem"}</p>
+                        <p>{formatDateTimeWIB(ev.createdAt)}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </CardBody>
+          </Card>
+
+          {/* GAP-F G404–G408 — panel banding */}
+          {appeals.length > 0 ? (
+            <Card padded={false}>
+              <CardHeader title={`Banding (${appeals.length})`} />
+              <CardBody>
+                <div className="flex flex-col gap-4">
+                  {appeals.map((ap: ReportAppeal) => (
+                    <div key={ap.id} className="rounded-sm border border-border p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <Badge tone={ap.status === "PENDING" ? "warning" : ap.status === "APPROVED" ? "success" : "danger"}>
+                            {ap.status}
+                          </Badge>
+                          <span className="ml-2 text-caption text-text-secondary">
+                            {ap.appellantType === "OWNER" ? "Pemilik item" : "Pelapor"} • {formatDateTimeWIB(ap.createdAt)}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-body text-text-primary">
+                        <span className="font-semibold">Alasan: </span>
+                        {ap.reason}
+                      </p>
+                      {ap.decisionNote ? (
+                        <p className="mt-1 text-body text-text-secondary">
+                          <span className="font-semibold">Putusan: </span>
+                          {ap.decisionNote}
+                        </p>
+                      ) : null}
+                      {ap.status === "PENDING" ? (
+                        <div className="mt-3 flex flex-col gap-2">
+                          <TextArea
+                            label="Catatan putusan (wajib, min. 10 karakter)"
+                            value={decisionNote}
+                            onChange={(e) => setDecisionNote(e.target.value)}
+                            rows={2}
+                            placeholder="Alasan mempertahankan / membalikkan keputusan…"
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              fullWidth={false}
+                              loading={decidingAppeal === ap.id}
+                              onClick={() => void handleDecideAppeal(ap.id, "APPROVED")}
+                            >
+                              Setujui (pulihkan item)
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              fullWidth={false}
+                              loading={decidingAppeal === ap.id}
+                              onClick={() => void handleDecideAppeal(ap.id, "REJECTED")}
+                            >
+                              Tolak
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+          ) : null}
+
+          {/* GAP-F G409/G410/G414 — diff snapshot & laporan terkait */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card padded={false}>
+              <CardHeader
+                title="Perubahan item sejak keputusan"
+                action={
+                  <Button variant="ghost" size="sm" fullWidth={false} onClick={() => void loadDiff()}>
+                    Muat diff
+                  </Button>
+                }
+              />
+              <CardBody>
+                {diff === null ? (
+                  <p className="text-body text-text-secondary">
+                    Bandingkan snapshot saat keputusan final dengan kondisi item saat ini.
+                  </p>
+                ) : diff.changed.length === 0 ? (
+                  <p className="text-body text-text-secondary">Tidak ada perubahan terdeteksi.</p>
+                ) : (
+                  <dl>
+                    {diff.changed.map((c) => (
+                      <KeyValue
+                        key={c.field}
+                        label={c.field}
+                        value={`${String(c.from ?? "—")} → ${String(c.to ?? "—")}`}
+                        mono
+                      />
+                    ))}
+                  </dl>
+                )}
+              </CardBody>
+            </Card>
+            <Card padded={false}>
+              <CardHeader
+                title="Laporan terkait"
+                action={
+                  <Button variant="ghost" size="sm" fullWidth={false} onClick={() => void loadRelated()}>
+                    Muat
+                  </Button>
+                }
+              />
+              <CardBody>
+                {related === null ? (
+                  <p className="text-body text-text-secondary">
+                    Laporan lain untuk item atau pemilik yang sama.
+                  </p>
+                ) : related.length === 0 ? (
+                  <p className="text-body text-text-secondary">Tidak ada laporan terkait.</p>
+                ) : (
+                  <ul className="flex flex-col gap-2">
+                    {related.map((r) => (
+                      <li key={r.id} className="border-b border-border py-2 last:border-b-0">
+                        <Link
+                          href={`/reports/showcase/${r.id}`}
+                          className="text-body text-info-text hover:underline"
+                        >
+                          {r.reason}
+                        </Link>
+                        <span className="ml-2">
+                          <Badge tone={SHOWCASE_REPORT_STATUS_TONE[r.status] ?? "neutral"}>
+                            {SHOWCASE_REPORT_STATUS_LABEL[r.status] ?? r.status}
+                          </Badge>
+                        </span>
+                        <p className="text-caption text-text-secondary">
+                          {formatDateTimeWIB(r.createdAt)}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardBody>
+            </Card>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" size="sm" fullWidth={false} onClick={() => void loadReviewerSummary()}>
+              Ringkasan untuk reviewer kedua
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -406,6 +758,96 @@ export default function ShowcaseReportDetailPage() {
                 onClick={() => void handleAction()}
               >
                 {dialogMeta?.confirmLabel ?? "Konfirmasi"}
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      {/* GAP-F G401 — dialog reopen (SUPER_ADMIN saja; backend juga guard 403) */}
+      <Dialog
+        open={showReopen}
+        onClose={() => {
+          if (!acting) {
+            setShowReopen(false)
+            setReopenReason("")
+          }
+        }}
+        title="Buka kembali laporan"
+        description="Laporan final akan kembali ke UNDER_REVIEW. Alasan manual wajib (min. 10 karakter)."
+        footer={
+          <div className="flex flex-col gap-3">
+            <TextArea
+              label="Alasan pembukaan kembali (wajib)"
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              placeholder="Contoh: bukti baru dari pemilik item memerlukan tinjauan ulang…"
+              rows={3}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                fullWidth={false}
+                disabled={acting}
+                onClick={() => {
+                  setShowReopen(false)
+                  setReopenReason("")
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                variant="primary"
+                fullWidth={false}
+                loading={acting}
+                onClick={() => void handleReopen()}
+              >
+                Buka kembali
+              </Button>
+            </div>
+          </div>
+        }
+      />
+
+      {/* GAP-F G402 — dialog tambah catatan (append-only) */}
+      <Dialog
+        open={showNote}
+        onClose={() => {
+          if (!acting) {
+            setShowNote(false)
+            setNoteText("")
+          }
+        }}
+        title="Tambah catatan moderasi"
+        description="Catatan ditambahkan ke riwayat tanpa menimpa resolusi awal."
+        footer={
+          <div className="flex flex-col gap-3">
+            <TextArea
+              label="Catatan"
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              placeholder="Catatan internal moderator…"
+              rows={3}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                fullWidth={false}
+                disabled={acting}
+                onClick={() => {
+                  setShowNote(false)
+                  setNoteText("")
+                }}
+              >
+                Batal
+              </Button>
+              <Button
+                variant="primary"
+                fullWidth={false}
+                loading={acting}
+                onClick={() => void handleAddNote()}
+              >
+                Simpan catatan
               </Button>
             </div>
           </div>

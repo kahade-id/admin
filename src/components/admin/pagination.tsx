@@ -18,6 +18,11 @@ export type PaginationProps = {
   onPageChange: (page: number) => void
   disabled?: boolean
   className?: string
+  /**
+   * G518: label landmark nav. WAJIB unik bila >1 paginasi di satu halaman
+   * (axe landmark-unique). Default "Paginasi".
+   */
+  ariaLabel?: string
 }
 
 /** Daftar nomor halaman dengan ellipsis (maks 7 slot). */
@@ -43,13 +48,15 @@ export function Pagination({
   onPageChange,
   disabled = false,
   className,
+  ariaLabel = "Paginasi",
 }: PaginationProps) {
   const safe = Math.max(1, totalPages)
   const from = total != null ? (page - 1) * pageSize + 1 : null
   const to = total != null ? Math.min(page * pageSize, total) : null
 
+  // G518: landmark <nav> berlabel agar screen reader mengenali blok paginasi.
   return (
-    <div className={cn("flex flex-wrap items-center justify-between gap-3", className)}>
+    <nav aria-label={ariaLabel} className={cn("flex flex-wrap items-center justify-between gap-3", className)}>
       <p className="text-caption text-text-secondary">
         {total != null && total > 0
           ? `Menampilkan ${from}–${to} dari ${total.toLocaleString("id-ID")} data`
@@ -94,6 +101,6 @@ export function Pagination({
           ›
         </Button>
       </div>
-    </div>
+    </nav>
   )
 }

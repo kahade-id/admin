@@ -46,6 +46,8 @@ export interface AdminVoucherUsage {
     userId?: string
     fullName?: string | null
     email?: string | null
+    /** Nomor HP — bila dikembalikan backend, ditampilkan termasking. */
+    phone?: string | null
   } | null
 }
 
@@ -76,6 +78,8 @@ export interface VoucherListQuery {
   limit?: number
   /** "true" | "false" — filter status aktif */
   isActive?: "true" | "false"
+  /** Pencarian kode/nama voucher (diteruskan ke backend bila didukung). */
+  q?: string
 }
 
 /** GET /v1/admin/vouchers — daftar voucher. */

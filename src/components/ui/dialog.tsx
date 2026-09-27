@@ -58,11 +58,40 @@ export function Dialog({
     return () => clearTimeout(timer)
   }, [open])
 
-  // Escape menutup
+  // Escape menutup + trap fokus Tab di dalam panel (WCAG 2.1.2 — G515).
+  // Tanpa trap, Tab bisa "kabur" ke konten latar di belakang modal.
   useEffect(() => {
     if (!rendered) return
+    const panel = panelRef.current
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
+      if (e.key === "Escape") {
+        onClose()
+        return
+      }
+      if (e.key !== "Tab" || !panel) return
+      const focusables = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter(
+        (el) =>
+          !el.closest("[hidden]") &&
+          el.getAttribute("aria-hidden") !== "true",
+      )
+      if (focusables.length === 0) {
+        e.preventDefault()
+        panel.focus()
+        return
+      }
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)

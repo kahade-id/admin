@@ -58,6 +58,9 @@ import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 
 import { ErrorBlock, KeyValue, LoadingBlock, PageHeader } from "../../_components/admin-ui"
+import { ModerationTab } from "./_components/moderation-tab"
+import { DeletionTab } from "./_components/deletion-tab"
+import { cn } from "@/lib/cn"
 
 const MAX_ADJUST_IDR = 50_000_000
 
@@ -353,6 +356,7 @@ export default function UserDetailPage() {
   const user = detail
   const displayName = user?.fullName?.trim() || "Tanpa nama"
   const adjustAmountNum = Number(adjustAmount.replace(/[^0-9]/g, ""))
+  const [tab, setTab] = useState<"ringkasan" | "moderasi" | "penghapusan">("ringkasan")
 
   return (
     <RoleGate href="/users">
@@ -382,7 +386,40 @@ export default function UserDetailPage() {
           onRetry={loadAll}
         />
       ) : user ? (
-        <div className="flex flex-col gap-5">
+        <>
+          {/* ---- Tab: Ringkasan / Moderasi ---- */}
+          <div className="mb-5 flex gap-1 border-b border-border" role="tablist" aria-label="Detail pengguna">
+            {(
+              [
+                { key: "ringkasan", label: "Ringkasan" },
+                { key: "moderasi", label: "Moderasi" },
+                { key: "penghapusan", label: "Penghapusan" },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={tab === t.key}
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  "-mb-px border-b-2 px-4 py-2 text-body font-semibold transition-colors",
+                  tab === t.key
+                    ? "border-primary text-primary"
+                    : "border-transparent text-text-secondary hover:text-text-primary",
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {tab === "moderasi" ? (
+            <ModerationTab userId={userId} userEmail={user.email} />
+          ) : tab === "penghapusan" ? (
+            <DeletionTab userId={userId} />
+          ) : (
+            <div className="flex flex-col gap-5">
           {/* ---- Profil ---- */}
           <Card padded={false}>
             <CardHeader
@@ -893,7 +930,9 @@ export default function UserDetailPage() {
               </div>
             </CardBody>
           </Card>
-        </div>
+            </div>
+          )}
+        </>
       ) : null}
 
       {/* ---- Dialog: blokir ---- */}

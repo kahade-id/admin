@@ -29,6 +29,8 @@ import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import { AuditTrailPanel } from "./audit-trail-panel"
+import { ReconciliationPanel } from "./reconciliation-panel"
+import { TransactionDetailDialog } from "./transaction-detail-dialog"
 
 import {
   approveWithdrawal,
@@ -174,8 +176,10 @@ function withdrawUserName(tx: PendingWithdrawal): string {
 export default function FinancePage() {
   const toast = useToast()
 
-  // Tab: ringkasan+antrean+transaksi vs jejak audit (read-only, deferred #5).
-  const [activeTab, setActiveTab] = useState<"overview" | "audit">("overview")
+  // Tab: ringkasan+antrean+transaksi vs jejak audit vs rekonsiliasi E3.
+  const [activeTab, setActiveTab] = useState<"overview" | "audit" | "rekonsiliasi">("overview")
+  // E3: tx yang dibuka di dialog detail (dengan timeline).
+  const [detailTxId, setDetailTxId] = useState<string | null>(null)
 
   // ------------------------------------------------------------------
   // (a) Ringkasan
@@ -440,6 +444,7 @@ export default function FinancePage() {
           [
             { id: "overview", label: "Ringkasan & Transaksi" },
             { id: "audit", label: "Jejak Audit" },
+            { id: "rekonsiliasi", label: "Rekonsiliasi" },
           ] as const
         ).map((tab) => (
           <Button
@@ -448,6 +453,8 @@ export default function FinancePage() {
             size="sm"
             fullWidth={false}
             onClick={() => setActiveTab(tab.id)}
+            role="tab"
+            aria-selected={activeTab === tab.id}
           >
             {tab.label}
           </Button>
@@ -456,6 +463,8 @@ export default function FinancePage() {
 
       {activeTab === "audit" ? (
         <AuditTrailPanel />
+      ) : activeTab === "rekonsiliasi" ? (
+        <ReconciliationPanel />
       ) : (
         <>
       {/* (a) Ringkasan */}
@@ -687,6 +696,7 @@ export default function FinancePage() {
             />
             <div className="mt-4">
               <Pagination
+                ariaLabel="Paginasi antrean penarikan"
                 page={pendingPage}
                 totalPages={pendingTotalPages}
                 total={pendingTotal}
@@ -704,7 +714,7 @@ export default function FinancePage() {
         <Card>
           <CardHeader
             title="Transaksi"
-            subtitle="Pencarian difilter dari halaman yang diambil."
+            subtitle="Pencarian server-side: txId, deskripsi, order, referensi eksternal (Midtrans/Flash/Iris). Klik Detail untuk timeline."
           />
           <CardBody>
             <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -816,6 +826,15 @@ export default function FinancePage() {
                   header: "Waktu",
                   render: (r) => formatDateTimeWIB(r.createdAt),
                 },
+                {
+                  key: "aksi",
+                  header: "Aksi",
+                  render: (r) => (
+                    <Button variant="secondary" size="sm" fullWidth={false} onClick={() => setDetailTxId(r.txId)}>
+                      Detail
+                    </Button>
+                  ),
+                },
               ]}
               rows={txRows}
               rowKey={(r) => r.txId}
@@ -824,6 +843,7 @@ export default function FinancePage() {
             />
             <div className="mt-4">
               <Pagination
+                ariaLabel="Paginasi riwayat transaksi"
                 page={txPage}
                 totalPages={txTotalPages}
                 total={txTotal}
@@ -837,6 +857,9 @@ export default function FinancePage() {
       </section>
         </>
       )}
+
+      {/* E3: Dialog detail transaksi + timeline */}
+      <TransactionDetailDialog txId={detailTxId} onClose={() => setDetailTxId(null)} />
 
       {/* Dialog Setujui / Tolak penarikan */}
       <Dialog

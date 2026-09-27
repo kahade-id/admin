@@ -27,17 +27,41 @@ import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
 import {
   approveKyc,
+  assignKycReviewer,
   getKycDetail,
   getKycDocumentUrls,
   rejectKyc,
+  releaseKycReviewer,
+  requestKycDocuments,
+  resumeKycSla,
   revokeKyc,
   type KycDetail,
   type KycDocumentUrls,
 } from "@/lib/api/admin/kyc"
+import { listAdmins, type AdminUserItem } from "@/lib/api/admin/management"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 
 import { KYC_STATUS_LABEL, KYC_STATUS_TONE } from "../maps"
+
+function formatDuration(ms: number | null | undefined): string {
+  if (ms == null || Number.isNaN(ms)) return "—"
+  const abs = Math.abs(ms)
+  const hours = Math.floor(abs / 3_600_000)
+  if (hours < 1) return `${Math.max(0, Math.floor(abs / 60_000))} mnt`
+  const days = Math.floor(hours / 24)
+  if (days < 1) return `${hours} jam`
+  return `${days} hari ${hours % 24} jam`
+}
+
+function SlaStatusBadge({ detail }: { detail: KycDetail }) {
+  const sla = detail.sla
+  if (!sla) return <Badge tone="neutral">—</Badge>
+  if (sla.paused) return <Badge tone="neutral">Dijeda</Badge>
+  if (sla.status === "BREACHED") return <Badge tone="danger">Lewat SLA</Badge>
+  if (sla.status === "MENDEKATI") return <Badge tone="warning">Mendekati SLA</Badge>
+  return <Badge tone="success">Aman</Badge>
+}
 
 function KeyValue({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
@@ -79,6 +103,15 @@ export default function KycDetailPage() {
   const [rejectNotes, setRejectNotes] = useState("")
   const [revokeOpen, setRevokeOpen] = useState(false)
   const [acting, setActing] = useState<string | null>(null)
+
+  // GAP-E: penugasan reviewer + jeda/lanjut SLA.
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [reviewers, setReviewers] = useState<AdminUserItem[]>([])
+  const [reviewersLoading, setReviewersLoading] = useState(false)
+  const [assignTarget, setAssignTarget] = useState("")
+  const [requestDocsOpen, setRequestDocsOpen] = useState(false)
+  const [requestDocsMessage, setRequestDocsMessage] = useState("")
+  const [requestDocsNotes, setRequestDocsNotes] = useState("")
 
   const load = useCallback(
     async (mode: "initial" | "refresh" = "initial") => {
@@ -172,6 +205,89 @@ export default function KycDetailPage() {
       toast.show({ title: "Persetujuan KYC dicabut", tone: "success" })
     } catch (e) {
       fail("Gagal mencabut KYC", e)
+    } finally {
+      setActing(null)
+    }
+  }
+
+  // --- GAP-E: penugasan reviewer ---
+  const openAssign = async () => {
+    setAssignOpen(true)
+    setAssignTarget("")
+    setReviewersLoading(true)
+    try {
+      const res = await listAdmins({ limit: 100 })
+      setReviewers(
+        (res.data ?? []).filter(
+          (a) => a.isActive && (a.role === "KYC_ADMIN" || a.role === "SUPER_ADMIN"),
+        ),
+      )
+    } catch (e) {
+      fail("Gagal memuat daftar reviewer", e)
+    } finally {
+      setReviewersLoading(false)
+    }
+  }
+
+  const handleAssign = async () => {
+    if (!assignTarget) return
+    setActing("assign")
+    try {
+      await assignKycReviewer(kycId, assignTarget)
+      setAssignOpen(false)
+      setAssignTarget("")
+      await load("refresh")
+      toast.show({ title: "Reviewer ditugaskan", tone: "success" })
+    } catch (e) {
+      fail("Gagal menugaskan reviewer", e)
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const handleRelease = async () => {
+    setActing("release")
+    try {
+      await releaseKycReviewer(kycId)
+      await load("refresh")
+      toast.show({ title: "Penugasan reviewer dilepas", tone: "success" })
+    } catch (e) {
+      fail("Gagal melepas penugasan", e)
+    } finally {
+      setActing(null)
+    }
+  }
+
+  // --- GAP-E: minta dokumen tambahan (SLA dijeda) / lanjutkan SLA ---
+  const handleRequestDocs = async () => {
+    if (requestDocsMessage.trim().length < 10) return
+    setActing("request-docs")
+    try {
+      await requestKycDocuments(kycId, requestDocsMessage.trim(), requestDocsNotes.trim() || undefined)
+      setRequestDocsOpen(false)
+      setRequestDocsMessage("")
+      setRequestDocsNotes("")
+      await load("refresh")
+      toast.show({
+        title: "Permintaan dokumen terkirim",
+        description: "SLA tinjauan dijeda sampai pengguna melengkapi dokumen.",
+        tone: "success",
+      })
+    } catch (e) {
+      fail("Gagal meminta dokumen", e)
+    } finally {
+      setActing(null)
+    }
+  }
+
+  const handleResumeSla = async () => {
+    setActing("resume-sla")
+    try {
+      await resumeKycSla(kycId)
+      await load("refresh")
+      toast.show({ title: "SLA dilanjutkan", tone: "success" })
+    } catch (e) {
+      fail("Gagal melanjutkan SLA", e)
     } finally {
       setActing(null)
     }
@@ -304,6 +420,76 @@ export default function KycDetailPage() {
             </CardBody>
           </Card>
 
+          <Card padded={false}>
+            <CardHeader title="SLA tinjauan" action={<SlaStatusBadge detail={detail} />} />
+            <CardBody>
+              <dl>
+                <KeyValue
+                  label="Batas SLA"
+                  value={
+                    detail.sla
+                      ? `${detail.sla.slaHours} jam ${detail.sla.useBusinessHours ? "jam kerja (Senin–Jumat 09:00–17:00 WIB)" : "kalender"}`
+                      : "—"
+                  }
+                />
+                <KeyValue label="Mulai berjalan" value={detail.sla?.startedAt ? formatDateTimeWIB(detail.sla.startedAt) : "—"} />
+                <KeyValue label="Waktu berjalan" value={formatDuration(detail.sla?.elapsedMs)} />
+                <KeyValue
+                  label="Sisa waktu"
+                  value={
+                    detail.sla?.paused
+                      ? "Dijeda — tidak berkurang"
+                      : formatDuration(detail.sla?.remainingMs)
+                  }
+                />
+                {detail.sla?.breachedAt ? (
+                  <KeyValue label="Dinyatakan lewat" value={formatDateTimeWIB(detail.sla.breachedAt)} />
+                ) : null}
+              </dl>
+              {detail.sla?.paused && isPending ? (
+                <Button
+                  variant="secondary"
+                  fullWidth={false}
+                  loading={acting === "resume-sla"}
+                  onClick={handleResumeSla}
+                  className="mt-3"
+                >
+                  Lanjutkan SLA
+                </Button>
+              ) : null}
+            </CardBody>
+          </Card>
+
+          <Card padded={false}>
+            <CardHeader title="Reviewer" />
+            <CardBody>
+              <dl>
+                <KeyValue
+                  label="Ditugaskan"
+                  value={detail.assignedReviewer?.fullName ?? "Belum ditugaskan"}
+                />
+              </dl>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="secondary" fullWidth={false} disabled={!isPending} onClick={openAssign}>
+                  Tugaskan reviewer
+                </Button>
+                {detail.assignedReviewer ? (
+                  <Button
+                    variant="ghost"
+                    fullWidth={false}
+                    loading={acting === "release"}
+                    onClick={handleRelease}
+                  >
+                    Lepas penugasan
+                  </Button>
+                ) : null}
+              </div>
+              <p className="mt-2 text-caption text-text-secondary">
+                Penugasan tidak mengubah status pengajuan dan tercatat di audit log.
+              </p>
+            </CardBody>
+          </Card>
+
           <Card padded={false} className="xl:col-span-2">
             <CardHeader title="Aksi" />
             <CardBody>
@@ -332,13 +518,71 @@ export default function KycDetailPage() {
                 >
                   Cabut persetujuan
                 </Button>
+                <Button
+                  variant="secondary"
+                  fullWidth={false}
+                  disabled={!isPending || !!detail.sla?.paused}
+                  onClick={() => setRequestDocsOpen(true)}
+                >
+                  Minta dokumen tambahan
+                </Button>
               </div>
+              {detail.sla?.paused ? (
+                <p className="mt-3 text-caption text-text-secondary">
+                  SLA sedang dijeda karena menunggu dokumen tambahan dari pengguna. Dokumen
+                  pelengkap dari pengguna akan melanjutkan SLA secara otomatis.
+                </p>
+              ) : null}
               {!isPending && !isApproved ? (
                 <p className="mt-3 text-caption text-text-secondary">
                   Pengajuan sudah final (status {KYC_STATUS_LABEL[status] ?? status}) — tidak ada
                   aksi yang tersedia.
                 </p>
               ) : null}
+            </CardBody>
+          </Card>
+
+          <Card padded={false} className="xl:col-span-2">
+            <CardHeader title="Riwayat penugasan & catatan reviewer" />
+            <CardBody>
+              {(!detail.assignmentHistory || detail.assignmentHistory.length === 0) &&
+              (!detail.reviewerNotes || detail.reviewerNotes.length === 0) ? (
+                <p className="text-body text-text-secondary">Belum ada riwayat penugasan atau catatan reviewer.</p>
+              ) : (
+                <div className="space-y-4">
+                  {detail.assignmentHistory && detail.assignmentHistory.length > 0 ? (
+                    <div>
+                      <p className="mb-2 text-body font-medium">Penugasan</p>
+                      <ul className="space-y-2">
+                        {detail.assignmentHistory.map((h) => (
+                          <li key={h.id} className="text-caption">
+                            <span className="font-medium">{h.admin.fullName ?? h.admin.adminId}</span>
+                            {" "}ditugaskan oleh {h.assignedBy.fullName ?? h.assignedBy.adminId}
+                            {" "}pada {formatDateTimeWIB(h.assignedAt)}
+                            {h.releasedAt ? ` — dilepas ${formatDateTimeWIB(h.releasedAt)}` : ""}
+                            {h.active ? <Badge tone="info" dot={false} className="ml-2">aktif</Badge> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {detail.reviewerNotes && detail.reviewerNotes.length > 0 ? (
+                    <div>
+                      <p className="mb-2 text-body font-medium">Catatan reviewer (NIK/nomor telepon di-mask)</p>
+                      <ul className="space-y-2">
+                        {detail.reviewerNotes.map((n) => (
+                          <li key={n.id} className="text-caption">
+                            <span className="font-medium">{n.action}</span>
+                            {n.admin ? ` oleh ${n.admin.fullName ?? n.admin.adminId}` : ""}
+                            {" "}— {formatDateTimeWIB(n.createdAt)}
+                            <p className="mt-0.5 text-body text-text-secondary">{n.description}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </CardBody>
           </Card>
         </div>
@@ -465,6 +709,91 @@ export default function KycDetailPage() {
         destructive
         onConfirm={handleRevoke}
       />
+
+      {/* GAP-E: tugaskan reviewer */}
+      <Dialog
+        open={assignOpen}
+        onClose={() => setAssignOpen(false)}
+        title="Tugaskan reviewer"
+        description="Reviewer yang ditugaskan bertanggung jawab meninjau pengajuan ini. Penugasan tercatat di audit log."
+        footer={
+          <div className="flex flex-col gap-2">
+            <Button variant="primary" loading={acting === "assign"} disabled={!assignTarget} onClick={handleAssign}>
+              Tugaskan
+            </Button>
+            <Button variant="ghost" disabled={acting === "assign"} onClick={() => setAssignOpen(false)}>
+              Batal
+            </Button>
+          </div>
+        }
+      >
+        {reviewersLoading ? (
+          <div className="flex justify-center py-6"><Spinner size="md" /></div>
+        ) : reviewers.length === 0 ? (
+          <p className="text-body text-text-secondary">Tidak ada admin KYC aktif yang bisa ditugaskan.</p>
+        ) : (
+          <div className="space-y-2">
+            {reviewers.map((r) => (
+              <label key={r.id} className="flex cursor-pointer items-center gap-3 rounded-md border border-border p-3 hover:bg-surface-elevated">
+                <input
+                  type="radio"
+                  name="kyc-reviewer"
+                  checked={assignTarget === (r.adminId ?? r.id)}
+                  onChange={() => setAssignTarget(r.adminId ?? r.id)}
+                />
+                <span>
+                  <span className="block text-body font-medium">{r.fullName}</span>
+                  <span className="block text-caption text-text-secondary">
+                    {r.adminId ?? r.id} · {r.role === "SUPER_ADMIN" ? "Super Admin" : "Admin KYC"}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+      </Dialog>
+
+      {/* GAP-E: minta dokumen tambahan — SLA dijeda */}
+      <Dialog
+        open={requestDocsOpen}
+        onClose={() => setRequestDocsOpen(false)}
+        title="Minta dokumen tambahan"
+        description="Pengguna menerima pemberitahuan berisi pesan di bawah. SLA tinjauan DIJEDA sampai pengguna melengkapi dokumen."
+        footer={
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="primary"
+              loading={acting === "request-docs"}
+              disabled={requestDocsMessage.trim().length < 10}
+              onClick={handleRequestDocs}
+            >
+              Kirim permintaan
+            </Button>
+            <Button variant="ghost" disabled={acting === "request-docs"} onClick={() => setRequestDocsOpen(false)}>
+              Batal
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <TextArea
+            label="Pesan untuk pengguna"
+            required
+            rows={4}
+            value={requestDocsMessage}
+            onChange={(e) => setRequestDocsMessage(e.target.value)}
+            placeholder="Contoh: Foto KTP buram dan tidak terbaca. Mohon kirim ulang foto KTP yang jelas melalui menu verifikasi."
+            hint={`${requestDocsMessage.trim().length} / 10 karakter minimum`}
+          />
+          <TextArea
+            label="Catatan internal (opsional)"
+            rows={3}
+            value={requestDocsNotes}
+            onChange={(e) => setRequestDocsNotes(e.target.value)}
+            placeholder="Catatan untuk tim internal…"
+          />
+        </div>
+      </Dialog>
     </RoleGate>
   )
 }
