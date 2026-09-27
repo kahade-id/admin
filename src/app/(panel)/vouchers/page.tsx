@@ -29,11 +29,13 @@ import { RoleGate } from "@/components/admin/role-gate"
 import { cn } from "@/lib/cn"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import {
   listVouchers,
   createVoucher,
   deactivateVoucher,
+  reactivateVoucher,
   type AdminVoucherItem,
   type AdminVoucherType,
   type AdminVoucherApplicability,
@@ -345,8 +347,25 @@ function VouchersTab() {
   const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [createKey, setCreateKey] = useState<string | null>(null)
+  const openCreate = () => {
+    setCreateOpen(true)
+    setCreateKey(newIdempotencyKey())
+  }
   const [deactivating, setDeactivating] = useState<AdminVoucherItem | null>(null)
   const [deactivatingNow, setDeactivatingNow] = useState(false)
+  const [deactivateKey, setDeactivateKey] = useState<string | null>(null)
+  const [reactivating, setReactivating] = useState<AdminVoucherItem | null>(null)
+  const [reactivatingNow, setReactivatingNow] = useState(false)
+  const [reactivateKey, setReactivateKey] = useState<string | null>(null)
+  const openDeactivate = (r: AdminVoucherItem) => {
+    setDeactivating(r)
+    setDeactivateKey(newIdempotencyKey())
+  }
+  const openReactivate = (r: AdminVoucherItem) => {
+    setReactivating(r)
+    setReactivateKey(newIdempotencyKey())
+  }
   const [exporting, setExporting] = useState(false)
 
   /** Filter client-side by kode/nama atas baris yang dimuat. */
@@ -401,7 +420,8 @@ function VouchersTab() {
   async function handleCreate(input: CreateVoucherInput) {
     setCreating(true)
     try {
-      await createVoucher(input)
+      // ADM-219: satu kunci per sesi buat; retry dialog memakai kunci yang sama.
+      await createVoucher(input, createKey ?? undefined)
       setCreateOpen(false)
       toast.show({ title: "Voucher dibuat.", tone: "success" })
       void load(1, statusFilter, search)
@@ -410,12 +430,35 @@ function VouchersTab() {
     }
   }
 
+  async function handleReactivate() {
+    if (!reactivating) return
+    setReactivatingNow(true)
+    try {
+      await reactivateVoucher(
+        reactivating.voucherId ?? reactivating.id,
+        reactivateKey ?? undefined,
+      )
+      setReactivating(null)
+      setReactivateKey(null)
+      toast.show({ title: "Voucher diaktifkan kembali.", tone: "success" })
+      void load(page, statusFilter, search)
+    } catch (e) {
+      toast.show({ title: "Gagal mengaktifkan kembali voucher", description: userMessage(e), tone: "danger" })
+    } finally {
+      setReactivatingNow(false)
+    }
+  }
+
   async function handleDeactivate() {
     if (!deactivating) return
     setDeactivatingNow(true)
     try {
-      await deactivateVoucher(deactivating.voucherId ?? deactivating.id)
+      await deactivateVoucher(
+        deactivating.voucherId ?? deactivating.id,
+        deactivateKey ?? undefined,
+      )
       setDeactivating(null)
+      setDeactivateKey(null)
       toast.show({ title: "Voucher dinonaktifkan.", tone: "success" })
       void load(page, statusFilter, search)
     } catch (e) {
@@ -539,7 +582,7 @@ function VouchersTab() {
           <Button variant="secondary" fullWidth={false} loading={exporting} onClick={handleExportCsv}>
             Ekspor CSV agregat
           </Button>
-          <Button fullWidth={false} onClick={() => setCreateOpen(true)}>
+          <Button fullWidth={false} onClick={openCreate}>
             Buat voucher
           </Button>
         </div>
@@ -624,9 +667,19 @@ function VouchersTab() {
                         variant="destructive"
                         size="sm"
                         fullWidth={false}
-                        onClick={() => setDeactivating(r)}
+                        onClick={() => openDeactivate(r)}
                       >
                         Nonaktifkan
+                      </Button>
+                    ) : !isExpiredVoucher(r) ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        fullWidth={false}
+                        onClick={() => openReactivate(r)}
+                        title="Aktifkan kembali voucher yang dinonaktifkan."
+                      >
+                        Aktifkan kembali
                       </Button>
                     ) : null}
                   </div>
@@ -668,13 +721,28 @@ function VouchersTab() {
         title="Nonaktifkan voucher?"
         description={
           deactivating
-            ? `Voucher ${deactivating.code} tidak bisa lagi dipakai pengguna. Tindakan ini tidak dapat dibatalkan.`
+            ? `Voucher ${deactivating.code} tidak bisa lagi dipakai pengguna. Voucher dapat diaktifkan kembali selama masih dalam masa berlaku.`
             : undefined
         }
         confirmLabel="Nonaktifkan"
         onConfirm={handleDeactivate}
         loading={deactivatingNow}
         destructive
+      />
+
+      {/* ADM-218: konfirmasi reaktivasi voucher nonaktif */}
+      <ConfirmDialog
+        open={reactivating != null}
+        onClose={() => setReactivating(null)}
+        title="Aktifkan kembali voucher?"
+        description={
+          reactivating
+            ? `Voucher ${reactivating.code} akan bisa dipakai pengguna lagi sesuai masa berlaku yang tersisa.`
+            : undefined
+        }
+        confirmLabel="Aktifkan kembali"
+        onConfirm={handleReactivate}
+        loading={reactivatingNow}
       />
     </div>
   )

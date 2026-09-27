@@ -302,6 +302,35 @@ export function getTransactionDetail(txId: string): Promise<AdminTransactionDeta
   )
 }
 
+/** ADM-213: hasil recheck manual SATU withdrawal PROCESSING ke provider. */
+export type WithdrawalRecheckResult = {
+  txId?: string
+  /** Status mentah dari Midtrans Iris: completed/processed/failed/rejected/queued/processing/not_found/unknown. */
+  providerStatus?: string
+  /** CONFIRMED | FAILED_REFUNDED | STILL_PROCESSING | UNKNOWN */
+  outcome?: string
+  /** true bila recheck mengubah status transaksi. */
+  changed?: boolean
+  [key: string]: unknown
+}
+
+/**
+ * ADM-213: cek ulang status payout ke Midtrans Iris untuk SATU withdrawal
+ * PROCESSING. BUKAN retry — tidak pernah mengirim payout baru; hanya query
+ * status lalu menerapkan transisi aman (completed→SUCCESS, failed→FAILED+refund,
+ * selain itu tetap PROCESSING). Idempoten via Idempotency-Key.
+ */
+export function recheckWithdrawal(
+  txId: string,
+  idempotencyKey?: string,
+): Promise<WithdrawalRecheckResult> {
+  return adminHttp.post<WithdrawalRecheckResult>(
+    `/v1/admin/finance/withdrawals/${encodeURIComponent(txId)}/recheck`,
+    {},
+    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
+  )
+}
+
 /** Antrean penarikan berstatus pending (terlama dulu). */
 export function listPendingWithdrawals(params?: {
   page?: number

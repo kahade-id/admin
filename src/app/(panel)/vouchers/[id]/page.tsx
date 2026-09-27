@@ -21,9 +21,11 @@ import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
 import { userMessage } from "@/lib/api/response"
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import { formatDateTimeWIB, formatIDR, formatNumber } from "@/lib/format"
 import {
   deactivateVoucher,
+  reactivateVoucher,
   getVoucherDetail,
   type AdminVoucherDetail,
   type AdminVoucherItem,
@@ -73,6 +75,10 @@ function VoucherDetailContent() {
   const [error, setError] = useState<string | null>(null)
   const [deactivateOpen, setDeactivateOpen] = useState(false)
   const [deactivating, setDeactivating] = useState(false)
+  const [deactivateKey, setDeactivateKey] = useState<string | null>(null)
+  const [reactivateOpen, setReactivateOpen] = useState(false)
+  const [reactivating, setReactivating] = useState(false)
+  const [reactivateKey, setReactivateKey] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -90,10 +96,25 @@ function VoucherDetailContent() {
     void load()
   }, [load])
 
+  async function handleReactivate() {
+    setReactivating(true)
+    try {
+      const updated = await reactivateVoucher(id, reactivateKey ?? undefined)
+      setDetail((prev) => (prev ? { ...prev, ...updated, isActive: true } : prev))
+      setReactivateOpen(false)
+      setReactivateKey(null)
+      toast.show({ title: "Voucher diaktifkan kembali.", tone: "success" })
+    } catch (e) {
+      toast.show({ title: "Gagal mengaktifkan kembali voucher", description: userMessage(e), tone: "danger" })
+    } finally {
+      setReactivating(false)
+    }
+  }
+
   async function handleDeactivate() {
     setDeactivating(true)
     try {
-      const updated = await deactivateVoucher(id)
+      const updated = await deactivateVoucher(id, deactivateKey ?? undefined)
       setDetail((prev) => (prev ? { ...prev, ...updated, isActive: false } : prev))
       setDeactivateOpen(false)
       toast.show({ title: "Voucher dinonaktifkan.", tone: "success" })
@@ -167,9 +188,24 @@ function VoucherDetailContent() {
               variant="destructive"
               size="sm"
               fullWidth={false}
-              onClick={() => setDeactivateOpen(true)}
+              onClick={() => {
+                setDeactivateKey(newIdempotencyKey())
+                setDeactivateOpen(true)
+              }}
             >
               Nonaktifkan
+            </Button>
+          ) : !expired ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              onClick={() => {
+                setReactivateKey(newIdempotencyKey())
+                setReactivateOpen(true)
+              }}
+            >
+              Aktifkan kembali
             </Button>
           ) : null}
         </div>
@@ -282,12 +318,24 @@ function VoucherDetailContent() {
         </CardBody>
       </Card>
 
+      {/* ADM-218: aktifkan kembali voucher nonaktif */}
+      <ConfirmDialog
+        open={reactivateOpen}
+        onClose={() => setReactivateOpen(false)}
+        title="Aktifkan kembali voucher?"
+        description={`Voucher ${v.code} akan bisa dipakai pengguna lagi sesuai masa berlaku yang tersisa.`}
+        confirmLabel="Aktifkan kembali"
+        cancelLabel="Batal"
+        loading={reactivating}
+        onConfirm={() => void handleReactivate()}
+      />
+
       {/* Nonaktifkan dengan pratinjau dampak */}
       <Dialog
         open={deactivateOpen}
         onClose={() => setDeactivateOpen(false)}
         title="Nonaktifkan voucher?"
-        description={`Voucher ${v.code} tidak bisa lagi dipakai pengguna. Tindakan ini tidak dapat dibatalkan.`}
+        description={`Voucher ${v.code} tidak bisa lagi dipakai pengguna. Voucher dapat diaktifkan kembali selama masih dalam masa berlaku.`}
         footer={
           <div className="flex flex-col gap-2">
             <Button variant="destructive" loading={deactivating} onClick={handleDeactivate}>

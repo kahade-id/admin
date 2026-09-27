@@ -19,7 +19,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { Dialog } from "@/components/ui/dialog"
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
@@ -49,6 +49,8 @@ import {
   type WalletTransactionStatus,
   type WalletTransactionType,
   downloadFinanceCsv,
+  recheckWithdrawal,
+  type WithdrawalRecheckResult,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
@@ -417,6 +419,52 @@ export default function FinancePage() {
   const handleTxStatusChange = (value: string) => {
     setTxStatusFilter(value as WalletTransactionStatus | "")
     setTxPage(1)
+  }
+
+  // ADM-213: recheck manual SATU withdrawal PROCESSING (bukan retry payout).
+  const [recheckTx, setRecheckTx] = useState<AdminTransactionItem | null>(null)
+  const [rechecking, setRechecking] = useState(false)
+  const [recheckKey, setRecheckKey] = useState<string | null>(null)
+  const openRecheck = (r: AdminTransactionItem) => {
+    setRecheckTx(r)
+    setRecheckKey(newIdempotencyKey())
+  }
+  const closeRecheck = () => {
+    if (rechecking) return
+    setRecheckTx(null)
+    setRecheckKey(null)
+  }
+  const handleRecheck = async () => {
+    if (!recheckTx || rechecking) return
+    setRechecking(true)
+    try {
+      const res: WithdrawalRecheckResult = await recheckWithdrawal(
+        recheckTx.txId,
+        recheckKey ?? undefined,
+      )
+      const outcomeMsg: Record<string, string> = {
+        CONFIRMED: `Payout dikonfirmasi provider (${res.providerStatus}) — status SUCCESS.`,
+        FAILED_REFUNDED: `Payout dinyatakan gagal oleh provider (${res.providerStatus}) — dana dikembalikan ke wallet.`,
+        STILL_PROCESSING: `Masih diproses provider (${res.providerStatus}) — tetap PROCESSING, tanpa perubahan.`,
+        UNKNOWN: `Status tidak diketahui provider (${res.providerStatus}) — tetap PROCESSING, perlu investigasi manual.`,
+      }
+      toast.show({
+        title: "Hasil cek status payout",
+        description: outcomeMsg[String(res.outcome)] ?? String(res.outcome ?? "—"),
+        tone: res.outcome === "FAILED_REFUNDED" ? "danger" : res.outcome === "CONFIRMED" ? "success" : "info",
+      })
+      setRecheckTx(null)
+      setRecheckKey(null)
+      void loadTransactions(txPage)
+    } catch (e) {
+      toast.show({
+        title: "Gagal mengecek status payout",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setRechecking(false)
+    }
   }
 
   // ADM-215: unduh export CSV ledger (terotentikasi, rentang = filter tanggal).
@@ -935,9 +983,23 @@ export default function FinancePage() {
                   key: "aksi",
                   header: "Aksi",
                   render: (r) => (
-                    <Button variant="secondary" size="sm" fullWidth={false} onClick={() => setDetailTxId(r.txId)}>
-                      Detail
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="secondary" size="sm" fullWidth={false} onClick={() => setDetailTxId(r.txId)}>
+                        Detail
+                      </Button>
+                      {/* ADM-213: recheck manual — hanya untuk PROCESSING; bukan retry payout */}
+                      {String(r.withdrawStatus) === "PROCESSING" ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          fullWidth={false}
+                          onClick={() => openRecheck(r)}
+                          title="Tanyakan status payout ke Midtrans Iris. Tidak mengirim payout baru."
+                        >
+                          Cek status
+                        </Button>
+                      ) : null}
+                    </div>
                   ),
                 },
               ]}
@@ -965,6 +1027,23 @@ export default function FinancePage() {
 
       {/* E3: Dialog detail transaksi + timeline */}
       <TransactionDetailDialog txId={detailTxId} onClose={() => setDetailTxId(null)} />
+
+      {/* ADM-213: konfirmasi recheck manual payout PROCESSING */}
+      <ConfirmDialog
+        open={recheckTx !== null}
+        onClose={closeRecheck}
+        title="Cek status payout ke provider?"
+        description={
+          recheckTx
+            ? `Menanyakan status payout ${recheckTx.txId} (${formatRupiah(recheckTx.amount)}) ke Midtrans Iris. TIDAK mengirim payout baru. ` +
+              `Bila provider menyatakan completed → SUCCESS; failed → FAILED + dana dikembalikan; selain itu tetap PROCESSING tanpa perubahan.`
+            : undefined
+        }
+        confirmLabel="Ya, cek status"
+        cancelLabel="Batal"
+        loading={rechecking}
+        onConfirm={() => void handleRecheck()}
+      />
 
       {/* Dialog Setujui / Tolak penarikan */}
       <Dialog

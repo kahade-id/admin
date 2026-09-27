@@ -1,6 +1,12 @@
-/** Kahade admin — manajemen voucher (list, buat, detail, nonaktifkan). */
+/** Kahade admin — manajemen voucher (list, buat, detail, nonaktifkan, aktifkan kembali). */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
+
+/** Header idempotency untuk aksi voucher: satu kunci stabil per sesi aksi. */
+const idemHeaders = (key?: string): Record<string, string> => ({
+  "Idempotency-Key": key ?? newIdempotencyKey(),
+})
 
 export type AdminVoucherType =
   | "FEE_DISCOUNT_FLAT"
@@ -91,11 +97,14 @@ export function listVouchers(
   })
 }
 
-/** POST /v1/admin/vouchers — buat voucher baru. */
+/** POST /v1/admin/vouchers — buat voucher baru (idempoten, ADM-219). */
 export function createVoucher(
   input: CreateVoucherInput,
+  idempotencyKey?: string,
 ): Promise<AdminVoucherItem> {
-  return adminHttp.post<AdminVoucherItem>("/v1/admin/vouchers", input)
+  return adminHttp.post<AdminVoucherItem>("/v1/admin/vouchers", input, {
+    headers: idemHeaders(idempotencyKey),
+  })
 }
 
 /** GET /v1/admin/vouchers/:voucherId — detail + statistik pemakaian. */
@@ -105,9 +114,30 @@ export function getVoucherDetail(voucherId: string): Promise<AdminVoucherDetail>
   )
 }
 
-/** POST /v1/admin/vouchers/:voucherId/deactivate — nonaktifkan voucher. */
-export function deactivateVoucher(voucherId: string): Promise<AdminVoucherItem> {
+/** POST /v1/admin/vouchers/:voucherId/deactivate — nonaktifkan voucher (idempoten, ADM-219). */
+export function deactivateVoucher(
+  voucherId: string,
+  idempotencyKey?: string,
+): Promise<AdminVoucherItem> {
   return adminHttp.post<AdminVoucherItem>(
     `/v1/admin/vouchers/${encodeURIComponent(voucherId)}/deactivate`,
+    {},
+    { headers: idemHeaders(idempotencyKey) },
+  )
+}
+
+/**
+ * POST /v1/admin/vouchers/:voucherId/reactivate — aktifkan kembali voucher
+ * yang dinonaktifkan (ADM-218). Hanya untuk voucher nonaktif yang belum
+ * kedaluwarsa; fail-closed di backend. Idempoten (ADM-219).
+ */
+export function reactivateVoucher(
+  voucherId: string,
+  idempotencyKey?: string,
+): Promise<AdminVoucherItem> {
+  return adminHttp.post<AdminVoucherItem>(
+    `/v1/admin/vouchers/${encodeURIComponent(voucherId)}/reactivate`,
+    {},
+    { headers: idemHeaders(idempotencyKey) },
   )
 }

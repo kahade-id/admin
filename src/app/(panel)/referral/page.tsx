@@ -217,7 +217,7 @@ export default function ReferralPage() {
                 value={formatNumber(num(stats.totalRelations))}
               />
               <StatCard
-                label="Total reward"
+                label="Jumlah reward"
                 value={formatNumber(num(stats.totalRewards))}
               />
               <StatCard
