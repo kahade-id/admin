@@ -31,6 +31,9 @@
  *   dependencies, alerts) ALL_ROLES. Halaman admin memanggil endpoint detail
  *   sehingga nav dibatasi SUPER_ADMIN-only (konservatif; sesuai instruksi
  *   integrasi).
+ * - action-locations.controller.ts      → SUPER_ADMIN (+ role fraud/dispute
+ *   bila backend mengizinkan; AdminRole belum punya role "fraud" sehingga UI
+ *   section "Riwayat lokasi aksi" di detail pengguna SUPER_ADMIN-only).
  *
  * Catatan: KYC_ADMIN boleh revoke/restore tier abu via endpoint users
  * (method-level `@AdminRoles('SUPER_ADMIN','KYC_ADMIN')` di

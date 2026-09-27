@@ -43,4 +43,5 @@ export {
  * meninjau ulang pilihan ini bila butuh varian `users`.
  */
 export type { KycStatus } from "@/lib/api/admin/kyc"
+export * from "@/lib/api/admin/action-locations"
 export { AdminAuthError } from "@/lib/api/admin-client"

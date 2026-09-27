@@ -137,6 +137,15 @@ const ROUTES: RouteSpec[] = [
     },
   },
   { href: "/login", load: () => import("@/app/login/page"), heading: /Kahade Admin/ },
+  {
+    href: "/ops-settings",
+    load: () => import("@/app/(panel)/ops-settings/page"),
+    heading: /Pengaturan Operasional/,
+    setupMocks: () => {
+      // listOpsSettings → { settings } (bukan bentuk paginasi)
+      adminHttpMock.get.mockResolvedValue({ settings: [] })
+    },
+  },
 ]
 
 beforeEach(() => {

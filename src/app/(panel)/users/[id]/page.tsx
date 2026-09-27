@@ -23,6 +23,7 @@ import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
 import { Select } from "@/components/admin/select"
 import { RoleGate } from "@/components/admin/role-gate"
+import { ActionLocationHistory } from "@/components/admin/action-location-view"
 import { useAuth } from "@/lib/auth-context"
 import {
   adjustWallet,
@@ -880,6 +881,20 @@ export default function UserDetailPage() {
               )}
             </CardBody>
           </Card>
+
+          {/* ---- Riwayat lokasi aksi (LKD-001) ----
+              Lokasi presisi tiap aksi sensitif: "di titik mana tiap aksi
+              dilakukan". Endpoint backend SUPER_ADMIN-only (+ role fraud/
+              dispute bila backend mengizinkan) — section disembunyikan dari
+              role lain; backend tetap jadi otoritas (403 bila tak berhak). */}
+          {isSuperAdmin ? (
+            <Card padded={false}>
+              <CardHeader title="Riwayat lokasi aksi" />
+              <CardBody>
+                <ActionLocationHistory userId={userId} />
+              </CardBody>
+            </Card>
+          ) : null}
 
           {/* ---- Aksi admin ---- */}
           <Card padded={false}>
