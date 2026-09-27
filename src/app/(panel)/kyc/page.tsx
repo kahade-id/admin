@@ -37,6 +37,7 @@ import {
   bulkRejectKyc,
   getKycQueue,
   getSlaConfig,
+  listKycReviewers,
   updateSlaConfig,
   type BulkKycResult,
   type KycQueueItem,
@@ -73,13 +74,21 @@ const STATUS_OPTIONS = [
   { value: "REVOKED", label: "Dicabut" },
 ]
 
-type SlaFilter = "all" | "ok" | "warning" | "breached"
+type SlaFilter = "all" | "ok" | "warning" | "breached" | "paused"
 const SLA_OPTIONS = [
   { value: "all", label: "Semua" },
   { value: "ok", label: "Aman" },
   { value: "warning", label: "Mendekati SLA" },
   { value: "breached", label: "Lewat SLA" },
+  { value: "paused", label: "Dijeda" },
 ]
+
+const SLA_STATUS_BY_FILTER: Record<Exclude<SlaFilter, "all">, "OK" | "MENDEKATI" | "BREACHED" | "PAUSED"> = {
+  ok: "OK",
+  warning: "MENDEKATI",
+  breached: "BREACHED",
+  paused: "PAUSED",
+}
 
 type AgePreset = "all" | "under24" | "between24and48" | "over48"
 const AGE_OPTIONS: Array<{ value: AgePreset; label: string; min?: number; max?: number }> = [
@@ -121,6 +130,11 @@ export default function KycListPage() {
   const [statusFilter, setStatusFilter] = useState("PENDING")
   const [slaFilter, setSlaFilter] = useState<SlaFilter>("all")
   const [agePreset, setAgePreset] = useState<AgePreset>("all")
+  // ADM-015: pencarian teks antrean. ADM-019: filter reviewer.
+  const [searchInput, setSearchInput] = useState("")
+  const [searchFilter, setSearchFilter] = useState("")
+  const [reviewerFilter, setReviewerFilter] = useState("ALL")
+  const [reviewers, setReviewers] = useState<Array<{ id: string; adminId: string; fullName: string | null; role: string }>>([])
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -155,13 +169,17 @@ export default function KycListPage() {
   const [slaSaving, setSlaSaving] = useState(false)
 
   const buildQuery = useCallback(
-    (sf: string, sla: SlaFilter, age: AgePreset) => {
+    (sf: string, sla: SlaFilter, age: AgePreset, search: string, reviewer: string) => {
       const preset = AGE_OPTIONS.find((o) => o.value === age)
       return {
         status: sf === "ALL" ? undefined : (sf as KycStatus),
-        slaBreached: sla === "breached" ? true : undefined,
+        // ADM-006: kondisi SLA difilter di sisi server (dulu client-side).
+        slaStatus: sla === "all" ? undefined : SLA_STATUS_BY_FILTER[sla],
         minAgeHours: preset?.min,
         maxAgeHours: preset?.max,
+        // ADM-015: pencarian teks. ADM-019: filter reviewer.
+        search: search.trim() || undefined,
+        assigned: reviewer === "ALL" ? undefined : reviewer === "UNASSIGNED" ? "unassigned" : reviewer,
       }
     },
     [],
@@ -173,10 +191,8 @@ export default function KycListPage() {
       else setRefreshing(true)
       setError(null)
       try {
-        const res = await getKycQueue({ page: targetPage, limit: PAGE_SIZE, ...buildQuery(statusFilter, slaFilter, agePreset) })
-        let nextRows = res.data ?? []
-        if (slaFilter === "warning") nextRows = nextRows.filter((r) => r.sla?.status === "MENDEKATI")
-        if (slaFilter === "ok") nextRows = nextRows.filter((r) => !r.sla || r.sla.status === "OK")
+        const res = await getKycQueue({ page: targetPage, limit: PAGE_SIZE, ...buildQuery(statusFilter, slaFilter, agePreset, searchFilter, reviewerFilter) })
+        const nextRows = res.data ?? []
         setRows(nextRows)
         const t = res.total ?? nextRows.length
         setTotal(t)
@@ -204,11 +220,14 @@ export default function KycListPage() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [page, statusFilter, slaFilter, agePreset, toast, buildQuery],
+    [page, statusFilter, slaFilter, agePreset, searchFilter, reviewerFilter, toast, buildQuery],
   )
 
   useEffect(() => {
     void getSlaConfig().then(setSlaConfig).catch(() => setSlaConfig(null))
+    // ADM-019: opsi filter reviewer (Gagal diam-diam → filter reviewer tetap
+    // hanya menampilkan opsi "Belum ditugaskan").
+    void listKycReviewers().then((r) => setReviewers(r.data ?? [])).catch(() => setReviewers([]))
   }, [])
 
   const clearSelection = useCallback(() => {
@@ -216,20 +235,28 @@ export default function KycListPage() {
     setSnapshot(new Map())
   }, [])
 
-  const handleFilterChange = (patch: { status?: string; sla?: SlaFilter; age?: AgePreset }) => {
+  const handleFilterChange = (patch: { status?: string; sla?: SlaFilter; age?: AgePreset; reviewer?: string }) => {
     if (patch.status !== undefined) setStatusFilter(patch.status)
     if (patch.sla !== undefined) setSlaFilter(patch.sla)
     if (patch.age !== undefined) setAgePreset(patch.age)
+    if (patch.reviewer !== undefined) setReviewerFilter(patch.reviewer)
     clearSelection()
     setPage(1)
     // load ulang dipicu oleh effect di bawah (juga berjalan saat mount).
+  }
+
+  /** ADM-015: terapkan pencarian teks (tombol Enter/Terapkan — bukan per-keystroke). */
+  const applySearch = () => {
+    setSearchFilter(searchInput.trim())
+    clearSelection()
+    setPage(1)
   }
 
   // Muat ulang saat filter berubah; berjalan juga saat mount (load awal).
   useEffect(() => {
     void load("initial", 1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, slaFilter, agePreset])
+  }, [statusFilter, slaFilter, agePreset, searchFilter, reviewerFilter])
 
   const handlePageChange = (p: number) => {
     setPage(p)
@@ -571,7 +598,17 @@ export default function KycListPage() {
 
       <Card padded={false} className="mb-4">
         <CardBody>
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {/* ADM-015: pencarian teks antrean KYC */}
+            <Input
+              label="Cari pengajuan"
+              placeholder="Nama / email / userId / KYC ID…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") applySearch()
+              }}
+            />
             <Select
               label="Status"
               options={STATUS_OPTIONS}
@@ -590,7 +627,24 @@ export default function KycListPage() {
               value={agePreset}
               onChange={(e) => handleFilterChange({ age: e.target.value as AgePreset })}
             />
+            {/* ADM-019: filter reviewer */}
+            <Select
+              label="Reviewer"
+              options={[
+                { value: "ALL", label: "Semua" },
+                { value: "UNASSIGNED", label: "Belum ditugaskan" },
+                ...reviewers.map((r) => ({
+                  value: r.id,
+                  label: r.fullName ?? r.adminId,
+                })),
+              ]}
+              value={reviewerFilter}
+              onChange={(e) => handleFilterChange({ reviewer: e.target.value })}
+            />
             <div className="flex items-end gap-2">
+              <Button variant="primary" fullWidth={false} onClick={applySearch}>
+                Cari
+              </Button>
               <Button variant="secondary" fullWidth={false} onClick={exportCsv} disabled={rows.length === 0}>
                 Ekspor CSV
               </Button>

@@ -12,6 +12,8 @@
  * event/pencapaian — BUKAN verifikasi. Jangan campur keduanya.
  */
 import { adminHttp } from "@/lib/api/admin-client"
+import { API_BASE_URL } from "@/lib/api/config"
+import { unwrapResponse } from "@/lib/api/response"
 
 /** Tipe badge verifikasi publik (dari VerificationBadgeService backend). */
 export type VerificationBadgeType =
@@ -90,11 +92,24 @@ export function restoreGrayVerified(userId: string): Promise<{ message: string }
  * Baca badge verifikasi aktif seorang user (endpoint publik, dipakai admin
  * untuk melihat tier yang sedang aktif). Butuh username; melempar 404 untuk
  * profil privat/nonaktif/diblokir — tangani di pemanggil.
+ *
+ * ADM-023: endpoint publik — pakai `fetch` polos TANPA bearer admin
+ * (sebelumnya via adminHttp → token admin dikirim ke endpoint yang tidak
+ * membutuhkannya + memicu alur refresh-on-401 yang tidak relevan).
  */
-export function getUserVerificationBadges(
+export async function getUserVerificationBadges(
   username: string,
 ): Promise<VerificationBadgesResponse> {
-  return adminHttp.get<VerificationBadgesResponse>(
-    `/v1/users/${encodeURIComponent(username)}/badges`,
+  const res = await fetch(
+    `${API_BASE_URL}/v1/users/${encodeURIComponent(username)}/badges`,
   )
+  if (!res.ok) {
+    const err = new Error(
+      `GET /v1/users/${username}/badges gagal (${res.status})`,
+    ) as Error & { status?: number }
+    err.status = res.status
+    throw err
+  }
+  const json = await res.json().catch(() => null)
+  return unwrapResponse(json) as VerificationBadgesResponse
 }

@@ -25,11 +25,13 @@ import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useAuth } from "@/lib/auth-context"
 import {
   approveKyc,
   assignKycReviewer,
   getKycDetail,
   getKycDocumentUrls,
+  listKycReviewers,
   rejectKyc,
   releaseKycReviewer,
   requestKycDocuments,
@@ -37,8 +39,8 @@ import {
   revokeKyc,
   type KycDetail,
   type KycDocumentUrls,
+  type KycReviewer,
 } from "@/lib/api/admin/kyc"
-import { listAdmins, type AdminUserItem } from "@/lib/api/admin/management"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 
@@ -84,6 +86,9 @@ export default function KycDetailPage() {
   const { id } = useParams<{ id: string }>()
   const kycId = Array.isArray(id) ? id[0] : (id ?? "")
   const toast = useToast()
+  const { role } = useAuth()
+  // ADM-003: revoke KYC hanya SUPER_ADMIN di backend.
+  const isSuperAdmin = role === "SUPER_ADMIN"
 
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -106,7 +111,7 @@ export default function KycDetailPage() {
 
   // GAP-E: penugasan reviewer + jeda/lanjut SLA.
   const [assignOpen, setAssignOpen] = useState(false)
-  const [reviewers, setReviewers] = useState<AdminUserItem[]>([])
+  const [reviewers, setReviewers] = useState<KycReviewer[]>([])
   const [reviewersLoading, setReviewersLoading] = useState(false)
   const [assignTarget, setAssignTarget] = useState("")
   const [requestDocsOpen, setRequestDocsOpen] = useState(false)
@@ -211,17 +216,15 @@ export default function KycDetailPage() {
   }
 
   // --- GAP-E: penugasan reviewer ---
+  // ADM-004: pakai endpoint /v1/admin/kyc/reviewers yang boleh dibaca
+  // KYC_ADMIN (sebelumnya listAdmins → 403 untuk KYC_ADMIN).
   const openAssign = async () => {
     setAssignOpen(true)
     setAssignTarget("")
     setReviewersLoading(true)
     try {
-      const res = await listAdmins({ limit: 100 })
-      setReviewers(
-        (res.data ?? []).filter(
-          (a) => a.isActive && (a.role === "KYC_ADMIN" || a.role === "SUPER_ADMIN"),
-        ),
-      )
+      const res = await listKycReviewers()
+      setReviewers(res.data ?? [])
     } catch (e) {
       fail("Gagal memuat daftar reviewer", e)
     } finally {
@@ -510,14 +513,17 @@ export default function KycDetailPage() {
                 >
                   Tolak
                 </Button>
-                <Button
-                  variant="secondary"
-                  fullWidth={false}
-                  disabled={!isApproved}
-                  onClick={() => setRevokeOpen(true)}
-                >
-                  Cabut persetujuan
-                </Button>
+                {/* ADM-003: revoke KYC = SUPER_ADMIN-only di backend — sembunyikan dari KYC_ADMIN */}
+                {isSuperAdmin ? (
+                  <Button
+                    variant="secondary"
+                    fullWidth={false}
+                    disabled={!isApproved}
+                    onClick={() => setRevokeOpen(true)}
+                  >
+                    Cabut persetujuan
+                  </Button>
+                ) : null}
                 <Button
                   variant="secondary"
                   fullWidth={false}
@@ -591,7 +597,12 @@ export default function KycDetailPage() {
       {/* Dialog password dokumen */}
       <Dialog
         open={docOpen}
-        onClose={() => setDocOpen(false)}
+        // ADM-010: bersihkan password mentah dari state saat dialog ditutup.
+        onClose={() => {
+          setDocOpen(false)
+          setPassword("")
+          setPasswordError(null)
+        }}
         title="Buka dokumen KYC"
         description="Masukkan password admin untuk membuka dokumen. URL hanya berlaku 5 menit."
         footer={
@@ -599,7 +610,15 @@ export default function KycDetailPage() {
             <Button variant="primary" loading={docLoading} onClick={handleGetDocs}>
               Buka dokumen
             </Button>
-            <Button variant="ghost" disabled={docLoading} onClick={() => setDocOpen(false)}>
+            <Button
+              variant="ghost"
+              disabled={docLoading}
+              onClick={() => {
+                setDocOpen(false)
+                setPassword("")
+                setPasswordError(null)
+              }}
+            >
               Batal
             </Button>
           </div>

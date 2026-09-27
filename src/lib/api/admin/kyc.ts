@@ -156,8 +156,27 @@ export function getKycQueue(params?: {
   maxAgeHours?: number
   /** ID admin reviewer, atau "unassigned". */
   assigned?: string
+  /** ADM-006: filter status SLA di sisi server. */
+  slaStatus?: "OK" | "MENDEKATI" | "BREACHED" | "PAUSED"
+  /** ADM-015: pencarian teks (kycId / nama / email / userId / username). */
+  search?: string
 }): Promise<Paginated<KycQueueItem>> {
   return adminHttp.get<Paginated<KycQueueItem>>("/v1/admin/kyc", { query: params })
+}
+
+/**
+ * ADM-004: daftar reviewer (KYC_ADMIN/SUPER_ADMIN aktif) — tanpa email/PII.
+ * Boleh dibaca KYC_ADMIN (tidak seperti GET /v1/admin/management).
+ */
+export type KycReviewer = {
+  id: string
+  adminId: string
+  fullName: string | null
+  role: "KYC_ADMIN" | "SUPER_ADMIN"
+}
+
+export function listKycReviewers(): Promise<{ data: KycReviewer[]; total: number }> {
+  return adminHttp.get<{ data: KycReviewer[]; total: number }>("/v1/admin/kyc/reviewers")
 }
 
 export function getKycDetail(kycId: string): Promise<KycDetail> {

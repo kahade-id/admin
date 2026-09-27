@@ -438,6 +438,16 @@ function TeamPageContent() {
                 align: "right",
                 render: (r) => {
                   const locked = isLocked(r)
+                  // ADM-016/017: reset 2FA & kunci diri sendiri ditolak
+                  // backend (fail-closed) — sembunyikan tombolnya, konsisten
+                  // dengan tombol "Hapus".
+                  if (isSelf(r)) {
+                    return (
+                      <span className="text-caption text-text-tertiary">
+                        Akun Anda
+                      </span>
+                    )
+                  }
                   return (
                     <div className="flex flex-wrap justify-end gap-2">
                       <Button
@@ -456,16 +466,14 @@ function TeamPageContent() {
                       >
                         {locked ? "Buka kunci" : r.isActive ? "Kunci" : "Aktifkan"}
                       </Button>
-                      {isSelf(r) ? null : (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          fullWidth={false}
-                          onClick={() => setConfirm({ kind: "delete", admin: r })}
-                        >
-                          Hapus
-                        </Button>
-                      )}
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        fullWidth={false}
+                        onClick={() => setConfirm({ kind: "delete", admin: r })}
+                      >
+                        Hapus
+                      </Button>
                     </div>
                   )
                 },
