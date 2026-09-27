@@ -24,6 +24,8 @@ import {
   adminAdjustStock,
   listAdminStockMovements,
   ADMIN_PRODUCT_MODERATION_LABEL,
+  ADMIN_PRODUCT_TYPE_LABEL,
+  ADMIN_PRODUCT_TYPE_OPTIONS,
   type AdminProductItem,
   type AdminStockMovement,
 } from "@/lib/api/admin/inventory"
@@ -37,6 +39,8 @@ type Tab = "products" | "movements"
 function ProductsTab() {
   const toast = useToast()
   const [moderation, setModeration] = useState("PENDING")
+  // Batch 43, item #1: filter tipe produk (jasa/fisik/digital/lainnya).
+  const [productType, setProductType] = useState("ALL")
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -44,11 +48,16 @@ function ProductsTab() {
   const [totalPages, setTotalPages] = useState(1)
 
   const load = useCallback(
-    async (p = page, m = moderation) => {
+    async (p = page, m = moderation, t = productType) => {
       setLoading(true)
       setError(null)
       try {
-        const res = await listAdminProducts({ page: p, limit: PAGE_SIZE, moderationStatus: m === "ALL" ? undefined : m })
+        const res = await listAdminProducts({
+          page: p,
+          limit: PAGE_SIZE,
+          moderationStatus: m === "ALL" ? undefined : m,
+          productType: t === "ALL" ? undefined : t,
+        })
         setRows(res.data ?? [])
         setTotalPages(res.totalPages ?? 1)
       } catch (e) {
@@ -57,7 +66,7 @@ function ProductsTab() {
         setLoading(false)
       }
     },
-    [page, moderation],
+    [page, moderation, productType],
   )
 
   useEffect(() => { void load() }, [load])
@@ -102,6 +111,12 @@ function ProductsTab() {
             ...Object.entries(ADMIN_PRODUCT_MODERATION_LABEL).map(([value, label]) => ({ value, label })),
           ]}
           onChange={(e) => { setModeration(e.target.value); setPage(1); void load(1, e.target.value) }} className="w-52" />
+        <Select label="Tipe produk" value={productType}
+          options={[
+            { value: "ALL", label: "Semua tipe" },
+            ...ADMIN_PRODUCT_TYPE_OPTIONS,
+          ]}
+          onChange={(e) => { setProductType(e.target.value); setPage(1); void load(1, moderation, e.target.value) }} className="w-52" />
       </div>
       {loading ? (
         <div className="flex min-h-[30vh] items-center justify-center gap-2"><Spinner size="md" /><p className="text-body text-text-secondary">Memuat…</p></div>
@@ -114,6 +129,11 @@ function ProductsTab() {
               { key: "name", header: "Produk", render: (r) => (
                 <div><div className="font-semibold">{r.name}</div>
                 <div className="text-small text-text-secondary">SKU {r.sku} · {r.category}</div></div>) },
+              { key: "productType", header: "Tipe", render: (r) => (
+                <Badge tone={r.productType ? "info" : "neutral"}>
+                  {r.productType ? (ADMIN_PRODUCT_TYPE_LABEL[String(r.productType)] ?? String(r.productType)) : "—"}
+                </Badge>
+              ) },
               { key: "moderationStatus", header: "Moderasi", render: (r) => <Badge>{ADMIN_PRODUCT_MODERATION_LABEL[String(r.moderationStatus)] ?? String(r.moderationStatus)}</Badge> },
               { key: "price", header: "Harga", render: (r) => <span>{formatIdrSen(r.priceSen)}</span> },
               { key: "stock", header: "Tersedia / Cadang", render: (r) => <span>{r.quantityAvailable} / {r.quantityReserved}</span> },

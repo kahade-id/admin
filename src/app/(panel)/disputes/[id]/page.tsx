@@ -37,6 +37,7 @@ import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import {
   assignDispute,
+  escalateDispute,
   getDisputeDetail,
   getDisputeChat,
   getDisputeMessages,
@@ -433,6 +434,9 @@ export default function DisputeDetailPage() {
   const [buyerPercent, setBuyerPercent] = useState("")
   const [sellerPercent, setSellerPercent] = useState("")
   const [acting, setActing] = useState<string | null>(null)
+  // Batch 43 item #33: eskalasi 1 ketuk — dialog konfirmasi + alasan (audit).
+  const [escalateOpen, setEscalateOpen] = useState(false)
+  const [escalateReason, setEscalateReason] = useState("")
   // DP-021: kapan data terakhir disegarkan (polling otomatis).
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
 
@@ -574,6 +578,29 @@ export default function DisputeDetailPage() {
       toast.show({ title: "Sengketa ditandai under review", tone: "success" })
     } catch (e) {
       fail("Gagal menandai under review", e)
+    } finally {
+      setActing(null)
+    }
+  }
+
+  // Batch 43 item #33: eskalasi 1 ketuk — hanya menandai status ESCALATED,
+  // dana tetap di escrow sampai resolve. Non-finansial.
+  const handleEscalate = async () => {
+    if (acting) return
+    const reason = escalateReason.trim()
+    if (!reason) {
+      toast.show({ title: "Alasan eskalasi wajib diisi (audit).", tone: "danger" })
+      return
+    }
+    setActing("escalate")
+    try {
+      await escalateDispute(disputeId, reason)
+      setEscalateOpen(false)
+      setEscalateReason("")
+      await load("refresh")
+      toast.show({ title: "Sengketa dieskalasi.", tone: "success" })
+    } catch (e) {
+      fail("Gagal mengekskalasi sengketa", e)
     } finally {
       setActing(null)
     }
@@ -722,6 +749,9 @@ export default function DisputeDetailPage() {
   // tombol resolve disembunyikan.
   const decision = dispute ? asRecord(dispute.decision) : null
   const isResolved = status === "RESOLVED" || decision !== null
+  // Batch 43 item #33: eskalasi 1 ketuk tersedia selama sengketa belum
+  // diputus dan belum berstatus ESCALATED.
+  const canEscalate = !isResolved && status !== "ESCALATED"
 
   // Info order untuk label pengirim di riwayat pesan (pembeli/penjual/admin).
   const disputeOrder = dispute ? (asRecord(dispute.order) as DisputeOrderInfo | null) : null
@@ -939,6 +969,25 @@ export default function DisputeDetailPage() {
                       Assign
                     </Button>
                   )}
+                  <Button
+                    variant="secondary"
+                    fullWidth={false}
+                    disabled={!canEscalate}
+                    title={
+                      canEscalate
+                        ? "Tandai sengketa sebagai ESCALATED (dana tetap di escrow sampai resolve)"
+                        : isResolved
+                          ? "Sengketa sudah diputus"
+                          : "Sengketa sudah dieskalasi"
+                    }
+                    loading={acting === "escalate"}
+                    onClick={() => {
+                      setEscalateReason("")
+                      setEscalateOpen(true)
+                    }}
+                  >
+                    Eskalasi 1 ketuk
+                  </Button>
                   <Button
                     variant="primary"
                     fullWidth={false}
@@ -1325,6 +1374,42 @@ export default function DisputeDetailPage() {
             )}
           </div>
         </div>
+      </Dialog>
+      {/* Batch 43 item #33: eskalasi 1 ketuk — konfirmasi + alasan wajib (audit). */}
+      <Dialog
+        open={escalateOpen}
+        onClose={() => setEscalateOpen(false)}
+        title="Eskalasi sengketa?"
+        description="Sengketa ditandai ESCALATED dan diprioritaskan untuk putusan tingkat lanjut. Dana tetap di escrow sampai sengketa di-resolve."
+        footer={
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="primary"
+              loading={acting === "escalate"}
+              disabled={!escalateReason.trim()}
+              onClick={handleEscalate}
+            >
+              Eskalasi sekarang
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={acting === "escalate"}
+              onClick={() => setEscalateOpen(false)}
+            >
+              Batal
+            </Button>
+          </div>
+        }
+      >
+        <TextArea
+          label="Alasan eskalasi"
+          required
+          rows={3}
+          value={escalateReason}
+          onChange={(e) => setEscalateReason(e.target.value)}
+          placeholder="cth. Bukti bertentangan, perlu tinjauan supervisor…"
+          maxLength={1000}
+        />
       </Dialog>
     </RoleGate>
   )

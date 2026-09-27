@@ -77,6 +77,11 @@ const ROUTES: RouteSpec[] = [
   { href: "/orders", load: () => import("@/app/(panel)/orders/page"), heading: /Order/ },
   { href: "/vouchers", load: () => import("@/app/(panel)/vouchers/page"), heading: /Voucher & Kampanye/ },
   { href: "/campaigns", load: () => import("@/app/(panel)/campaigns/page"), heading: /Kampanye/ },
+  // Batch 43 (AD-43): halaman baru — mock paginasi default sudah cukup.
+  { href: "/banners", load: () => import("@/app/(panel)/banners/page"), heading: /Banner & Carousel/ },
+  { href: "/seller-vouchers", load: () => import("@/app/(panel)/seller-vouchers/page"), heading: /Voucher Seller/ },
+  { href: "/group-buying", load: () => import("@/app/(panel)/group-buying/page"), heading: /Patungan Grup/ },
+  { href: "/jastip", load: () => import("@/app/(panel)/jastip/page"), heading: /Jastip/ },
   { href: "/ratings", load: () => import("@/app/(panel)/ratings/page"), heading: /Rating/ },
   { href: "/referral", load: () => import("@/app/(panel)/referral/page"), heading: /Referral/ },
   {

@@ -77,6 +77,12 @@ export const MENU: MenuItem[] = [
   { label: "Keuangan & Escrow", href: "/finance", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Pesanan", href: "/orders", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
   { label: "Voucher", href: "/vouchers", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
+  // Batch 43 (AD-43): role provisoris — kontrak backend mega-batch belum
+  // tersedia saat halaman dibuat; diselaraskan ulang bila backend berbeda.
+  { label: "Voucher Seller", href: "/seller-vouchers", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
+  { label: "Banner & Carousel", href: "/banners", roles: ["SUPER_ADMIN"] },
+  { label: "Patungan Grup", href: "/group-buying", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "FINANCE_ADMIN"] },
+  { label: "Jastip", href: "/jastip", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Kampanye", href: "/campaigns", roles: ["SUPER_ADMIN"] },
   { label: "Ulasan", href: "/ratings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Referral", href: "/referral", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },

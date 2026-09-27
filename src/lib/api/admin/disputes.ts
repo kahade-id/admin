@@ -218,3 +218,23 @@ export function resolveDispute(
     { headers: idempotencyHeaders() },
   )
 }
+
+/**
+ * Batch 43 item #33 — eskalasi sengketa 1 ketuk dari admin.
+ *
+ * KONTRAK ASUMSI (belum diverifikasi ke backend): endpoint admin khusus
+ * `POST /v1/admin/disputes/:disputeId/escalate` belum ada — yang ada baru
+ * endpoint user (`POST /v1/disputes/:disputeId/escalate`, body { reason }).
+ * Asumsi di sini memakai bentuk kontrak yang sama di namespace admin
+ * (idempoten). Bila backend tidak menyediakannya, pemanggil akan gagal 404
+ * dengan pesan ramah — jangan karang endpoint lain.
+ * Catatan: eskalasi hanya menandai status ESCALATED; dana tetap di escrow
+ * sampai resolve.
+ */
+export function escalateDispute(disputeId: string, reason: string): Promise<unknown> {
+  return adminHttp.post(
+    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/escalate`,
+    { reason },
+    { headers: idempotencyHeaders() },
+  )
+}
