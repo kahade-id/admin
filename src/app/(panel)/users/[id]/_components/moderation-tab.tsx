@@ -110,6 +110,18 @@ const KIND_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "admin", label: "Admin" },
 ]
 
+/** ADM-018: filter jenis event sesuai enum yang didukung backend. */
+const EVENT_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "all", label: "Semua jenis" },
+  { value: "ban", label: "Blokir" },
+  { value: "unban", label: "Buka blokir" },
+  { value: "kyc_decision", label: "Keputusan KYC" },
+  { value: "report_resolved", label: "Laporan diselesaikan" },
+  { value: "flag_raised", label: "Flag dinaikkan" },
+  { value: "flag_cleared", label: "Flag dibersihkan" },
+  { value: "admin_action", label: "Aksi admin lain" },
+]
+
 function prettyEventType(t: string): string {
   return t.replace(/_/g, " ").toLowerCase()
 }
@@ -136,6 +148,7 @@ function ModerationTimeline({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [kind, setKind] = useState<string>("all")
+  const [eventType, setEventType] = useState<string>("all")
   const [actor, setActor] = useState("")
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
@@ -169,11 +182,12 @@ function ModerationTimeline({ userId }: { userId: string }) {
   const currentFilters = useCallback(
     (): ListUserModerationEventsQuery => ({
       kind: kind === "all" ? undefined : (kind as UserModerationEventKind),
+      event: eventType === "all" ? undefined : eventType,
       actor: actor.trim() || undefined,
       from: from || undefined,
       to: to || undefined,
     }),
-    [kind, actor, from, to],
+    [kind, eventType, actor, from, to],
   )
 
   useEffect(() => {
@@ -187,6 +201,7 @@ function ModerationTimeline({ userId }: { userId: string }) {
 
   function resetFilters() {
     setKind("all")
+    setEventType("all")
     setActor("")
     setFrom("")
     setTo("")
@@ -197,12 +212,18 @@ function ModerationTimeline({ userId }: { userId: string }) {
     <Card padded={false}>
       <CardHeader title="Timeline moderasi" />
       <CardBody>
-        <div className="mb-4 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+        <div className="mb-4 grid gap-3 md:grid-cols-2 lg:grid-cols-6">
           <Select
             label="Sumber event"
             options={KIND_OPTIONS}
             value={kind}
             onChange={(e) => setKind(e.target.value)}
+          />
+          <Select
+            label="Jenis event"
+            options={EVENT_TYPE_OPTIONS}
+            value={eventType}
+            onChange={(e) => setEventType(e.target.value)}
           />
           <Input
             label="Aktor"

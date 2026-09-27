@@ -142,7 +142,7 @@ export type AdminUserWalletTransaction = {
   status: string
   amount: number
   /** ADM-007: arah mutasi dari backend (diturunkan dari `type`); optional untuk kompatibilitas. */
-  direction?: "DEBIT" | "CREDIT" | null
+  direction?: "DEBIT" | "CREDIT" | "UNKNOWN" | null
   balanceBefore: number
   balanceAfter: number
   description: string | null
@@ -164,6 +164,13 @@ export type AdminUserWallet = {
   createdAt: string
   updatedAt: string
   transactions: AdminUserWalletTransaction[]
+  /** ADM-013: meta paginasi transaksi (opsional untuk kompatibilitas). */
+  transactionsMeta?: {
+    page: number
+    limit: number
+    total: number
+    totalPages: number
+  }
 }
 
 /** AW-019: alias — bentuk paginasi backend `createPaginatedResponse` (field di root). */
@@ -175,14 +182,17 @@ export type ListAdminUsersQuery = {
   status?: AdminUserStatusFilter
   page?: number
   limit?: number
+  /** ADM-014: sortir (backend me-whitelist sortBy). */
+  sortBy?: "createdAt" | "lastLoginAt" | "email" | "fullName"
+  sortOrder?: "asc" | "desc"
 }
 
 export function listAdminUsers(
   query: ListAdminUsersQuery = {},
 ): Promise<AdminPaginated<AdminUserSummary>> {
-  const { q, status, page, limit } = query
+  const { q, status, page, limit, sortBy, sortOrder } = query
   return adminHttp.get<AdminPaginated<AdminUserSummary>>("/v1/admin/users", {
-    query: { search: q?.trim() || undefined, status, page, limit },
+    query: { search: q?.trim() || undefined, status, page, limit, sortBy, sortOrder },
   })
 }
 
@@ -202,9 +212,17 @@ export function getUserOrders(
   )
 }
 
-export function getUserWallet(userId: string): Promise<AdminUserWallet> {
+/**
+ * ADM-013: `page`/`limit` opsional — mem-paginasi daftar transaksi wallet
+ * (default backend 10). Tanpa argumen, berperilaku seperti semula.
+ */
+export function getUserWallet(
+  userId: string,
+  opts: { page?: number; limit?: number } = {},
+): Promise<AdminUserWallet> {
   return adminHttp.get<AdminUserWallet>(
     `/v1/admin/users/${encodeURIComponent(userId)}/wallet`,
+    { query: opts },
   )
 }
 
@@ -373,6 +391,8 @@ export type UserModerationEvent = {
 
 export type ListUserModerationEventsQuery = {
   kind?: UserModerationEventKind
+  /** ADM-018: filter jenis event sesuai enum backend (ban|unban|kyc_decision|…). */
+  event?: string
   /** Filter aktor (nama/ID admin). */
   actor?: string
   /** ISO date (dari). */
@@ -393,7 +413,7 @@ export function listUserModerationTimeline(
 ): Promise<AdminPaginated<UserModerationEvent>> {
   return adminHttp.get<AdminPaginated<UserModerationEvent>>(
     `/v1/admin/users/${encodeURIComponent(userId)}/moderation-events`,
-    { query: { kind: query.kind, actor: query.actor, from: query.from, to: query.to, page: query.page, limit: query.limit } },
+    { query: { kind: query.kind, event: query.event, actor: query.actor, from: query.from, to: query.to, page: query.page, limit: query.limit } },
   )
 }
 

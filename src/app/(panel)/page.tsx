@@ -37,7 +37,7 @@ import {
 import { getFinancialSummary } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { useAuth } from "@/lib/auth-context"
-import { formatDateTimeWIB, formatNumber, num } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR, formatNumber, num } from "@/lib/format"
 import { menuForRole } from "@/lib/rbac"
 
 const ORDER_LABEL: Record<string, string> = {
@@ -88,6 +88,14 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-h3 font-bold text-text-primary">{value}</p>
     </Card>
   )
+}
+
+/**
+ * ADM-011: metrik yang hilang (undefined/null) tampil "—", bukan "0" —
+ * "0 pengguna" adalah angka palsu. Nilai 0 yang valid tetap tampil "0".
+ */
+function statNum(value: unknown): string {
+  return value == null ? "—" : formatNumber(num(value))
 }
 
 export default function DashboardPage() {
@@ -190,6 +198,9 @@ export default function DashboardPage() {
   }
 
   const maxOrders = Math.max(1, ...chartData.map((d) => d.orders))
+  // ADM-012: judul kartu menyebut "pendapatan" — render seri pendapatan
+  // (batang kedua per hari), bukan hanya order. Pendapatan dalam IDR.
+  const maxRevenue = Math.max(1, ...chartData.map((d) => d.revenue ?? 0))
 
   const menu = menuForRole(role).filter((m) => m.href !== "/")
 
@@ -235,13 +246,13 @@ export default function DashboardPage() {
           {summary ? (
             <section aria-label="Ringkasan">
               <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
-                <StatCard label="Total pengguna" value={formatNumber(num(summary.users?.total))} />
-                <StatCard label="Total order" value={formatNumber(num(summary.orders?.total))} />
-                <StatCard label="Escrow aktif" value={formatNumber(num(summary.orders?.active))} />
-                <StatCard label="KYC menunggu" value={formatNumber(num(summary.kyc?.pending))} />
+                <StatCard label="Total pengguna" value={statNum(summary.users?.total)} />
+                <StatCard label="Total order" value={statNum(summary.orders?.total)} />
+                <StatCard label="Escrow aktif" value={statNum(summary.orders?.active)} />
+                <StatCard label="KYC menunggu" value={statNum(summary.kyc?.pending)} />
                 <StatCard
                   label="Sengketa menunggu"
-                  value={formatNumber(num(summary.disputes?.open))}
+                  value={statNum(summary.disputes?.open)}
                 />
                 <StatCard
                   label="Penarikan menunggu"
@@ -340,27 +351,52 @@ export default function DashboardPage() {
                 <div
                   className="flex items-end gap-1 overflow-x-auto pb-2"
                   role="img"
-                  aria-label={`Grafik order per hari, ${chartData.length} hari`}
+                  aria-label={`Grafik order & pendapatan per hari, ${chartData.length} hari`}
                 >
-                  {chartData.map((d) => (
-                    <div
-                      key={d.date}
-                      className="flex min-w-[28px] flex-1 flex-col items-center gap-1"
-                      title={`${d.date}: ${d.orders} order`}
-                    >
-                      <div className="flex h-32 w-full items-end justify-center rounded-sm bg-surface">
-                        <div
-                          className="w-3/5 rounded-sm bg-info"
-                          style={{ height: `${Math.max(4, (d.orders / maxOrders) * 100)}%` }}
-                        />
+                  {chartData.map((d) => {
+                    const revenue = d.revenue ?? null
+                    const revenueTitle =
+                      revenue == null
+                        ? "pendapatan tidak tersedia"
+                        : `${formatIDR(revenue)} pendapatan`
+                    return (
+                      <div
+                        key={d.date}
+                        className="flex min-w-[28px] flex-1 flex-col items-center gap-1"
+                        title={`${d.date}: ${d.orders} order • ${revenueTitle}`}
+                      >
+                        <div className="flex h-32 w-full items-end justify-center gap-1 rounded-sm bg-surface px-1">
+                          <div
+                            className="w-1/2 max-w-[10px] rounded-sm bg-info"
+                            style={{ height: `${Math.max(4, (d.orders / maxOrders) * 100)}%` }}
+                            aria-hidden
+                          />
+                          {revenue == null ? (
+                            <div className="w-1/2 max-w-[10px] rounded-sm border border-dashed border-border" style={{ height: "6%" }} aria-hidden title="Data pendapatan hilang — tidak digambar sebagai 0" />
+                          ) : (
+                            <div
+                              className="w-1/2 max-w-[10px] rounded-sm bg-success"
+                              style={{ height: `${Math.max(4, (revenue / maxRevenue) * 100)}%` }}
+                              aria-hidden
+                            />
+                          )}
+                        </div>
+                        <span className="text-caption tabular-nums text-text-tertiary">
+                          {d.date.slice(5)}
+                        </span>
                       </div>
-                      <span className="text-caption tabular-nums text-text-tertiary">
-                        {d.date.slice(5)}
-                      </span>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
+              <div className="mt-2 flex gap-4" aria-hidden>
+                <span className="flex items-center gap-1.5 text-caption text-text-tertiary">
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-info" /> Order
+                </span>
+                <span className="flex items-center gap-1.5 text-caption text-text-tertiary">
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm bg-success" /> Pendapatan
+                </span>
+              </div>
             </CardBody>
           </Card>
 

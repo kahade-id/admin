@@ -69,8 +69,9 @@ const MAX_ADJUST_IDR = 50_000_000
 /**
  * ADM-007: arah mutasi wallet diturunkan dari `type`, BUKAN dari tanda amount
  * (backend selalu menyimpan amount sebagai nominal positif). Backend ikut
- * mengirim field `direction` (DEBIT/CREDIT) — dipakai bila ada; fallback ke
- * pemetaan tipe di sini agar UI tetap benar bila field belum tersedia.
+ * mengirim field `direction` (DEBIT/CREDIT/UNKNOWN) — dipakai bila ada;
+ * fallback ke pemetaan tipe eksplisit di sini agar UI tetap benar bila
+ * field belum tersedia. Tipe tak dikenal → UNKNOWN (render netral).
  */
 const DEBIT_WALLET_TYPES = new Set([
   "WITHDRAW",
@@ -81,13 +82,30 @@ const DEBIT_WALLET_TYPES = new Set([
   "SUBSCRIPTION_PAYMENT",
 ])
 
-function walletTxIsDebit(t: {
+/** ADM-007: tipe yang menambah saldo (set eksplisit — bukan "selain debit"). */
+const CREDIT_WALLET_TYPES = new Set([
+  "TOP_UP",
+  "ORDER_RELEASE",
+  "ORDER_REFUND",
+  "REFERRAL_REWARD",
+  "ADMIN_CREDIT",
+  "DISPUTE_RELEASE",
+  "TRANSFER_RECEIVED",
+  "CAMPAIGN_CASHBACK",
+  "TOPUP_BONUS",
+  "MILESTONE_RELEASE",
+])
+
+function walletTxDirectionLocal(t: {
   type: string
-  direction?: "DEBIT" | "CREDIT" | null
-}): boolean {
-  if (t.direction === "DEBIT") return true
-  if (t.direction === "CREDIT") return false
-  return DEBIT_WALLET_TYPES.has(t.type.toUpperCase())
+  direction?: "DEBIT" | "CREDIT" | "UNKNOWN" | null
+}): "DEBIT" | "CREDIT" | "UNKNOWN" {
+  if (t.direction === "DEBIT" || t.direction === "CREDIT" || t.direction === "UNKNOWN") return t.direction
+  // Fallback untuk respons lama tanpa `direction`: peta lokal hanya tipe
+  // yang diketahui; yang lain netral (UNKNOWN) — bukan tebakan.
+  if (DEBIT_WALLET_TYPES.has(t.type.toUpperCase())) return "DEBIT"
+  if (CREDIT_WALLET_TYPES.has(t.type.toUpperCase())) return "CREDIT"
+  return "UNKNOWN"
 }
 
 function rp(n: number | null | undefined): string {
@@ -150,6 +168,105 @@ export default function UserDetailPage() {
   const [sessions, setSessions] = useState<AdminUserSession[]>([])
   const [orders, setOrders] = useState<AdminUserOrder[]>([])
   const [audit, setAudit] = useState<AdminUserAuditEntry[]>([])
+  // ADM-013: "muat lebih" per sub-list (halaman 1 sudah dimuat di loadAll).
+  const [moreLoading, setMoreLoading] = useState<Record<string, boolean>>({})
+  const [ordersPage, setOrdersPage] = useState(1)
+  const [ordersHasMore, setOrdersHasMore] = useState(false)
+  const [sessionsPage, setSessionsPage] = useState(1)
+  const [sessionsHasMore, setSessionsHasMore] = useState(false)
+  const [auditPage, setAuditPage] = useState(1)
+  const [auditHasMore, setAuditHasMore] = useState(false)
+  const [txPage, setTxPage] = useState(1)
+  const [txHasMore, setTxHasMore] = useState(false)
+
+  const SUB_LIST_LIMIT = 20
+
+  /** Muat halaman berikutnya untuk sub-list dan tempelkan ke daftar lama. */
+  const loadMore = useCallback(
+    async (
+      key: "orders" | "sessions" | "audit" | "wallet",
+      page: number,
+      setPage: (p: number) => void,
+      setHasMore: (b: boolean) => void,
+    ) => {
+      if (!userId || moreLoading[key]) return
+      setMoreLoading((m) => ({ ...m, [key]: true }))
+      try {
+        if (key === "orders") {
+          const res = await getUserOrders(userId, { page, limit: SUB_LIST_LIMIT })
+          setOrders((prev) => [...prev, ...(res.data ?? [])])
+          setHasMore(page < (res.totalPages ?? 1))
+        } else if (key === "sessions") {
+          const res = await getUserSessions(userId, { page, limit: SUB_LIST_LIMIT })
+          setSessions((prev) => [...prev, ...(res.data ?? [])])
+          setHasMore(page < (res.totalPages ?? 1))
+        } else if (key === "audit") {
+          const res = await getUserAuditLog(userId, { page, limit: SUB_LIST_LIMIT })
+          setAudit((prev) => [...prev, ...(res.data ?? [])])
+          setHasMore(page < (res.totalPages ?? 1))
+        } else {
+          const res = await getUserWallet(userId, { page, limit: SUB_LIST_LIMIT })
+          setWallet((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  transactions: [...prev.transactions, ...res.transactions],
+                  transactionsMeta: res.transactionsMeta,
+                }
+              : prev,
+          )
+          setHasMore(page < (res.transactionsMeta?.totalPages ?? 1))
+        }
+        setPage(page)
+      } catch (e) {
+        toast.show({
+          title: "Gagal memuat data",
+          description: userMessage(e),
+          tone: "danger",
+        })
+      } finally {
+        setMoreLoading((m) => ({ ...m, [key]: false }))
+      }
+    },
+    [userId, moreLoading, toast],
+  )
+
+  function LoadMoreButton({
+    section,
+    page,
+    setPage,
+    setHasMore,
+    label,
+  }: {
+    section: "orders" | "sessions" | "audit" | "wallet"
+    page: number
+    setPage: (p: number) => void
+    setHasMore: (b: boolean) => void
+    label: string
+  }) {
+    const hasMore =
+      section === "orders"
+        ? ordersHasMore
+        : section === "sessions"
+          ? sessionsHasMore
+          : section === "audit"
+            ? auditHasMore
+            : txHasMore
+    if (!hasMore) return null
+    return (
+      <div className="mt-4 text-center">
+        <Button
+          variant="secondary"
+          size="sm"
+          fullWidth={false}
+          loading={!!moreLoading[section]}
+          onClick={() => loadMore(section, page + 1, setPage, setHasMore)}
+        >
+          Muat lebih banyak {label}
+        </Button>
+      </div>
+    )
+  }
   const [sectionError, setSectionError] = useState<Record<string, string>>({})
 
   // Tier verifikasi aktif (dari endpoint badge publik; butuh username)
@@ -190,10 +307,10 @@ export default function UserDetailPage() {
     setSectionError({})
     const [d, w, s, o, a] = await Promise.allSettled([
       getAdminUserDetail(userId),
-      getUserWallet(userId),
-      getUserSessions(userId, { limit: 50 }),
-      getUserOrders(userId, { limit: 20 }),
-      getUserAuditLog(userId, { limit: 20 }),
+      getUserWallet(userId, { limit: SUB_LIST_LIMIT }),
+      getUserSessions(userId, { limit: SUB_LIST_LIMIT }),
+      getUserOrders(userId, { limit: SUB_LIST_LIMIT }),
+      getUserAuditLog(userId, { limit: SUB_LIST_LIMIT }),
     ])
     if (d.status === "fulfilled") setDetail(d.value)
     else {
@@ -216,14 +333,26 @@ export default function UserDetailPage() {
       setVerifiedBadges([])
     }
     const nextErrors: Record<string, string> = {}
-    if (w.status === "fulfilled") setWallet(w.value)
-    else nextErrors.wallet = userMessage(w.reason)
-    if (s.status === "fulfilled") setSessions(s.value.data ?? [])
-    else nextErrors.sessions = userMessage(s.reason)
-    if (o.status === "fulfilled") setOrders(o.value.data ?? [])
-    else nextErrors.orders = userMessage(o.reason)
-    if (a.status === "fulfilled") setAudit(a.value.data ?? [])
-    else nextErrors.audit = userMessage(a.reason)
+    if (w.status === "fulfilled") {
+      setWallet(w.value)
+      setTxPage(1)
+      setTxHasMore(1 < (w.value.transactionsMeta?.totalPages ?? 1))
+    } else nextErrors.wallet = userMessage(w.reason)
+    if (s.status === "fulfilled") {
+      setSessions(s.value.data ?? [])
+      setSessionsPage(1)
+      setSessionsHasMore(1 < (s.value.totalPages ?? 1))
+    } else nextErrors.sessions = userMessage(s.reason)
+    if (o.status === "fulfilled") {
+      setOrders(o.value.data ?? [])
+      setOrdersPage(1)
+      setOrdersHasMore(1 < (o.value.totalPages ?? 1))
+    } else nextErrors.orders = userMessage(o.reason)
+    if (a.status === "fulfilled") {
+      setAudit(a.value.data ?? [])
+      setAuditPage(1)
+      setAuditHasMore(1 < (a.value.totalPages ?? 1))
+    } else nextErrors.audit = userMessage(a.reason)
     setSectionError(nextErrors)
     setLoading(false)
   }, [userId])
@@ -741,7 +870,20 @@ export default function UserDetailPage() {
                     header: "Jumlah",
                     align: "right",
                     render: (t) => {
-                      const isDebit = walletTxIsDebit(t)
+                      const direction = walletTxDirectionLocal(t)
+                      // UNKNOWN → netral: tanpa tanda +/- dan tanpa warna,
+                      // dengan tooltip penjelasan.
+                      if (direction === "UNKNOWN") {
+                        return (
+                          <span
+                            className="text-text-primary"
+                            title={`Arah mutasi tipe "${t.type}" belum dipetakan — ditampilkan netral`}
+                          >
+                            {rp(Math.abs(t.amount))}
+                          </span>
+                        )
+                      }
+                      const isDebit = direction === "DEBIT"
                       return (
                         <span
                           className={
@@ -765,6 +907,13 @@ export default function UserDetailPage() {
                 rowKey={(t) => t.id}
                 loading={loading}
                 emptyText="Belum ada transaksi wallet."
+              />
+              <LoadMoreButton
+                section="wallet"
+                page={txPage}
+                setPage={setTxPage}
+                setHasMore={setTxHasMore}
+                label="transaksi"
               />
             </div>
           </Card>
@@ -842,6 +991,13 @@ export default function UserDetailPage() {
                   emptyText="Tidak ada sesi aktif."
                 />
               )}
+              <LoadMoreButton
+                section="sessions"
+                page={sessionsPage}
+                setPage={setSessionsPage}
+                setHasMore={setSessionsHasMore}
+                label="sesi"
+              />
             </CardBody>
           </Card>
 
@@ -896,6 +1052,13 @@ export default function UserDetailPage() {
                   emptyText="Pengguna belum pernah bertransaksi."
                 />
               )}
+              <LoadMoreButton
+                section="orders"
+                page={ordersPage}
+                setPage={setOrdersPage}
+                setHasMore={setOrdersHasMore}
+                label="order"
+              />
             </CardBody>
           </Card>
 
@@ -946,6 +1109,13 @@ export default function UserDetailPage() {
                   emptyText="Tidak ada jejak audit untuk pengguna ini."
                 />
               )}
+              <LoadMoreButton
+                section="audit"
+                page={auditPage}
+                setPage={setAuditPage}
+                setHasMore={setAuditHasMore}
+                label="aktivitas"
+              />
             </CardBody>
           </Card>
 

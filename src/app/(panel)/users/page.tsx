@@ -43,6 +43,16 @@ const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "flagged", label: "Perlu review" },
 ]
 
+/** ADM-014: sortir daftar pengguna (diteruskan ke sortBy/sortOrder backend). */
+type SortOption = "createdAt-desc" | "createdAt-asc" | "lastLoginAt-desc" | "fullName-asc" | "email-asc"
+const SORT_OPTIONS: Array<{ value: SortOption; label: string }> = [
+  { value: "createdAt-desc", label: "Terdaftar terbaru" },
+  { value: "createdAt-asc", label: "Terdaftar terlama" },
+  { value: "lastLoginAt-desc", label: "Login terakhir" },
+  { value: "fullName-asc", label: "Nama A–Z" },
+  { value: "email-asc", label: "Email A–Z" },
+]
+
 function useDebouncedValue(value: string, delayMs: number): string {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -78,6 +88,7 @@ export default function UsersListPage() {
 
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<StatusFilter>("all")
+  const [sort, setSort] = useState<SortOption>("createdAt-desc")
   const [page, setPage] = useState(1)
   const debouncedQuery = useDebouncedValue(query, DEBOUNCE_MS)
 
@@ -95,16 +106,23 @@ export default function UsersListPage() {
       targetPage: number,
       targetFilter: StatusFilter,
       targetQuery: string,
+      targetSort: SortOption,
     ) => {
       if (mode === "initial") setLoading(true)
       else setRefreshing(true)
       setError(null)
       try {
+        const [sortBy, sortOrder] = targetSort.split("-") as [
+          "createdAt" | "lastLoginAt" | "email" | "fullName",
+          "asc" | "desc",
+        ]
         const res = await listAdminUsers({
           q: targetQuery || undefined,
           status: targetFilter === "all" ? undefined : targetFilter,
           page: targetPage,
           limit: PAGE_SIZE,
+          sortBy,
+          sortOrder,
         })
         setRows(res.data ?? [])
         const t = res.total ?? 0
@@ -122,20 +140,25 @@ export default function UsersListPage() {
     [toast],
   )
 
-  // Muat ulang saat pencarian (debounce) / filter berubah — kembali ke hal. 1.
+  // Muat ulang saat pencarian (debounce) / filter / sortir berubah — kembali ke hal. 1.
   useEffect(() => {
-    void load("initial", 1, filter, debouncedQuery)
+    void load("initial", 1, filter, debouncedQuery, sort)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQuery, filter])
+  }, [debouncedQuery, filter, sort])
 
   const handleFilterChange = (value: StatusFilter) => {
     setFilter(value)
     setPage(1)
   }
 
+  const handleSortChange = (value: SortOption) => {
+    setSort(value)
+    setPage(1)
+  }
+
   const handlePageChange = (p: number) => {
     setPage(p)
-    void load("initial", p, filter, debouncedQuery)
+    void load("initial", p, filter, debouncedQuery, sort)
   }
 
   return (
@@ -154,7 +177,7 @@ export default function UsersListPage() {
           </Button>
         }
         onRefresh={() => {
-          void load("refresh", page, filter, debouncedQuery)
+          void load("refresh", page, filter, debouncedQuery, sort)
         }}
         refreshing={refreshing}
       />
@@ -179,6 +202,14 @@ export default function UsersListPage() {
             onChange={(e) => handleFilterChange(e.target.value as StatusFilter)}
           />
         </div>
+        <div className="w-52">
+          <Select
+            label="Urutan"
+            options={SORT_OPTIONS}
+            value={sort}
+            onChange={(e) => handleSortChange(e.target.value as SortOption)}
+          />
+        </div>
       </div>
 
       {loading ? (
@@ -187,7 +218,7 @@ export default function UsersListPage() {
         <ErrorBlock
           title="Gagal memuat pengguna"
           message={error}
-          onRetry={() => load("initial", page, filter, debouncedQuery)}
+          onRetry={() => load("initial", page, filter, debouncedQuery, sort)}
         />
       ) : (
         <>
