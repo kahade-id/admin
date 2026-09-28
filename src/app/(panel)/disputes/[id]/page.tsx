@@ -22,7 +22,7 @@
  * Port dari frontend/app/admin/(panel)/disputes/[id].tsx → web desktop.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
@@ -58,6 +58,15 @@ import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatIdrSen, formatNumber } from "@/lib/format"
 // ADM-405: PII penggugat di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail, maskName } from "@/lib/pii"
+// Batch 139 — H: fondasi admin web.
+import { DisputePresence } from "@/components/admin/batch139/dispute-presence"
+import { SplitComposer } from "@/components/admin/batch139/composer-split"
+import { DraftStatus, useDraftNote } from "@/components/admin/batch139/draft-notes"
+import {
+  EvidenceChecklist,
+  useEvidenceChecklist,
+} from "@/components/admin/batch139/evidence-checklist"
+import { RevisionBanner, useRevisionGuard } from "@/components/admin/batch139/revision-guard"
 
 import { DISPUTE_CATEGORY_LABEL, DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "../maps"
 
@@ -68,6 +77,47 @@ const RESOLUTION_OPTIONS = [
   { value: "FULL_SELLER", label: "Menangkan penjual" },
   { value: "SPLIT", label: "Bagi dua (split)" },
 ]
+
+/**
+ * H04: alasan TERSTRUKTUR untuk keputusan sengketa (wajib dipilih).
+ * Disimpan di catatan keputusan; backend mencatat aksi resolve di audit.
+ */
+const RESOLVE_REASON_OPTIONS = [
+  { value: "BUYER_EVIDENCE_STRONGER", label: "Bukti pembeli lebih kuat" },
+  { value: "SELLER_EVIDENCE_STRONGER", label: "Bukti penjual lebih kuat" },
+  { value: "SELLER_NO_RESPONSE", label: "Penjual tidak merespons" },
+  { value: "BUYER_NO_RESPONSE", label: "Pembeli tidak merespons" },
+  { value: "MUTUAL_AGREEMENT", label: "Kesepakatan kedua pihak" },
+  { value: "POLICY_VIOLATION", label: "Pelanggaran kebijakan" },
+  { value: "OTHER", label: "Lainnya (jelaskan di catatan)" },
+]
+
+/**
+ * H12: catatan internal per sengketa — disimpan lokal per admin (backend
+ * belum punya API catatan internal sengketa). Jelas berlabel "draf lokal".
+ */
+type InternalNote = { id: string; text: string; at: string; author: string }
+
+function internalNotesKey(disputeId: string, adminId: string) {
+  return `kahade.admin.internalNotes.dispute.${adminId}.${disputeId}`
+}
+
+function loadInternalNotes(disputeId: string, adminId: string): InternalNote[] {
+  try {
+    const raw = localStorage.getItem(internalNotesKey(disputeId, adminId))
+    return raw ? (JSON.parse(raw) as InternalNote[]) : []
+  } catch {
+    return []
+  }
+}
+
+function saveInternalNotes(disputeId: string, adminId: string, notes: InternalNote[]) {
+  try {
+    localStorage.setItem(internalNotesKey(disputeId, adminId), JSON.stringify(notes))
+  } catch {
+    /* abaikan */
+  }
+}
 
 /**
  * ADM-126: template pesan mediasi — string statis yang aman, tanpa PII,
@@ -239,10 +289,13 @@ function KeyValue({
 function PartiesAndEvidence({
   dispute,
   hasNewEvidence,
+  onOpenEvidence,
 }: {
   dispute: AdminDisputeItem
   /** Penanda polling: ada bukti baru sejak halaman dibuka. */
   hasNewEvidence?: boolean
+  /** H10: dipanggil saat admin membuka sebuah bukti (untuk checklist). */
+  onOpenEvidence?: (evidenceId: string) => void
 }) {
   const initiator = asRecord(dispute.initiator) as DisputeParty | null
   const order = asRecord(dispute.order) as DisputeOrderInfo | null
@@ -351,6 +404,7 @@ function PartiesAndEvidence({
                             <button
                               type="button"
                               onClick={() => {
+                                onOpenEvidence?.(ev.id)
                                 const gi = imageIndexOf.get(url)
                                 if (gi !== undefined) setLightboxIdx(gi)
                               }}
@@ -369,6 +423,7 @@ function PartiesAndEvidence({
                               src={url}
                               controls
                               preload="metadata"
+                              onPlay={() => onOpenEvidence?.(ev.id)}
                               className="h-32 w-full bg-black object-contain"
                             />
                           ) : (
@@ -376,6 +431,7 @@ function PartiesAndEvidence({
                               href={url}
                               target="_blank"
                               rel="noopener noreferrer"
+                              onClick={() => onOpenEvidence?.(ev.id)}
                               className="block px-3 py-6 text-center text-body text-primary underline"
                             >
                               {kind === "pdf" ? "Buka PDF" : "Buka dokumen"} {i + 1}
@@ -552,7 +608,10 @@ export default function DisputeDetailPage() {
   const [msgLoading, setMsgLoading] = useState(true)
   const [msgOlderLoading, setMsgOlderLoading] = useState(false)
   const [msgError, setMsgError] = useState<string | null>(null)
-  const [draft, setDraft] = useState("")
+  // H11: draf autosave per record — tidak hilang saat navigasi.
+  const mediationDraft = useDraftNote(`dispute:${disputeId}:mediation`)
+  const internalDraft = useDraftNote(`dispute:${disputeId}:internal`)
+  const resolveDraft = useDraftNote(`dispute:${disputeId}:resolve-notes`)
   const [sending, setSending] = useState(false)
 
   // ADM-111: percakapan order (buyer–seller), termasuk pesan terhapus.
@@ -576,7 +635,8 @@ export default function DisputeDetailPage() {
   const [adminSearch, setAdminSearch] = useState("")
   const [resolveOpen, setResolveOpen] = useState(false)
   const [resolution, setResolution] = useState<Resolution>("FULL_BUYER")
-  const [notes, setNotes] = useState("")
+  // H04: alasan terstruktur keputusan (wajib) — catatan via resolveDraft (H11).
+  const [resolveReason, setResolveReason] = useState("")
   // DP-008: persen SPLIT — hanya dipakai bila keputusan SPLIT.
   const [buyerPercent, setBuyerPercent] = useState("")
   const [sellerPercent, setSellerPercent] = useState("")
@@ -778,13 +838,13 @@ export default function DisputeDetailPage() {
     toast.show({ title, description: userMessage(e), tone: "danger" })
   }
 
-  const handleSendMessage = async () => {
-    const text = draft.trim()
-    if (!text || sending) return
+  const handleSendMessage = async (text?: string) => {
+    const body = (text ?? mediationDraft.value).trim()
+    if (!body || sending) return
     setSending(true)
     try {
-      await sendDisputeMessage(disputeId, text)
-      setDraft("")
+      await sendDisputeMessage(disputeId, body)
+      mediationDraft.clear()
       await loadMessages()
       toast.show({ title: "Pesan terkirim", tone: "success" })
     } catch (e) {
@@ -792,6 +852,30 @@ export default function DisputeDetailPage() {
     } finally {
       setSending(false)
     }
+  }
+
+  // H12: catatan internal — draf lokal per admin (belum ada API backend).
+  const [internalNotes, setInternalNotes] = useState<InternalNote[]>([])
+  useEffect(() => {
+    setInternalNotes(loadInternalNotes(disputeId, profile?.adminId ?? "anon"))
+  }, [disputeId, profile?.adminId])
+
+  const handleSaveInternalNote = (text: string) => {
+    const note: InternalNote = {
+      id: `${Date.now()}`,
+      text,
+      at: new Date().toISOString(),
+      author: profile?.fullName?.trim() || "Admin",
+    }
+    const next = [note, ...internalNotes]
+    setInternalNotes(next)
+    saveInternalNotes(disputeId, profile?.adminId ?? "anon", next)
+    internalDraft.clear()
+    toast.show({
+      title: "Catatan internal disimpan",
+      description: "Draf lokal perangkat ini — belum ada API catatan internal backend.",
+      tone: "success",
+    })
   }
 
   const handleUnderReview = async () => {
@@ -901,21 +985,26 @@ export default function DisputeDetailPage() {
       sellerPct >= 1 &&
       sellerPct <= 99 &&
       buyerPct + sellerPct === 100)
-  const notesValid = notes.trim().length >= 100
+  const notesValid = resolveDraft.value.trim().length >= 100
+  const reasonValid = resolveReason.trim().length > 0
 
   const handleResolve = async () => {
-    if (!notesValid || !splitValid || acting) return
+    if (!notesValid || !reasonValid || !splitValid || acting) return
     setActing("resolve")
     try {
       // DP-001: payload persis DisputeDecisionDto {decision, decisionNotes, ...}.
       // winnerId dihapus — backend tidak mengenalnya.
+      // H04: alasan terstruktur digabung ke decisionNotes agar tercatat di audit.
+      const reasonLabel =
+        RESOLVE_REASON_OPTIONS.find((o) => o.value === resolveReason)?.label ?? resolveReason
       await resolveDispute(disputeId, {
         decision: resolution,
-        decisionNotes: notes.trim(),
+        decisionNotes: `[Alasan: ${reasonLabel}] ${resolveDraft.value.trim()}`,
         ...(isSplit ? { buyerPercent: buyerPct, sellerPercent: sellerPct } : {}),
       })
       setResolveOpen(false)
-      setNotes("")
+      resolveDraft.clear()
+      setResolveReason("")
       setBuyerPercent("")
       setSellerPercent("")
       await load("refresh")
@@ -956,6 +1045,7 @@ export default function DisputeDetailPage() {
   const openResolve = () => {
     setPreview(null)
     setPreviewError(null)
+    setResolveReason("")
     setResolveOpen(true)
   }
 
@@ -980,6 +1070,44 @@ export default function DisputeDetailPage() {
 
   // Info order untuk label pengirim di riwayat pesan (pembeli/penjual/admin).
   const disputeOrder = dispute ? (asRecord(dispute.order) as DisputeOrderInfo | null) : null
+
+  // H08: peringatan bila record berubah saat form terbuka.
+  const revGuard = useRevisionGuard({
+    recordKey: `dispute:${disputeId}`,
+    getRevision: () =>
+      getDisputeDetail(disputeId).then((d) => (d.updatedAt ?? d.createdAt ?? null) as string | null),
+    dirty:
+      resolveOpen ||
+      mediationDraft.hasDraft ||
+      internalDraft.hasDraft ||
+      resolveDraft.hasDraft,
+    enabled: !!dispute,
+  })
+
+  // H10: checklist bukti — tandai yang sudah dibuka sebelum keputusan.
+  const evidenceIds = useMemo(() => {
+    const raw = Array.isArray(dispute?.evidences) ? dispute.evidences : []
+    return raw
+      .map((e) => String(asRecord(e)?.id ?? ""))
+      .filter((id) => id.length > 0)
+  }, [dispute])
+  const checklist = useEvidenceChecklist(disputeId, profile?.adminId ?? "anon", evidenceIds)
+
+  // H04: dampak keputusan — ditampilkan sebelum eksekusi.
+  const resolveImpact = useMemo(() => {
+    const items: string[] = []
+    if (resolution === "FULL_BUYER") items.push("Seluruh dana escrow dikembalikan ke pembeli")
+    else if (resolution === "FULL_SELLER") items.push("Seluruh dana escrow dicairkan ke penjual")
+    else items.push(`Dana escrow dibagi: ${buyerPercent || "?"}% pembeli / ${sellerPercent || "?"}% penjual`)
+    if (preview) {
+      items.push(
+        `Pratinjau nominal: ${formatIDR(preview.buyerAmount)} ke pembeli · ${formatIDR(preview.sellerAmount)} ke penjual`,
+      )
+    }
+    items.push("Keputusan final — tidak bisa dibatalkan")
+    items.push("Tercatat di audit log beserta alasan dan catatan")
+    return items
+  }, [resolution, buyerPercent, sellerPercent, preview])
 
   return (
     <RoleGate href="/disputes">
@@ -1045,6 +1173,19 @@ export default function DisputeDetailPage() {
           </Button>
         </div>
       </div>
+
+      {/* H09: siapa sedang menangani sengketa ini (tanpa lock permanen). */}
+      <DisputePresence disputeId={disputeId} />
+
+      {/* H08: peringatan bila record berubah saat form terbuka. */}
+      {revGuard.stale ? (
+        <RevisionBanner
+          onReload={async () => {
+            await load("refresh")
+            revGuard.acknowledge()
+          }}
+        />
+      ) : null}
 
       {loading ? (
         <div className="flex min-h-[40vh] items-center justify-center gap-2">
@@ -1182,7 +1323,11 @@ export default function DisputeDetailPage() {
           <Card padded={false} className="xl:col-span-2">
             <CardHeader title="Pihak, nominal & bukti" />
             <CardBody>
-              <PartiesAndEvidence dispute={dispute} hasNewEvidence={newEvidence} />
+              <PartiesAndEvidence
+                dispute={dispute}
+                hasNewEvidence={newEvidence}
+                onOpenEvidence={(id) => checklist.markOpened(id)}
+              />
             </CardBody>
           </Card>
 
@@ -1201,7 +1346,18 @@ export default function DisputeDetailPage() {
                   Sengketa ini sudah diputus — lihat kartu “Hasil putusan” di atas.
                 </p>
               ) : (
-                <div className="flex flex-wrap gap-2">
+                <>
+                  {/* H10: checklist bukti sebelum keputusan. */}
+                  <div className="mb-4">
+                    <EvidenceChecklist
+                      checklist={checklist}
+                      items={evidenceIds.map((id, i) => ({
+                        id,
+                        label: `Bukti ${i + 1}`,
+                      }))}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
                   <Button
                     variant="secondary"
                     fullWidth={false}
@@ -1261,7 +1417,14 @@ export default function DisputeDetailPage() {
                   >
                     Resolve
                   </Button>
-                </div>
+                  </div>
+                  {checklist.unopenedCount > 0 ? (
+                    <p className="mt-3 text-caption text-warning-text">
+                      {checklist.unopenedCount} bukti belum diperiksa — keputusan idealnya
+                      menunggu seluruh bukti ditinjau.
+                    </p>
+                  ) : null}
+                </>
               )}
               {!isResolved && !canResolve ? (
                 <p className="mt-3 text-caption text-text-secondary">
@@ -1342,30 +1505,49 @@ export default function DisputeDetailPage() {
                       variant="secondary"
                       size="sm"
                       fullWidth={false}
-                      onClick={() => setDraft(t.text)}
+                      onClick={() => mediationDraft.setValue(t.text)}
                       title="Sisipkan template ke kolom pesan (bisa diedit sebelum dikirim)"
                     >
                       {t.label}
                     </Button>
                   ))}
                 </div>
-                <TextArea
-                  label="Kirim pesan sebagai admin"
-                  rows={3}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder="Tulis pesan untuk para pihak…"
-                  maxLength={2000}
+                {/* H12: catatan internal (draf lokal per admin). */}
+                {internalNotes.length > 0 ? (
+                  <ul className="flex flex-col gap-2">
+                    {internalNotes.map((n) => (
+                      <li
+                        key={n.id}
+                        className="rounded-sm border border-warning/40 bg-warning/5 px-3 py-2"
+                      >
+                        <p className="text-caption text-text-secondary">
+                          📝 {n.author} · {formatDateTimeWIB(n.at)} · internal (lokal)
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap text-body text-text-primary">
+                          {n.text}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {/* H12: composer terpisah — default catatan internal; pesan ke
+                    pengguna wajib konfirmasi eksplisit. */}
+                <SplitComposer
+                  internalValue={internalDraft.value}
+                  onInternalChange={internalDraft.setValue}
+                  externalValue={mediationDraft.value}
+                  onExternalChange={mediationDraft.setValue}
+                  onSendInternal={(text) => handleSaveInternalNote(text)}
+                  onSendExternal={(text) => void handleSendMessage(text)}
+                  sending={sending}
+                  internalFooter={
+                    <div className="mt-1">
+                      <DraftStatus status={internalDraft.status} savedAt={internalDraft.savedAt} />
+                    </div>
+                  }
                 />
-                <Button
-                  variant="primary"
-                  fullWidth={false}
-                  loading={sending}
-                  disabled={draft.trim().length === 0}
-                  onClick={handleSendMessage}
-                >
-                  Kirim pesan
-                </Button>
+                {/* H11: status autosave draf pesan mediasi. */}
+                <DraftStatus status={mediationDraft.status} savedAt={mediationDraft.savedAt} />
               </div>
             </CardBody>
           </Card>
@@ -1456,6 +1638,7 @@ export default function DisputeDetailPage() {
         onClose={() => setAssignOpen(false)}
         title="Assign sengketa"
         description="Pilih admin yang akan menangani sengketa ini."
+        dirty={adminId.trim().length > 0}
         footer={
           <div className="flex flex-col gap-2">
             <Button
@@ -1505,12 +1688,13 @@ export default function DisputeDetailPage() {
         onClose={() => setResolveOpen(false)}
         title="Resolve sengketa"
         description="Keputusan ini tercatat dan tidak bisa dibatalkan."
+        dirty={reasonValid || resolveDraft.hasDraft}
         footer={
           <div className="flex flex-col gap-2">
             <Button
               variant="primary"
               loading={acting === "resolve"}
-              disabled={!notesValid || !splitValid}
+              disabled={!notesValid || !reasonValid || !splitValid}
               onClick={handleResolve}
             >
               Selesaikan sengketa
@@ -1526,6 +1710,24 @@ export default function DisputeDetailPage() {
         }
       >
         <div className="space-y-4">
+          {/* H04: dampak keputusan — tampil SEBELUM eksekusi. */}
+          <div className="rounded-sm border border-danger/40 bg-danger/10 p-3">
+            <p className="mb-1 text-label font-semibold text-danger-text">
+              Dampak keputusan ini:
+            </p>
+            <ul className="list-disc pl-5 text-body text-text-primary">
+              {resolveImpact.map((item, i) => (
+                <li key={i}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          {/* H04: alasan terstruktur (wajib). */}
+          <Select
+            label="Alasan keputusan (wajib)"
+            options={[{ value: "", label: "— Pilih alasan —" }, ...RESOLVE_REASON_OPTIONS]}
+            value={resolveReason}
+            onChange={(e) => setResolveReason(e.target.value)}
+          />
           <Select
             label="Keputusan penyelesaian"
             options={RESOLUTION_OPTIONS}
@@ -1536,16 +1738,20 @@ export default function DisputeDetailPage() {
               setPreviewError(null)
             }}
           />
-          <TextArea
-            label="Catatan keputusan"
-            required
-            rows={4}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Minimal 100 karakter untuk dokumentasi audit…"
-            maxLength={5000}
-            hint={`${notes.trim().length} / 100 karakter minimum`}
-          />
+          <div>
+            <TextArea
+              label="Catatan keputusan"
+              required
+              rows={4}
+              value={resolveDraft.value}
+              onChange={(e) => resolveDraft.setValue(e.target.value)}
+              placeholder="Minimal 100 karakter untuk dokumentasi audit…"
+              maxLength={5000}
+              hint={`${resolveDraft.value.trim().length} / 100 karakter minimum`}
+            />
+            {/* H11: status autosave draf catatan keputusan. */}
+            <DraftStatus status={resolveDraft.status} savedAt={resolveDraft.savedAt} />
+          </div>
           {/* DP-008: persen SPLIT wajib backend (1–99, jumlah 100). Hanya
               tampil bila keputusan SPLIT dipilih. */}
           {isSplit ? (
@@ -1662,6 +1868,7 @@ export default function DisputeDetailPage() {
         onClose={() => setEscalateOpen(false)}
         title="Eskalasi sengketa?"
         description="Sengketa ditandai ESCALATED dan diprioritaskan untuk putusan tingkat lanjut. Dana tetap di escrow sampai sengketa di-resolve."
+        dirty={escalateReason.trim().length > 0}
         footer={
           <div className="flex flex-col gap-2">
             <Button
