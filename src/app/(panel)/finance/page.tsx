@@ -47,6 +47,7 @@ import {
   getEscrowSummary,
   getFinancialSummary,
   getRevenue,
+  getTransactionsSummary,
   listPendingWithdrawals,
   listTransactions,
   newIdempotencyKey,
@@ -56,6 +57,7 @@ import {
   type FinancialSummary,
   type PendingWithdrawal,
   type RevenueBreakdown,
+  type TransactionsAggregate,
   type WalletTransactionStatus,
   type WalletTransactionType,
   downloadFinanceCsv,
@@ -388,57 +390,29 @@ function FinancePageInner() {
   const [txTotal, setTxTotal] = useState(0)
   const [txTotalPages, setTxTotalPages] = useState(1)
   const [txLoading, setTxLoading] = useState(true)
-  // Baris agregat masuk/keluar/bersih — mengikuti filter aktif (dihitung dari
-  // SEMUA transaksi yang cocok, bukan hanya halaman saat ini).
-  const [txAggregate, setTxAggregate] = useState<{
-    masuk: number
-    keluar: number
-    count: number
-    capped: boolean
-  } | null>(null)
+  // Baris agregat masuk/keluar/bersih — mengikuti filter aktif.
+  // AW-002 (perf-fix): dihitung SERVER-SIDE via /transactions/summary dari
+  // SEMUA transaksi yang cocok filter (tanpa clamp). Pola lama (fetch massal
+  // lalu jumlahkan di browser) SALAH DIAM-DIAM karena backend clamp limit=100.
+  const [txAggregate, setTxAggregate] = useState<TransactionsAggregate | null>(
+    null,
+  )
   const [aggLoading, setAggLoading] = useState(false)
 
-  /** Maksimum baris yang diambil untuk agregat (dibatasi agar ringan). */
-  const AGGREGATE_CAP = 3000
-
   const loadAggregate = useCallback(
-    async (
-      total: number,
-      params: {
-        type?: WalletTransactionType
-        status?: WalletTransactionStatus
-        q?: string
-        startDate: string
-        endDate: string
-      },
-    ) => {
-      if (total <= 0) {
-        setTxAggregate({ masuk: 0, keluar: 0, count: 0, capped: false })
-        return
-      }
+    async (params: {
+      type?: WalletTransactionType
+      status?: WalletTransactionStatus
+      q?: string
+      startDate: string
+      endDate: string
+    }) => {
       setAggLoading(true)
       try {
-        const limit = Math.min(total, AGGREGATE_CAP)
-        const res = await listTransactions({ ...params, page: 1, limit })
-        const items = res.data ?? []
-        const minusSign = TX_META.WITHDRAW.sign
-        let masuk = 0
-        let keluar = 0
-        for (const r of items) {
-          const meta = TX_META[String(r.type)]
-          const amt =
-            typeof r.amount === "number" && Number.isFinite(r.amount) ? r.amount : 0
-          if (meta?.sign === "+") masuk += amt
-          else if (meta?.sign === minusSign) keluar += amt
-        }
-        setTxAggregate({
-          masuk,
-          keluar,
-          count: items.length,
-          capped: total > AGGREGATE_CAP,
-        })
+        // Fail-closed: agregat gagal → tampilkan indikator error, JANGAN angka salah.
+        const agg = await getTransactionsSummary(params)
+        setTxAggregate(agg)
       } catch {
-        // Agregat gagal → tabel tetap tampil; agregat disembunyikan.
         setTxAggregate(null)
       } finally {
         setAggLoading(false)
@@ -466,7 +440,7 @@ function FinancePageInner() {
         setTxTotalPages(
           res.totalPages ?? Math.max(1, Math.ceil(total / PAGE_SIZE)),
         )
-        void loadAggregate(total, params)
+        void loadAggregate(params)
       } catch (e) {
         toast.show({
           title: "Gagal memuat transaksi",
@@ -1129,7 +1103,6 @@ function FinancePageInner() {
                   </p>
                   <p className="text-caption text-text-secondary">
                     dari {formatNumber(txAggregate.count)} transaksi sesuai filter
-                    {txAggregate.capped ? ` (dibatasi ${formatNumber(AGGREGATE_CAP)} pertama)` : ""}
                     {aggLoading ? " · memperbarui…" : ""}
                   </p>
                 </>

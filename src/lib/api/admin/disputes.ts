@@ -51,6 +51,12 @@ export function listDisputes(params?: {
   category?: string
   /** Cari berdasarkan ID sengketa atau ID order (didukung backend). */
   search?: string
+  /**
+   * AW-001 (perf-fix): hanya sengketa yang BELUM ditugaskan
+   * (`assignedAdminId IS NULL`) — difilter server-side. Menggantikan pola
+   * lama fetch-all + filter client-side.
+   */
+  unassigned?: boolean
 }): Promise<Paginated<AdminDisputeItem>> {
   return adminHttp.get<Paginated<AdminDisputeItem>>("/v1/admin/disputes", { query: params })
 }
