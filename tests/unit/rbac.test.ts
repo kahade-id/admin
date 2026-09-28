@@ -121,6 +121,20 @@ describe("canAccess", () => {
       ["CUSTOMER_SUPPORT", "/insurance-claims", true],
       ["CUSTOMER_SUPPORT", "/badges", false],
       ["CUSTOMER_SUPPORT", "/system", false],
+      // GO-PUBLIK (2026-09-28): matriks diselaraskan dengan @AdminRoles
+      // backend (otoritatif) — keempat halaman SA/CS saja.
+      ["CUSTOMER_SUPPORT", "/group-buying", true],
+      ["CUSTOMER_SUPPORT", "/seller-vouchers", true],
+      ["CUSTOMER_SUPPORT", "/jastip", true],
+      ["CUSTOMER_SUPPORT", "/banners", true],
+      ["DISPUTE_ADMIN", "/group-buying", false],
+      ["DISPUTE_ADMIN", "/jastip", false],
+      ["DISPUTE_ADMIN", "/seller-vouchers", false],
+      ["DISPUTE_ADMIN", "/banners", false],
+      ["FINANCE_ADMIN", "/group-buying", false],
+      ["FINANCE_ADMIN", "/seller-vouchers", false],
+      ["KYC_ADMIN", "/group-buying", false],
+      ["KYC_ADMIN", "/banners", false],
     ]
     for (const [role, href, expected] of cases) {
       expect(canAccess(role, href), `${role} → ${href}`).toBe(expected)

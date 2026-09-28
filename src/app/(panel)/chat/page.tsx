@@ -130,13 +130,50 @@ function statValue(value: unknown): string {
   return "—"
 }
 
-function messageText(message: unknown): string {
+// GO-PUBLIK H1: backend tidak lagi mengirim isi pesan untuk room INQUIRY
+// (DM privat). Kembalikan null bila tidak ada teks agar pemanggil menampilkan
+// label metadata-only yang jelas, bukan teks mentah.
+function messageText(message: unknown): string | null {
   const obj = (message ?? {}) as Record<string, unknown>
   for (const key of ["content", "text", "body", "message", "caption"]) {
     const value = obj[key]
     if (typeof value === "string" && value.trim()) return value
   }
-  return "Pesan tanpa teks"
+  return null
+}
+
+/** Label fallback bila sebuah pesan tidak membawa teks. */
+function messageFallbackLabel(message: unknown): string {
+  const obj = (message ?? {}) as Record<string, unknown>
+  const t = String(obj.messageType ?? obj.type ?? "TEXT").toUpperCase()
+  // Pesan media tanpa caption memang tidak punya teks — bukan isi yang disembunyikan.
+  if (t !== "TEXT" && t !== "SYSTEM") return "Pesan tanpa teks"
+  return "Isi disembunyikan — DM privat"
+}
+
+/**
+ * Pratinjau isi pesan dari detail moderation-event (content/snippet).
+ * null = metadata-only (mis. DM privat yang isinya disembunyikan backend).
+ */
+function eventMessagePreview(detail: ModerationEvent): string | null {
+  const rec = detail as unknown as Record<string, unknown>
+  const message = (rec.message ?? {}) as Record<string, unknown>
+  for (const key of ["content", "text", "body", "message", "caption"]) {
+    const value = message[key]
+    if (typeof value === "string" && value.trim()) return value
+  }
+  for (const key of ["snippet", "content"]) {
+    const value = rec[key]
+    if (typeof value === "string" && value.trim()) return value
+  }
+  return null
+}
+
+/** Apakah event berasal dari DM privat (room INQUIRY) — isinya tidak boleh tampil. */
+function isPrivateRoom(detail: ModerationEvent): boolean {
+  const rec = detail as unknown as Record<string, unknown>
+  const room = (rec.room ?? {}) as Record<string, unknown>
+  return String(room.type ?? "").toUpperCase() === "INQUIRY"
 }
 
 function messageSenderLabel(message: unknown): string {
@@ -403,6 +440,10 @@ export default function ChatModerationPage() {
     : []
 
   const detailStatus = detail ? String(detail.status ?? "") : ""
+  // GO-PUBLIK H1: pratinjau isi dihitung sekali per render detail —
+  // null berarti backend mengirim metadata-only (isi disembunyikan).
+  const detailPreview = detail ? eventMessagePreview(detail) : null
+  const detailIsPrivate = detail ? isPrivateRoom(detail) : false
 
   return (
     <RoleGate href="/chat">
@@ -609,6 +650,23 @@ export default function ChatModerationPage() {
               <p className="text-body text-text-secondary">{String(detail.reason)}</p>
             ) : null}
 
+            {/* GO-PUBLIK H1: graceful saat backend mengirim metadata-only
+                (content/snippet null/absent untuk DM privat). */}
+            <div>
+              <p className="text-caption font-medium text-text-secondary">Isi pesan</p>
+              {detailPreview ? (
+                <p className="mt-1 text-body text-text-primary">{detailPreview}</p>
+              ) : detailIsPrivate ? (
+                <p className="mt-1">
+                  <Badge tone="neutral">Isi disembunyikan — DM privat</Badge>
+                </p>
+              ) : (
+                <p className="mt-1 text-body text-text-tertiary italic">
+                  Tidak ada isi pesan yang direkam untuk event ini.
+                </p>
+              )}
+            </div>
+
             {detail.roomId ? (
               <div className="space-y-2">
                 <Button
@@ -654,7 +712,13 @@ export default function ChatModerationPage() {
                                 {messageTime(m)}
                               </span>
                             </div>
-                            <p className="mt-1 text-body text-text-primary">{messageText(m)}</p>
+                            <p className="mt-1 text-body text-text-primary">
+                              {messageText(m) ?? (
+                                <span className="italic text-text-tertiary">
+                                  {messageFallbackLabel(m)}
+                                </span>
+                              )}
+                            </p>
                           </li>
                         ))}
                       </ul>

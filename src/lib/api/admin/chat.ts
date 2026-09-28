@@ -34,6 +34,18 @@ export type ModerationEvent = {
   reviewedAt?: string | null
   reviewNote?: string | null
   createdAt: string
+  // GO-PUBLIK H1: backend tidak lagi mengirim `content`/`snippet` untuk room
+  // INQUIRY (DM privat). Kedua field nullable — UI wajib menangani
+  // metadata-only tanpa crash (lihat chat/page.tsx).
+  content?: string | null
+  snippet?: string | null
+  message?: {
+    id?: string
+    content?: string | null
+    messageType?: string
+    isDeleted?: boolean
+  } | null
+  room?: { id?: string; type?: string; subject?: string } | null
   [key: string]: unknown
 }
 
