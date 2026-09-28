@@ -1689,7 +1689,7 @@ export default function DisputeDetailPage() {
           value={escalateReason}
           onChange={(e) => setEscalateReason(e.target.value)}
           placeholder="cth. Bukti bertentangan, perlu tinjauan supervisor…"
-          maxLength={1000}
+          maxLength={500}
         />
       </Dialog>
     </RoleGate>

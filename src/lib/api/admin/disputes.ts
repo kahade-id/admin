@@ -222,19 +222,17 @@ export function resolveDispute(
 /**
  * Batch 43 item #33 — eskalasi sengketa 1 ketuk dari admin.
  *
- * KONTRAK ASUMSI (belum diverifikasi ke backend): endpoint admin khusus
- * `POST /v1/admin/disputes/:disputeId/escalate` belum ada — yang ada baru
- * endpoint user (`POST /v1/disputes/:disputeId/escalate`, body { reason }).
- * Asumsi di sini memakai bentuk kontrak yang sama di namespace admin
- * (idempoten). Bila backend tidak menyediakannya, pemanggil akan gagal 404
- * dengan pesan ramah — jangan karang endpoint lain.
+ * KONTRAK TERVERIFIK ke backend (integrator, 2026-09-28):
+ * `POST /v1/admin/disputes/:id/quick-escalate`, body `{ note?: string }`
+ * (maks 500 karakter), HttpCode 200. Roles: SUPER_ADMIN, DISPUTE_ADMIN,
+ * CUSTOMER_SUPPORT (lihat dispute-quick-escalation.controller.ts).
  * Catatan: eskalasi hanya menandai status ESCALATED; dana tetap di escrow
  * sampai resolve.
  */
 export function escalateDispute(disputeId: string, reason: string): Promise<unknown> {
   return adminHttp.post(
-    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/escalate`,
-    { reason },
+    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/quick-escalate`,
+    { note: reason },
     { headers: idempotencyHeaders() },
   )
 }
