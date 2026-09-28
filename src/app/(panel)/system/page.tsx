@@ -15,7 +15,7 @@
  */
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, Suspense } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -27,6 +27,9 @@ import { useToast } from "@/components/ui/toast"
 import { Select } from "@/components/admin/select"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
+// Batch 139 — H: fondasi admin web.
+import { AuditDiffPanel, type AuditEntryLike } from "@/components/admin/batch139/audit-diff"
+import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import type { Paginated } from "@/lib/api/admin/kyc"
@@ -927,16 +930,20 @@ function WebhookSection() {
 
 function AuditLogSection() {
   const toast = useToast()
-  const [page, setPage] = useState(1)
+  // H01: filter + page tersimpan di URL — bisa di-share, back/forward aman.
+  const urlF = useUrlFilters({ action: "", targetType: "", start: "", end: "", page: "1" })
+  const [page, setPage] = useState(() => parsePage(urlF.values.page))
   const [rows, setRows] = useState<AdminAuditLogItem[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [actionFilter, setActionFilter] = useState("")
-  const [targetTypeFilter, setTargetTypeFilter] = useState("")
-  const [startDate, setStartDate] = useState("")
-  const [endDate, setEndDate] = useState("")
+  const [actionFilter, setActionFilter] = useState(urlF.values.action)
+  const [targetTypeFilter, setTargetTypeFilter] = useState(urlF.values.targetType)
+  const [startDate, setStartDate] = useState(urlF.values.start)
+  const [endDate, setEndDate] = useState(urlF.values.end)
+  // H07: detail diff satu entri audit.
+  const [detail, setDetail] = useState<AuditRow | null>(null)
 
   const load = useCallback(
     async (
@@ -975,7 +982,12 @@ function AuditLogSection() {
   )
 
   useEffect(() => {
-    void load(1, { action: "", targetType: "", startDate: "", endDate: "" })
+    void load(parsePage(urlF.values.page), {
+      action: urlF.values.action,
+      targetType: urlF.values.targetType,
+      startDate: urlF.values.start,
+      endDate: urlF.values.end,
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -989,7 +1001,10 @@ function AuditLogSection() {
   }
 
   function applyFilters() {
-    void load(1, currentFilters())
+    const f = currentFilters()
+    // H01: simpan filter ke URL agar bisa di-share.
+    urlF.set({ action: f.action, targetType: f.targetType, start: f.startDate, end: f.endDate, page: "1" })
+    void load(1, f)
   }
 
   function resetFilters() {
@@ -997,7 +1012,37 @@ function AuditLogSection() {
     setTargetTypeFilter("")
     setStartDate("")
     setEndDate("")
+    urlF.reset()
     void load(1, { action: "", targetType: "", startDate: "", endDate: "" })
+  }
+
+  function changePage(p: number) {
+    // H01: page tersimpan di URL.
+    urlF.set({ page: String(p) })
+    void load(p, currentFilters())
+  }
+
+  // H07: mapping aman ke entri audit — reason/correlationId/actorName hanya
+  // dipakai bila backend mengirimkannya (optional-safe).
+  function toAuditEntry(r: AuditRow): AuditEntryLike {
+    const opt = (k: string): string | null => {
+      const v = r[k]
+      return typeof v === "string" && v.length > 0 ? v : null
+    }
+    return {
+      id: r.id,
+      adminId: r.adminId,
+      action: r.action,
+      description: r.description,
+      before: r.before,
+      after: r.after,
+      ipAddress: r.ipAddress,
+      userAgent: r.userAgent,
+      createdAt: r.createdAt,
+      reason: opt("reason"),
+      correlationId: opt("correlationId") ?? opt("correlation_id"),
+      actorName: opt("actorName") ?? opt("adminName") ?? opt("admin_name"),
+    }
   }
 
   return (
@@ -1099,6 +1144,21 @@ function AuditLogSection() {
                 header: "IP",
                 render: (r) => r.ipAddress ?? "—",
               },
+              {
+                key: "detail",
+                header: "",
+                render: (r) => (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    fullWidth={false}
+                    onClick={() => setDetail(r)}
+                    title="Lihat diff perubahan, aktor, alasan, dan correlation ID"
+                  >
+                    Detail
+                  </Button>
+                ),
+              },
             ]}
             rows={rows as AuditRow[]}
             rowKey={(r) => r.id}
@@ -1110,11 +1170,22 @@ function AuditLogSection() {
             totalPages={totalPages}
             total={total}
             pageSize={PAGE_SIZE}
-            onPageChange={(p) => load(p, currentFilters())}
+            onPageChange={changePage}
             disabled={loading}
           />
         </>
       )}
+
+      {/* H07: detail entri — diff field before/after + aktor/alasan/correlation. */}
+      <Dialog
+        open={detail !== null}
+        onClose={() => setDetail(null)}
+        title="Detail audit log"
+        description={detail ? `${detail.action} · ${formatDateTimeWIB(detail.createdAt)}` : undefined}
+        className="max-w-3xl"
+      >
+        {detail ? <AuditDiffPanel entry={toAuditEntry(detail)} /> : null}
+      </Dialog>
     </Section>
   )
 }
@@ -1143,7 +1214,10 @@ export default function SystemPage() {
         />
         <BroadcastSection />
         <WebhookSection />
-        <AuditLogSection />
+        {/* H01: useUrlFilters memakai useSearchParams — butuh Suspense. */}
+        <Suspense fallback={null}>
+          <AuditLogSection />
+        </Suspense>
       </div>
     </RoleGate>
   )
