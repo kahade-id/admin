@@ -28,6 +28,9 @@ import { useToast } from "@/components/ui/toast"
 // ADM-408: lapis UI kedua — tolak role non-SUPER_ADMIN dengan pesan jelas
 // (backend sudah SUPER_ADMIN-only; ini konsistensi tampilan).
 import { RoleGate } from "@/components/admin/role-gate"
+// H05: step-up re-auth sebelum aksi kritis (parsial — enforcement server
+// per aksi belum ada; backend tetap menegakkan RBAC yang ada).
+import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 import { formatDateTimeWIB } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import {
@@ -54,6 +57,9 @@ export default function OpsSettingsPage() {
   const [maintenanceSaving, setMaintenanceSaving] = useState(false)
   const [maintenanceDraft, setMaintenanceDraft] = useState(false)
   const [maintenanceMessage, setMaintenanceMessage] = useState("")
+
+  // H05: re-auth gate untuk simpan setting & maintenance.
+  const reauth = useReauthGate()
 
   // Dialog ubah
   const [editing, setEditing] = useState<OpsSettingView | null>(null)
@@ -253,7 +259,9 @@ export default function OpsSettingsPage() {
               <Button
                 size="sm"
                 variant={maintenanceDraft ? "destructive" : "primary"}
-                onClick={doSaveMaintenance}
+                onClick={() =>
+                  reauth.require(() => void doSaveMaintenance(), "Simpan mode maintenance")
+                }
                 disabled={maintenanceSaving}
               >
                 {maintenanceSaving ? "Menyimpan…" : "Simpan mode maintenance"}
@@ -320,8 +328,12 @@ export default function OpsSettingsPage() {
             <Button variant="secondary" onClick={() => setEditing(null)}>
               Batal
             </Button>
-            <Button onClick={doSave} disabled={saving || !newValue.trim()}>
-              {saving ? "Menyimpan…" : "Simpan"}
+            {/* H05: ubah setting operasional wajib re-auth. */}
+            <Button
+              onClick={() => reauth.require(() => void doSave(), `Ubah setting ${editing?.key ?? ""}`)}
+              disabled={saving || !newValue.trim()}
+            >
+              {saving ? "Menyimpan…" : "Verifikasi & simpan"}
             </Button>
           </>
         }
@@ -404,6 +416,8 @@ export default function OpsSettingsPage() {
           </div>
         )}
       </Dialog>
+      {/* H05: dialog verifikasi ulang untuk aksi kritis. */}
+      <ReauthDialog {...reauth.dialog} />
     </div>
     </RoleGate>
   )

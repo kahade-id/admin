@@ -28,6 +28,9 @@ import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
+// H05: step-up re-auth sebelum approve/tolak penarikan (parsial —
+// enforcement server per aksi belum ada).
+import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 import { AuditTrailPanel } from "./audit-trail-panel"
 import { ReconciliationPanel } from "./reconciliation-panel"
 import { TransactionDetailDialog } from "./transaction-detail-dialog"
@@ -260,6 +263,8 @@ export default function FinancePage() {
   const [note, setNote] = useState("")
   const [noteError, setNoteError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // H05: re-auth gate untuk aksi penarikan kritis.
+  const reauth = useReauthGate()
   // Satu Idempotency-Key per sesi dialog (kind+txId): retry setelah timeout
   // memakai kunci yang sama sehingga proteksi double-submit tetap berlaku.
   // Kunci dihapus setelah sukses agar sesi berikutnya selalu dapat kunci baru.
@@ -1140,6 +1145,7 @@ export default function FinancePage() {
             ? `${withdrawUserName(actionTx)} • ${formatRupiah(actionTx.amount)}`
             : undefined
         }
+        dirty={note.trim().length > 0}
         footer={
           <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button
@@ -1154,7 +1160,14 @@ export default function FinancePage() {
               variant={actionKind === "reject" ? "destructive" : "primary"}
               fullWidth={false}
               loading={submitting}
-              onClick={() => void handleSubmitAction()}
+              onClick={() =>
+                reauth.require(
+                  () => void handleSubmitAction(),
+                  actionKind === "reject"
+                    ? `Tolak penarikan ${actionTx ? formatRupiah(actionTx.amount) : ""}`
+                    : `Setujui penarikan ${actionTx ? formatRupiah(actionTx.amount) : ""}`,
+                )
+              }
             >
               {actionKind === "reject" ? "Tolak penarikan" : "Setujui penarikan"}
             </Button>
@@ -1199,6 +1212,8 @@ export default function FinancePage() {
           />
         </div>
       </Dialog>
+      {/* H05: dialog verifikasi ulang untuk aksi penarikan kritis. */}
+      <ReauthDialog {...reauth.dialog} />
     </RoleGate>
   )
 }
