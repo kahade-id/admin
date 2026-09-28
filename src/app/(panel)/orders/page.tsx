@@ -28,6 +28,11 @@ import { useToast } from "@/components/ui/toast"
 
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
+// Lokasi presisi order: helper format + link Maps (dipakai juga di detail user).
+import {
+  formatCoordinates,
+  googleMapsLink,
+} from "@/components/admin/action-location-view"
 import { useAuth } from "@/lib/auth-context"
 import { Select } from "@/components/admin/select"
 // H01: filter di URL. H02: preferensi kolom per admin.
@@ -464,6 +469,31 @@ function OrdersPageContent() {
   const showForceCancel = canCancel && mayForceCancel
   const showForceComplete = canComplete && mayForceComplete
   const escrow = detail ? escrowStateOf(detail) : null
+
+  /**
+   * Lokasi presisi pembeli (fraud checking). Backend mengembalikan string
+   * hasil dekripsi — parse defensif; null bila data tidak tersedia agar
+   * tampilan tetap netral ("Tidak tersedia").
+   */
+  const buyerLocation = useMemo(() => {
+    const loc = detail?.buyerLocation
+    if (!loc) return null
+    const toNumber = (v: string | number | null | undefined): number | null => {
+      if (v == null || v === "") return null
+      const n = typeof v === "number" ? v : Number(String(v).trim())
+      return Number.isFinite(n) ? n : null
+    }
+    const lat = toNumber(loc.latitude)
+    const lng = toNumber(loc.longitude)
+    const coords = formatCoordinates(lat, lng)
+    if (coords === null || lat == null || lng == null) return null
+    return {
+      coords,
+      mapsUrl: googleMapsLink(lat, lng),
+      accuracy: toNumber(loc.accuracy),
+      capturedAt: loc.capturedAt ?? null,
+    }
+  }, [detail?.buyerLocation])
   const confirmTitle =
     forceAction === "cancel" ? "Paksa batalkan order?" : "Paksa selesaikan order?"
   const confirmDescription =
@@ -759,6 +789,46 @@ function OrdersPageContent() {
                 </dl>
               </div>
             ) : null}
+
+            {/* Lokasi presisi pembeli (fraud checking) — dari backend terdekripsi fail-closed. */}
+            <div>
+              <p className="mb-2 text-label font-semibold text-text-secondary">
+                Lokasi
+              </p>
+              {buyerLocation ? (
+                <div>
+                  <dl>
+                    <KeyValue label="Koordinat" value={buyerLocation.coords} />
+                    <KeyValue
+                      label="Akurasi"
+                      value={
+                        buyerLocation.accuracy != null
+                          ? `± ${buyerLocation.accuracy} meter`
+                          : "Tidak tersedia"
+                      }
+                    />
+                    <KeyValue
+                      label="Waktu capture"
+                      value={
+                        buyerLocation.capturedAt
+                          ? formatDateTimeWIB(buyerLocation.capturedAt)
+                          : "Tidak tersedia"
+                      }
+                    />
+                  </dl>
+                  <a
+                    href={buyerLocation.mapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1.5 inline-block text-caption text-info-text underline"
+                  >
+                    Buka di Maps
+                  </a>
+                </div>
+              ) : (
+                <p className="text-body text-text-secondary">Tidak tersedia</p>
+              )}
+            </div>
 
             {/* ADM-115: percakapan room ORDER — hanya room transaksi, DM tidak bocor. */}
             <div>
