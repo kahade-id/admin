@@ -193,6 +193,14 @@ const ROLE_LABEL: Record<string, string> = {
   SYSTEM: "Sistem",
 }
 
+/** Status usulan damai — label Indonesia, bukan raw enum. */
+const PROPOSAL_STATUS_LABEL: Record<string, string> = {
+  ACCEPTED: "Diterima",
+  REJECTED: "Ditolak",
+  EXPIRED: "Kedaluwarsa",
+  PENDING: "Menunggu",
+}
+
 /** SLA mediasi sengketa — selaras DISPUTE_SLA_HOURS backend (72 jam). */
 const DISPUTE_SLA_HOURS = 72
 
@@ -566,7 +574,7 @@ function ClaimsAndProposals({ dispute }: { dispute: AdminDisputeItem }) {
                   ) : null}
                   {p.status ? (
                     <Badge tone={p.status === "ACCEPTED" ? "success" : p.status === "REJECTED" || p.status === "EXPIRED" ? "neutral" : "info"}>
-                      {p.status}
+                      {PROPOSAL_STATUS_LABEL[p.status] ?? p.status}
                     </Badge>
                   ) : null}
                   <span className="ml-auto text-caption tabular-nums text-text-secondary">
