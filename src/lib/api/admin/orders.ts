@@ -62,6 +62,15 @@ export type AdminOrderDetail = AdminOrderItem & {
   buyer: AdminOrderParty | null
   seller: AdminOrderParty | null
   statusHistories?: AdminOrderStatusHistory[]
+  // Lokasi presisi pembeli (fraud checking) — backend menyimpan terenkripsi
+  // (migrasi 20261006000000) dan mengembalikan terdekripsi fail-closed.
+  // null bila order dibuat sebelum capture lokasi atau dekripsi gagal.
+  buyerLocation?: {
+    latitude?: string | number | null
+    longitude?: string | number | null
+    accuracy?: string | number | null
+    capturedAt?: string | null
+  } | null
   // ADM-118: info pengiriman — backend mengirimnya via spread serializeOrder
   // (trackingNumber / courierName / trackingNotes / shippedAt di model Order).
   trackingNumber?: string | null
