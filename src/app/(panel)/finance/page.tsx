@@ -14,7 +14,7 @@
  */
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -31,6 +31,13 @@ import { Select } from "@/components/admin/select"
 // H05: step-up re-auth sebelum approve/tolak penarikan (parsial —
 // enforcement server per aksi belum ada).
 import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
+// H01: filter transaksi di URL. H02: preferensi kolom per admin.
+import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
+import {
+  ColumnCustomizer,
+  useColumnPrefs,
+  type PrefsColumnDef,
+} from "@/components/admin/batch139/column-prefs"
 import { AuditTrailPanel } from "./audit-trail-panel"
 import { ReconciliationPanel } from "./reconciliation-panel"
 import { TransactionDetailDialog } from "./transaction-detail-dialog"
@@ -175,6 +182,14 @@ function withdrawUserName(tx: PendingWithdrawal): string {
 }
 
 export default function FinancePage() {
+  return (
+    <Suspense>
+      <FinancePageInner />
+    </Suspense>
+  )
+}
+
+function FinancePageInner() {
   const toast = useToast()
 
   // Tab: ringkasan+antrean+transaksi vs jejak audit vs rekonsiliasi E3.
@@ -348,11 +363,21 @@ export default function FinancePage() {
   // ------------------------------------------------------------------
   // (c) Tabel transaksi
   // ------------------------------------------------------------------
-  const [search, setSearch] = useState("")
-  const debouncedSearch = useDebouncedValue(search, 400)
-  const [typeFilter, setTypeFilter] = useState<WalletTransactionType | "">("")
+  // H01: pencarian/tipe/status/halaman disinkronkan ke URL.
+  const { values: f, set: setF } = useUrlFilters({ q: "", type: "", status: "", txPage: "1" })
+  const [searchInput, setSearchInput] = useState(f.q)
+  const debouncedSearch = useDebouncedValue(searchInput, 400)
+  const typeFilter = (f.type || "") as WalletTransactionType | ""
   // ADM-214
-  const [txStatusFilter, setTxStatusFilter] = useState<WalletTransactionStatus | "">("")
+  const txStatusFilter = (f.status || "") as WalletTransactionStatus | ""
+  const txPage = parsePage(f.txPage)
+
+  // Komit pencarian debounce ke URL (+ reset ke halaman 1).
+  useEffect(() => {
+    if (debouncedSearch !== f.q) setF({ q: debouncedSearch, txPage: "1" })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch])
+
   const [dateInputs, setDateInputs] = useState(defaultDateInputs)
   const [dateError, setDateError] = useState<string | null>(null)
   const [range, setRange] = useState(() =>
@@ -360,7 +385,6 @@ export default function FinancePage() {
   )
 
   const [txRows, setTxRows] = useState<AdminTransactionItem[]>([])
-  const [txPage, setTxPage] = useState(1)
   const [txTotal, setTxTotal] = useState(0)
   const [txTotalPages, setTxTotalPages] = useState(1)
   const [txLoading, setTxLoading] = useState(true)
@@ -430,7 +454,8 @@ export default function FinancePage() {
         const params = {
           type: typeFilter || undefined,
           status: txStatusFilter || undefined,
-          q: debouncedSearch.trim() || undefined,
+          // H01: pakai pencarian yang sudah terkomit ke URL.
+          q: f.q.trim() || undefined,
           startDate: range.start,
           endDate: range.end,
         }
@@ -452,7 +477,7 @@ export default function FinancePage() {
         setTxLoading(false)
       }
     },
-    [debouncedSearch, typeFilter, txStatusFilter, range, toast, loadAggregate],
+    [typeFilter, txStatusFilter, f.q, range, toast, loadAggregate],
   )
 
   useEffect(() => {
@@ -460,14 +485,12 @@ export default function FinancePage() {
   }, [txPage, loadTransactions])
 
   const handleTypeChange = (value: string) => {
-    setTypeFilter(value as WalletTransactionType | "")
-    setTxPage(1)
+    setF({ type: value, txPage: "1" })
   }
 
   // ADM-214: filter status transaksi
   const handleTxStatusChange = (value: string) => {
-    setTxStatusFilter(value as WalletTransactionStatus | "")
-    setTxPage(1)
+    setF({ status: value, txPage: "1" })
   }
 
   // ADM-213: recheck manual SATU withdrawal PROCESSING (bukan retry payout).
@@ -554,7 +577,7 @@ export default function FinancePage() {
     }
     setDateError(null)
     setRange(rangeToIso(nextStart, nextEnd))
-    setTxPage(1)
+    setF({ txPage: "1" })
   }
 
   const handleRefresh = () => {
@@ -566,6 +589,239 @@ export default function FinancePage() {
   const refreshing = summaryLoading || pendingLoading || txLoading
   const actionTitle =
     actionKind === "reject" ? "Tolak penarikan" : "Setujui penarikan"
+
+
+  // H02: kolom bisa dipilih/diurutkan — preferensi per admin (localStorage).
+  const pendingColumnDefs: PrefsColumnDef<PendingWithdrawal>[] = [
+                {
+                  key: "user",
+                  header: "Pengguna",
+                  render: (r) => (
+                    <div>
+                      <p className="font-semibold">{withdrawUserName(r)}</p>
+                      {r.wallet?.user?.email ? (
+                        <p className="text-caption text-text-secondary">
+                          {maskEmail(r.wallet.user.email)}
+                        </p>
+                      ) : null}
+                    </div>
+                  ),
+                },
+                {
+                  key: "bankAccount",
+                  header: "Rekening tujuan",
+                  render: (r) => (
+                    <div>
+                      <p>
+                        {r.bankAccount?.bankCode ?? "—"} ·{" "}
+                        {maskAccountNumber(r.bankAccount?.accountNumber)}
+                      </p>
+                      {r.bankAccount?.accountName ? (
+                        <p className="text-caption text-text-secondary">
+                          {maskName(r.bankAccount.accountName)}
+                        </p>
+                      ) : null}
+                    </div>
+                  ),
+                },
+                {
+                  key: "amount",
+                  header: "Nominal",
+                  align: "right",
+                  render: (r) => (
+                    <span className="font-semibold">
+                      {formatRupiah(r.amount)}
+                    </span>
+                  ),
+                },
+                {
+                  key: "withdrawStatus",
+                  header: "Status",
+                  render: (r) => {
+                    const status = String(r.withdrawStatus)
+                    const tone =
+                      status === "PENDING_OTP" || status === "PENDING_PROCESS"
+                        ? "warning"
+                        : status === "PROCESSING" || status === "COMPLETED" || status === "SUCCESS"
+                          ? "success"
+                          : "danger"
+                    return (
+                      <Badge tone={tone}>
+                        {WITHDRAW_STATUS_LABEL[status] ?? status}
+                      </Badge>
+                    )
+                  },
+                },
+                {
+                  key: "createdAt",
+                  header: "Diajukan",
+                  render: (r) => formatDateTimeWIB(r.createdAt),
+                },
+                {
+                  key: "action",
+                  header: "",
+                  align: "right",
+                  // Tombol aksi hanya untuk baris yang masih pending —
+                  // pertahanan UI agar baris non-pending tidak bisa di-aksi.
+                  render: (r) => {
+                    const status = String(r.withdrawStatus)
+                    // ADM-207: PENDING_OTP tidak punya aksi — backend menolaknya
+                    // (400). Tampilkan label status, bukan tombol rusak.
+                    if (status === "PENDING_OTP") {
+                      return (
+                        <span className="text-caption text-text-secondary">
+                          Menunggu OTP pengguna
+                        </span>
+                      )
+                    }
+                    if (status !== "PENDING_PROCESS") return null
+                    // ADM-205: tampilkan kuorum dual approval; admin yang sudah
+                    // menyetujui tidak bisa menyetujui lagi.
+                    const info = r.approvalInfo
+                    const quorum = info
+                      ? `${info.approvals}/${info.requiredApprovals} persetujuan`
+                      : null
+                    return (
+                      <div className="flex flex-col items-end gap-1">
+                        {quorum ? (
+                          <span className="text-caption text-text-secondary">{quorum}</span>
+                        ) : null}
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            fullWidth={false}
+                            onClick={() => openAction(r, "reject")}
+                          >
+                            Tolak
+                          </Button>
+                          {info?.approvedByMe ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              fullWidth={false}
+                              disabled
+                              title="Anda sudah menyetujui — menunggu admin lain"
+                            >
+                              Sudah disetujui ✓
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              fullWidth={false}
+                              onClick={() => openAction(r, "approve")}
+                            >
+                              Setujui
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  },
+                },
+              ]
+  const pendingCols = useColumnPrefs("finance-pending", pendingColumnDefs)
+  const txColumnDefs: PrefsColumnDef<AdminTransactionItem>[] = [
+                {
+                  key: "type",
+                  header: "Tipe",
+                  render: (r) => {
+                    const meta = TX_META[String(r.type)] ?? {
+                      label: String(r.type),
+                      sign: "" as const,
+                    }
+                    return (
+                      <div>
+                        <p className="font-semibold">{meta.label}</p>
+                        <p className="text-caption text-text-secondary">
+                          {r.txId}
+                        </p>
+                      </div>
+                    )
+                  },
+                },
+                {
+                  key: "user",
+                  header: "Pengguna",
+                  render: (r) =>
+                    r.wallet?.user?.fullName ??
+                    r.wallet?.user?.email ??
+                    "—",
+                },
+                {
+                  key: "description",
+                  header: "Deskripsi",
+                  render: (r) => (
+                    <span className="block max-w-xs truncate">
+                      {r.description ?? "—"}
+                    </span>
+                  ),
+                },
+                {
+                  key: "order",
+                  header: "Order",
+                  render: (r) => r.order?.orderId ?? "—",
+                },
+                {
+                  key: "amount",
+                  header: "Nominal",
+                  align: "right",
+                  render: (r) => {
+                    const meta = TX_META[String(r.type)] ?? { sign: "" as const }
+                    return (
+                      <span
+                        className={
+                          meta.sign === "+"
+                            ? "font-semibold text-success-text"
+                            : "font-semibold"
+                        }
+                      >
+                        {meta.sign}
+                        {formatRupiah(r.amount)}
+                      </span>
+                    )
+                  },
+                },
+                {
+                  key: "status",
+                  header: "Status",
+                  render: (r) => (
+                    <Badge tone={TX_STATUS_TONE[String(r.status)] ?? "neutral"}>
+                      {String(r.status)}
+                    </Badge>
+                  ),
+                },
+                {
+                  key: "createdAt",
+                  header: "Waktu",
+                  render: (r) => formatDateTimeWIB(r.createdAt),
+                },
+                {
+                  key: "aksi",
+                  header: "Aksi",
+                  render: (r) => (
+                    <div className="flex justify-end gap-2">
+                      <Button variant="secondary" size="sm" fullWidth={false} onClick={() => setDetailTxId(r.txId)}>
+                        Detail
+                      </Button>
+                      {/* ADM-213: recheck manual — hanya untuk PROCESSING; bukan retry payout */}
+                      {String(r.withdrawStatus) === "PROCESSING" ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          fullWidth={false}
+                          onClick={() => openRecheck(r)}
+                          title="Tanyakan status payout ke Midtrans Iris. Tidak mengirim payout baru."
+                        >
+                          Cek status
+                        </Button>
+                      ) : null}
+                    </div>
+                  ),
+                },
+              ]
+  const txCols = useColumnPrefs("finance-tx", txColumnDefs)
 
   return (
     <RoleGate href="/finance">
@@ -740,136 +996,19 @@ export default function FinancePage() {
             }
           />
           <CardBody>
+            <div className="mb-4 flex justify-end">
+              {/* H02: kustomisasi kolom antrean penarikan. */}
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                onClick={() => pendingCols.setCustomizerOpen(true)}
+              >
+                Kolom
+              </Button>
+            </div>
             <DataTable<PendingWithdrawal>
-              columns={[
-                {
-                  key: "user",
-                  header: "Pengguna",
-                  render: (r) => (
-                    <div>
-                      <p className="font-semibold">{withdrawUserName(r)}</p>
-                      {r.wallet?.user?.email ? (
-                        <p className="text-caption text-text-secondary">
-                          {maskEmail(r.wallet.user.email)}
-                        </p>
-                      ) : null}
-                    </div>
-                  ),
-                },
-                {
-                  key: "bankAccount",
-                  header: "Rekening tujuan",
-                  render: (r) => (
-                    <div>
-                      <p>
-                        {r.bankAccount?.bankCode ?? "—"} ·{" "}
-                        {maskAccountNumber(r.bankAccount?.accountNumber)}
-                      </p>
-                      {r.bankAccount?.accountName ? (
-                        <p className="text-caption text-text-secondary">
-                          {maskName(r.bankAccount.accountName)}
-                        </p>
-                      ) : null}
-                    </div>
-                  ),
-                },
-                {
-                  key: "amount",
-                  header: "Nominal",
-                  align: "right",
-                  render: (r) => (
-                    <span className="font-semibold">
-                      {formatRupiah(r.amount)}
-                    </span>
-                  ),
-                },
-                {
-                  key: "withdrawStatus",
-                  header: "Status",
-                  render: (r) => {
-                    const status = String(r.withdrawStatus)
-                    const tone =
-                      status === "PENDING_OTP" || status === "PENDING_PROCESS"
-                        ? "warning"
-                        : status === "PROCESSING" || status === "COMPLETED" || status === "SUCCESS"
-                          ? "success"
-                          : "danger"
-                    return (
-                      <Badge tone={tone}>
-                        {WITHDRAW_STATUS_LABEL[status] ?? status}
-                      </Badge>
-                    )
-                  },
-                },
-                {
-                  key: "createdAt",
-                  header: "Diajukan",
-                  render: (r) => formatDateTimeWIB(r.createdAt),
-                },
-                {
-                  key: "action",
-                  header: "",
-                  align: "right",
-                  // Tombol aksi hanya untuk baris yang masih pending —
-                  // pertahanan UI agar baris non-pending tidak bisa di-aksi.
-                  render: (r) => {
-                    const status = String(r.withdrawStatus)
-                    // ADM-207: PENDING_OTP tidak punya aksi — backend menolaknya
-                    // (400). Tampilkan label status, bukan tombol rusak.
-                    if (status === "PENDING_OTP") {
-                      return (
-                        <span className="text-caption text-text-secondary">
-                          Menunggu OTP pengguna
-                        </span>
-                      )
-                    }
-                    if (status !== "PENDING_PROCESS") return null
-                    // ADM-205: tampilkan kuorum dual approval; admin yang sudah
-                    // menyetujui tidak bisa menyetujui lagi.
-                    const info = r.approvalInfo
-                    const quorum = info
-                      ? `${info.approvals}/${info.requiredApprovals} persetujuan`
-                      : null
-                    return (
-                      <div className="flex flex-col items-end gap-1">
-                        {quorum ? (
-                          <span className="text-caption text-text-secondary">{quorum}</span>
-                        ) : null}
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            fullWidth={false}
-                            onClick={() => openAction(r, "reject")}
-                          >
-                            Tolak
-                          </Button>
-                          {info?.approvedByMe ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              fullWidth={false}
-                              disabled
-                              title="Anda sudah menyetujui — menunggu admin lain"
-                            >
-                              Sudah disetujui ✓
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              fullWidth={false}
-                              onClick={() => openAction(r, "approve")}
-                            >
-                              Setujui
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  },
-                },
-              ]}
+              columns={pendingCols.visible}
               rows={pendingRows}
               rowKey={(r) => r.txId}
               loading={pendingLoading}
@@ -910,15 +1049,23 @@ export default function FinancePage() {
             }
           />
           <CardBody>
+            <div className="mb-4 flex justify-end">
+              {/* H02: kustomisasi kolom tabel transaksi. */}
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                onClick={() => txCols.setCustomizerOpen(true)}
+              >
+                Kolom
+              </Button>
+            </div>
             <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               <Input
                 label="Cari"
                 placeholder="Cari txId, nama, nominal…"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value)
-                  setTxPage(1)
-                }}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
               />
               <Select
                 label="Tipe"
@@ -994,105 +1141,7 @@ export default function FinancePage() {
             </div>
 
             <DataTable<AdminTransactionItem>
-              columns={[
-                {
-                  key: "type",
-                  header: "Tipe",
-                  render: (r) => {
-                    const meta = TX_META[String(r.type)] ?? {
-                      label: String(r.type),
-                      sign: "" as const,
-                    }
-                    return (
-                      <div>
-                        <p className="font-semibold">{meta.label}</p>
-                        <p className="text-caption text-text-secondary">
-                          {r.txId}
-                        </p>
-                      </div>
-                    )
-                  },
-                },
-                {
-                  key: "user",
-                  header: "Pengguna",
-                  render: (r) =>
-                    r.wallet?.user?.fullName ??
-                    r.wallet?.user?.email ??
-                    "—",
-                },
-                {
-                  key: "description",
-                  header: "Deskripsi",
-                  render: (r) => (
-                    <span className="block max-w-xs truncate">
-                      {r.description ?? "—"}
-                    </span>
-                  ),
-                },
-                {
-                  key: "order",
-                  header: "Order",
-                  render: (r) => r.order?.orderId ?? "—",
-                },
-                {
-                  key: "amount",
-                  header: "Nominal",
-                  align: "right",
-                  render: (r) => {
-                    const meta = TX_META[String(r.type)] ?? { sign: "" as const }
-                    return (
-                      <span
-                        className={
-                          meta.sign === "+"
-                            ? "font-semibold text-success-text"
-                            : "font-semibold"
-                        }
-                      >
-                        {meta.sign}
-                        {formatRupiah(r.amount)}
-                      </span>
-                    )
-                  },
-                },
-                {
-                  key: "status",
-                  header: "Status",
-                  render: (r) => (
-                    <Badge tone={TX_STATUS_TONE[String(r.status)] ?? "neutral"}>
-                      {String(r.status)}
-                    </Badge>
-                  ),
-                },
-                {
-                  key: "createdAt",
-                  header: "Waktu",
-                  render: (r) => formatDateTimeWIB(r.createdAt),
-                },
-                {
-                  key: "aksi",
-                  header: "Aksi",
-                  render: (r) => (
-                    <div className="flex justify-end gap-2">
-                      <Button variant="secondary" size="sm" fullWidth={false} onClick={() => setDetailTxId(r.txId)}>
-                        Detail
-                      </Button>
-                      {/* ADM-213: recheck manual — hanya untuk PROCESSING; bukan retry payout */}
-                      {String(r.withdrawStatus) === "PROCESSING" ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          fullWidth={false}
-                          onClick={() => openRecheck(r)}
-                          title="Tanyakan status payout ke Midtrans Iris. Tidak mengirim payout baru."
-                        >
-                          Cek status
-                        </Button>
-                      ) : null}
-                    </div>
-                  ),
-                },
-              ]}
+              columns={txCols.visible}
               rows={txRows}
               rowKey={(r) => r.txId}
               loading={txLoading}
@@ -1105,7 +1154,7 @@ export default function FinancePage() {
                 totalPages={txTotalPages}
                 total={txTotal}
                 pageSize={PAGE_SIZE}
-                onPageChange={setTxPage}
+                onPageChange={(p) => setF({ txPage: String(p) })}
                 disabled={txLoading}
               />
             </div>
@@ -1214,6 +1263,9 @@ export default function FinancePage() {
       </Dialog>
       {/* H05: dialog verifikasi ulang untuk aksi penarikan kritis. */}
       <ReauthDialog {...reauth.dialog} />
+      {/* H02: dialog kustomisasi kolom */}
+      <ColumnCustomizer prefs={pendingCols} />
+      <ColumnCustomizer prefs={txCols} />
     </RoleGate>
   )
 }
