@@ -29,6 +29,8 @@ import {
 import { roleLabel } from "@/lib/rbac"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
+// H05: step-up re-auth untuk aksi grant darurat.
+import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 
 import { ErrorBlock, LoadingBlock, PageHeader } from "../../_components/admin-ui"
 
@@ -58,6 +60,8 @@ function remainingLabel(expiresAt: string): string {
 
 function EmergencyGrantsContent() {
   const toast = useToast()
+  // H05: gate verifikasi ulang untuk aksi grant darurat.
+  const reauth = useReauthGate()
   const [grants, setGrants] = useState<EmergencyGrant[]>([])
   const [admins, setAdmins] = useState<AdminUserItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -292,7 +296,11 @@ function EmergencyGrantsContent() {
               setFormError(null)
             }}
           />
-          <Button loading={saving} onClick={handleCreate}>
+          <Button
+            loading={saving}
+            // H05: grant darurat wajib verifikasi ulang.
+            onClick={() => reauth.require(() => void handleCreate(), "Beri akses darurat")}
+          >
             Beri akses
           </Button>
         </div>
@@ -304,10 +312,18 @@ function EmergencyGrantsContent() {
         title="Cabut grant ini?"
         description={`Akses darurat ${revokeTarget?.adminName ?? ""} (${revokeTarget ? scopeLabel(revokeTarget.scope) : ""}) akan dicabut sebelum kedaluwarsa.`}
         confirmLabel="Cabut grant"
-        onConfirm={handleRevoke}
+        // H05: pencabutan grant darurat wajib verifikasi ulang.
+        onConfirm={() =>
+          reauth.require(
+            () => void handleRevoke(),
+            `Cabut grant darurat ${revokeTarget?.adminName ?? ""}`,
+          )
+        }
         loading={revoking}
         destructive
       />
+      {/* H05: dialog verifikasi ulang untuk aksi grant darurat. */}
+      <ReauthDialog {...reauth.dialog} />
     </div>
   )
 }
