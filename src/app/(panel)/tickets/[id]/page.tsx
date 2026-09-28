@@ -14,7 +14,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty-state"
-import { TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
@@ -30,6 +29,12 @@ import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 // ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail } from "@/lib/pii"
+import { MaskedPii } from "@/components/admin/batch139/masked-pii"
+import { SplitComposer } from "@/components/admin/batch139/composer-split"
+import { DraftStatus, useDraftNote } from "@/components/admin/batch139/draft-notes"
+import { useInternalNotes } from "@/components/admin/batch139/use-internal-notes"
+import { RevisionBanner, useRevisionGuard } from "@/components/admin/batch139/revision-guard"
+import { useAuth } from "@/lib/auth-context"
 
 import { TICKET_STATUS_LABEL, TICKET_STATUS_TONE } from "../maps"
 
@@ -88,8 +93,14 @@ export default function TicketDetailPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [ticket, setTicket] = useState<SupportTicket | null>(null)
+  const { profile } = useAuth()
+  const adminId = profile?.adminId ?? "anon"
 
-  const [draft, setDraft] = useState("")
+  // H11: draf autosave — balasan (eksternal) dan catatan internal terpisah.
+  const replyDraft = useDraftNote(`ticket:${ticketId}:reply`)
+  const internalDraft = useDraftNote(`ticket:${ticketId}:internal`)
+  // H12: catatan internal — draf lokal per admin (backend belum punya API).
+  const internalNotes = useInternalNotes(`ticket:${ticketId}`, adminId)
   const [sending, setSending] = useState(false)
 
   const [nextStatus, setNextStatus] = useState<TicketStatus>("IN_PROGRESS")
@@ -122,13 +133,13 @@ export default function TicketDetailPage() {
     toast.show({ title, description: userMessage(e), tone: "danger" })
   }
 
-  const handleReply = async () => {
-    const text = draft.trim()
-    if (!text || sending) return
+  const handleReply = async (text?: string) => {
+    const body = (text ?? replyDraft.value).trim()
+    if (!body || sending) return
     setSending(true)
     try {
-      await replyToTicket(ticketId, text)
-      setDraft("")
+      await replyToTicket(ticketId, body)
+      replyDraft.clear()
       await load("refresh")
       toast.show({ title: "Balasan terkirim", tone: "success" })
     } catch (e) {
@@ -136,6 +147,16 @@ export default function TicketDetailPage() {
     } finally {
       setSending(false)
     }
+  }
+
+  const handleSaveInternalNote = (text: string) => {
+    internalNotes.addNote(text, profile?.fullName?.trim() || "Admin")
+    internalDraft.clear()
+    toast.show({
+      title: "Catatan internal disimpan",
+      description: "Draf lokal perangkat ini — belum ada API catatan internal backend.",
+      tone: "success",
+    })
   }
 
   const handleStatusChange = async () => {
@@ -154,6 +175,15 @@ export default function TicketDetailPage() {
 
   const status = ticket ? String(ticket.status) : ""
   const statusChanged = ticket ? nextStatus !== ticket.status : false
+
+  // H08: peringatan bila tiket berubah saat balasan diketik.
+  const revGuard = useRevisionGuard({
+    recordKey: `ticket:${ticketId}`,
+    getRevision: () =>
+      getTicketDetail(ticketId).then((t) => (t.updatedAt ?? t.createdAt ?? null) as string | null),
+    dirty: replyDraft.hasDraft || internalDraft.hasDraft,
+    enabled: !!ticket,
+  })
 
   return (
     <RoleGate href="/tickets">
@@ -176,6 +206,16 @@ export default function TicketDetailPage() {
           Muat ulang
         </Button>
       </div>
+
+      {/* H08: peringatan bila tiket berubah saat balasan diketik. */}
+      {revGuard.stale ? (
+        <RevisionBanner
+          onReload={async () => {
+            await load("refresh")
+            revGuard.acknowledge()
+          }}
+        />
+      ) : null}
 
       {loading ? (
         <div className="flex min-h-[40vh] items-center justify-center gap-2">
@@ -220,8 +260,20 @@ export default function TicketDetailPage() {
                   label="Pengguna"
                   value={ticket.user?.fullName?.trim() || ticket.user?.email || ticket.userId}
                 />
+                {/* H13: email tetap ter-mask; reveal hanya bila canReveal eksplisit. */}
                 {ticket.user?.email && ticket.user?.fullName?.trim() ? (
-                  <KeyValue label="Email" value={maskEmail(ticket.user.email)} />
+                  <KeyValue
+                    label="Email"
+                    value={
+                      <MaskedPii
+                        label="Email pengguna"
+                        masked={maskEmail(ticket.user.email)}
+                        full={ticket.user.email}
+                        kind="email"
+                        recordId={ticket.id}
+                      />
+                    }
+                  />
                 ) : null}
                 <KeyValue label="Dibuat" value={formatDateTimeWIB(ticket.createdAt)} />
                 {ticket.updatedAt ? (
@@ -290,31 +342,49 @@ export default function TicketDetailPage() {
                       variant="secondary"
                       size="sm"
                       fullWidth={false}
-                      onClick={() => setDraft(t.text)}
+                      onClick={() => replyDraft.setValue(t.text)}
                       title="Sisipkan template ke kolom balasan (bisa diedit sebelum dikirim)"
                     >
                       {t.label}
                     </Button>
                   ))}
                 </div>
-                <TextArea
-                  label="Balas tiket"
-                  rows={3}
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  placeholder="Tulis balasan untuk pengguna…"
-                  maxLength={REPLY_MAX_LENGTH}
-                  hint={`${draft.length} / ${REPLY_MAX_LENGTH} karakter`}
+                {/* H12: catatan internal (draf lokal per admin). */}
+                {internalNotes.notes.length > 0 ? (
+                  <ul className="flex flex-col gap-2">
+                    {internalNotes.notes.map((n) => (
+                      <li
+                        key={n.id}
+                        className="rounded-sm border border-warning/40 bg-warning/5 px-3 py-2"
+                      >
+                        <p className="text-caption text-text-secondary">
+                          📝 {n.author} · {formatDateTimeWIB(n.at)} · internal (lokal)
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap text-body text-text-primary">
+                          {n.text}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {/* H12: composer terpisah — default catatan internal; balasan ke
+                    pengguna wajib konfirmasi eksplisit. */}
+                <SplitComposer
+                  internalValue={internalDraft.value}
+                  onInternalChange={internalDraft.setValue}
+                  externalValue={replyDraft.value}
+                  onExternalChange={replyDraft.setValue}
+                  onSendInternal={(text) => handleSaveInternalNote(text)}
+                  onSendExternal={(text) => void handleReply(text)}
+                  sending={sending}
+                  internalFooter={
+                    <div className="mt-1">
+                      <DraftStatus status={internalDraft.status} savedAt={internalDraft.savedAt} />
+                    </div>
+                  }
                 />
-                <Button
-                  variant="primary"
-                  fullWidth={false}
-                  loading={sending}
-                  disabled={draft.trim().length === 0}
-                  onClick={handleReply}
-                >
-                  Kirim balasan
-                </Button>
+                {/* H11: status autosave draf balasan. */}
+                <DraftStatus status={replyDraft.status} savedAt={replyDraft.savedAt} />
               </div>
             </CardBody>
           </Card>

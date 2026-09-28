@@ -60,6 +60,7 @@ export function MaskedPii({
   full,
   kind = "other",
   recordId,
+  canReveal = false,
 }: {
   /** Label field untuk jejak audit, mis. "No. HP". */
   label: string
@@ -70,6 +71,12 @@ export function MaskedPii({
   kind?: PiiKind
   /** ID record pemilik data (untuk jejak audit). */
   recordId: string
+  /**
+   * Izin eksplisit reveal — default FALSE (fail-closed). Tombol "Tampilkan"
+   * hanya ada bila halaman memberikan izin eksplisit. Mengakses halaman TIDAK
+   * otomatis berarti boleh reveal.
+   */
+  canReveal?: boolean
 }) {
   const { profile } = useAuth()
   const [revealed, setRevealed] = useState(false)
@@ -86,7 +93,7 @@ export function MaskedPii({
   useEffect(() => () => remask(), [remask])
 
   const reveal = () => {
-    if (!full) return
+    if (!canReveal || !full) return
     logPiiReveal({
       adminId: profile?.adminId ?? "anon",
       adminName: profile?.fullName ?? "Admin",
@@ -121,7 +128,7 @@ export function MaskedPii({
             Sembunyikan
           </Button>
         </span>
-      ) : (
+      ) : canReveal ? (
         <Button
           variant="ghost"
           size="sm"
@@ -132,7 +139,7 @@ export function MaskedPii({
         >
           Tampilkan
         </Button>
-      )}
+      ) : null}
     </span>
   )
 }
