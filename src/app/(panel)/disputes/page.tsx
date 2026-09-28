@@ -30,6 +30,12 @@ import { useListShortcuts } from "@/lib/list-shortcuts"
 import { Input } from "@/components/ui/input"
 // H01: filter tersimpan di URL.
 import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
+// H02: preferensi kolom per admin.
+import {
+  ColumnCustomizer,
+  useColumnPrefs,
+  type PrefsColumnDef,
+} from "@/components/admin/batch139/column-prefs"
 // H03+H06: bulk action dengan scope eksplisit + dry-run.
 import {
   BulkConfirmDialog,
@@ -132,6 +138,12 @@ function DisputesListInner() {
   const [bulkOpen, setBulkOpen] = useState(false)
   const [dryRun, setDryRun] = useState<DryRunResult | null>(null)
   const [bulkLoading, setBulkLoading] = useState(false)
+
+  // Scope selection = halaman ini saja: bersihkan saat halaman/filter berubah.
+  useEffect(() => {
+    bulk.clear()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f.page, f.status, f.category, f.search])
 
   /**
    * Ambil SEMUA baris yang cocok dengan filter aktif (untuk export CSV dan
@@ -336,6 +348,113 @@ function DisputesListInner() {
     onOpen: (r) => router.push(`/disputes/${r.id}`),
   })
 
+  // H02: kolom tabel sengketa bisa dipilih/diurutkan — preferensi per admin.
+  // Kolom checkbox "select" selalu tampil (bagian dari bulk selection H03).
+  const disputeColumnDefs = useMemo<PrefsColumnDef<AdminDisputeItem>[]>(
+    () => [
+      {
+        key: "reason",
+        header: "Sengketa",
+        defaultVisible: true,
+        render: (r) => (
+          <div>
+            <p className="font-semibold">{r.reason?.trim() || r.orderId}</p>
+            <p className="text-caption text-text-secondary">
+              Order {r.orderId} · {formatDateTimeWIB(r.createdAt)}
+            </p>
+          </div>
+        ),
+      },
+      {
+        key: "status",
+        header: "Status",
+        defaultVisible: true,
+        render: (r) => (
+          <Badge tone={DISPUTE_STATUS_TONE[r.status] ?? "neutral"}>
+            {DISPUTE_STATUS_LABEL[r.status] ?? r.status}
+          </Badge>
+        ),
+      },
+      {
+        key: "category",
+        header: "Kategori",
+        defaultVisible: true,
+        render: (r) =>
+          r.category ? (
+            <Badge tone="info">{DISPUTE_CATEGORY_LABEL[r.category] ?? r.category}</Badge>
+          ) : (
+            <span className="text-caption text-text-secondary">—</span>
+          ),
+      },
+      {
+        key: "age",
+        header: "Umur",
+        defaultVisible: true,
+        render: (r) => {
+          const h = ageHours(r.createdAt)
+          const breached =
+            h != null &&
+            h >= DISPUTE_SLA_HOURS &&
+            r.status !== "RESOLVED" &&
+            !String(r.status).startsWith("RESOLVED")
+          return (
+            <div className="flex flex-col gap-1">
+              <span className="tabular-nums text-[13px]">{formatAge(r.createdAt)}</span>
+              {breached ? <Badge tone="danger">Lewat SLA</Badge> : null}
+            </div>
+          )
+        },
+      },
+      {
+        key: "assignedAdminId",
+        header: "Ditugaskan ke",
+        defaultVisible: true,
+        // Tampilkan nama admin (dari relasi assignedAdmin), bukan ID mentah.
+        render: (r) => {
+          const name = assignedAdminName(r)
+          if (name) return <span className="font-medium">{name}</span>
+          return (
+            <span className="break-all font-mono text-[13px]">
+              {r.assignedAdminId ?? "—"}
+            </span>
+          )
+        },
+      },
+      {
+        key: "action",
+        header: "",
+        defaultVisible: true,
+        align: "right",
+        render: (r) => (
+          <Link
+            href={`/disputes/${r.id}`}
+            className="font-semibold text-info-text hover:underline"
+          >
+            Tinjau
+          </Link>
+        ),
+      },
+    ],
+    [],
+  )
+  const cols = useColumnPrefs<AdminDisputeItem>("disputes", disputeColumnDefs)
+
+  // Kolom checkbox selalu dirender dari state bulk terkini (tidak di-memo agar
+  // selalu sinkron dengan selection).
+  const selectColumn = {
+    key: "select",
+    header: "",
+    render: (r: AdminDisputeItem) => (
+      <input
+        type="checkbox"
+        checked={bulk.isSelected(r.id)}
+        onChange={() => bulk.toggle(r.id)}
+        aria-label={`Pilih sengketa order ${r.orderId}`}
+        className="h-4 w-4 accent-[var(--color-primary)]"
+      />
+    ),
+  }
+
   return (
     <RoleGate href="/disputes">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -355,6 +474,15 @@ function DisputesListInner() {
             title="Unduh CSV sesuai filter aktif"
           >
             Unduh CSV
+          </Button>
+          {/* H02: kustomisasi kolom tabel sengketa. */}
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth={false}
+            onClick={() => cols.setCustomizerOpen(true)}
+          >
+            Kolom
           </Button>
           <Button
             variant="secondary"
@@ -468,100 +596,10 @@ function DisputesListInner() {
             }
           />
           <DataTable<AdminDisputeItem>
-            columns={[
-              {
-                key: "select",
-                header: "",
-                render: (r) => (
-                  <input
-                    type="checkbox"
-                    checked={bulk.isSelected(r.id)}
-                    onChange={() => bulk.toggle(r.id)}
-                    aria-label={`Pilih sengketa order ${r.orderId}`}
-                    className="h-4 w-4 accent-[var(--color-primary)]"
-                  />
-                ),
-              },
-              {
-                key: "reason",
-                header: "Sengketa",
-                render: (r) => (
-                  <div>
-                    <p className="font-semibold">{r.reason?.trim() || r.orderId}</p>
-                    <p className="text-caption text-text-secondary">
-                      Order {r.orderId} · {formatDateTimeWIB(r.createdAt)}
-                    </p>
-                  </div>
-                ),
-              },
-              {
-                key: "status",
-                header: "Status",
-                render: (r) => (
-                  <Badge tone={DISPUTE_STATUS_TONE[r.status] ?? "neutral"}>
-                    {DISPUTE_STATUS_LABEL[r.status] ?? r.status}
-                  </Badge>
-                ),
-              },
-              {
-                key: "category",
-                header: "Kategori",
-                render: (r) =>
-                  r.category ? (
-                    <Badge tone="info">{DISPUTE_CATEGORY_LABEL[r.category] ?? r.category}</Badge>
-                  ) : (
-                    <span className="text-caption text-text-secondary">—</span>
-                  ),
-              },
-              {
-                key: "age",
-                header: "Umur",
-                render: (r) => {
-                  const h = ageHours(r.createdAt)
-                  const breached =
-                    h != null &&
-                    h >= DISPUTE_SLA_HOURS &&
-                    r.status !== "RESOLVED" &&
-                    !String(r.status).startsWith("RESOLVED")
-                  return (
-                    <div className="flex flex-col gap-1">
-                      <span className="tabular-nums text-[13px]">{formatAge(r.createdAt)}</span>
-                      {breached ? <Badge tone="danger">Lewat SLA</Badge> : null}
-                    </div>
-                  )
-                },
-              },
-              {
-                key: "assignedAdminId",
-                header: "Ditugaskan ke",
-                // Tampilkan nama admin (dari relasi assignedAdmin), bukan ID mentah.
-                render: (r) => {
-                  const name = assignedAdminName(r)
-                  if (name) return <span className="font-medium">{name}</span>
-                  return (
-                    <span className="break-all font-mono text-[13px]">
-                      {r.assignedAdminId ?? "—"}
-                    </span>
-                  )
-                },
-              },
-              {
-                key: "action",
-                header: "",
-                align: "right",
-                render: (r) => (
-                  <Link
-                    href={`/disputes/${r.id}`}
-                    className="font-semibold text-info-text hover:underline"
-                  >
-                    Tinjau
-                  </Link>
-                ),
-              },
-            ]}
+            columns={[selectColumn, ...cols.visible]}
             rows={rows}
             rowKey={(r) => r.id}
-            rowClassName={(_, i) => (i === activeIndex ? "bg-info-soft" : undefined)}
+            loading={loading}
             emptyText="Tidak ada sengketa pada filter ini."
           />
           <Pagination
@@ -595,6 +633,8 @@ function DisputesListInner() {
         loading={bulkLoading}
         onConfirm={(reason, notes) => void handleBulkReview(reason, notes)}
       />
+      {/* H02: dialog kustomisasi kolom */}
+      <ColumnCustomizer prefs={cols} />
     </RoleGate>
   )
 }

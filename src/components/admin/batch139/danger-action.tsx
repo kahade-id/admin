@@ -17,7 +17,7 @@
  */
 "use client"
 
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Dialog } from "@/components/ui/dialog"
@@ -62,6 +62,15 @@ export function DangerActionDialog({
 }: DangerActionDialogProps) {
   const [reason, setReason] = useState("")
   const [notes, setNotes] = useState("")
+
+  // Reset setiap dialog dibuka/ditutup — bukan hanya lewat tombol close
+  // internal (parent bisa menutup programatik setelah sukses).
+  useEffect(() => {
+    if (!open) {
+      setReason("")
+      setNotes("")
+    }
+  }, [open ])
 
   const reasonValid = reason.trim().length > 0
   const notesValid = notes.trim().length >= MIN_NOTES_LENGTH

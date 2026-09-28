@@ -14,7 +14,7 @@
  */
 "use client"
 
-import { useCallback, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -222,6 +222,12 @@ export function BulkConfirmDialog({
   onConfirm,
 }: BulkConfirmDialogProps) {
   const [confirmed, setConfirmed] = useState(false)
+
+  // Reset checkbox setiap dialog dibuka/ditutup — termasuk saat parent
+  // menutup dialog secara programatik setelah sukses.
+  useEffect(() => {
+    if (!open) setConfirmed(false)
+  }, [open ])
 
   return (
     <DangerActionDialog
