@@ -5,6 +5,14 @@ import type { NextConfig } from "next";
 // Catatan arsitektur: admin.kahade.id berada di belakang Cloudflare; header yang
 // di-set di sini (origin) diteruskan Cloudflare ke browser. Jangan set header yang
 // sama juga di Cloudflare Transform Rules — itu menyebabkan duplikasi (lihat SEC-513).
+//
+// INFO-1 (2026-09-28, GO-PUBLIK): header X-Frame-Options/X-Content-Type-Options/
+// Referrer-Policy TETAP duplikat di produksi karena Cloudflare menambahkan
+// versi default-nya sendiri (X-Frame-Options: SAMEORIGIN, X-Content-Type-Options:
+// nosniff) di atas header origin ini. Duplikat tidak bisa dihapus dari sisi repo
+// tanpa menghapus pertahanan origin (versi origin lebih ketat: DENY). Perbaikan
+// kosmetik: matikan "Security headers" bawaan Cloudflare di dashboard (zona
+// kahade.id) — langkah manual, di luar cakupan deploy otomatis.
 const HSTS_VALUE = "max-age=31536000; includeSubDomains; preload";
 
 // CSP statis yang ketat TAPI tidak memecah Next.js production:
