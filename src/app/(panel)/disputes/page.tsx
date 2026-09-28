@@ -9,7 +9,7 @@
  */
 
 import Link from "next/link"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
@@ -22,12 +22,23 @@ import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
-import { listDisputes, type AdminDisputeItem } from "@/lib/api/admin/disputes"
+import { listDisputes, markDisputeUnderReview, type AdminDisputeItem } from "@/lib/api/admin/disputes"
 import { userMessage } from "@/lib/api/response"
 import { downloadCsv } from "@/lib/csv"
 import { ageHours, formatAge, formatDateTimeWIB } from "@/lib/format"
 import { useListShortcuts } from "@/lib/list-shortcuts"
 import { Input } from "@/components/ui/input"
+// H01: filter tersimpan di URL.
+import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
+// H03+H06: bulk action dengan scope eksplisit + dry-run.
+import {
+  BulkConfirmDialog,
+  BulkScopeBar,
+  useBulkSelection,
+  type DryRunResult,
+} from "@/components/admin/batch139/bulk-actions"
+// H14: ekspor sebagai job (dengan fallback unduhan langsung).
+import { ExportJobPanel, useExportJob } from "@/components/admin/batch139/export-job"
 
 import { DISPUTE_CATEGORY_LABEL, DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "./maps"
 
@@ -78,20 +89,49 @@ const CATEGORY_FILTER_OPTIONS = [
 ]
 
 export default function DisputesListPage() {
+  // H01: useSearchParams wajib di dalam Suspense (aturan Next.js).
+  return (
+    <Suspense fallback={null}>
+      <DisputesListInner />
+    </Suspense>
+  )
+}
+
+/** Alasan terstruktur untuk bulk "masuk review" (H04). */
+const BULK_REVIEW_REASONS = [
+  { value: "TRIAGE", label: "Triage — mulai peninjauan" },
+  { value: "SLA_RISK", label: "Mendekati / melewati SLA" },
+  { value: "QUEUE_REBALANCE", label: "Penyeimbangan antrean" },
+  { value: "OTHER", label: "Lainnya (jelaskan di catatan)" },
+]
+
+function DisputesListInner() {
   const toast = useToast()
 
-  const [filter, setFilter] = useState<Filter>("ALL")
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("ALL")
-  const [searchInput, setSearchInput] = useState("")
-  const [search, setSearch] = useState("")
-  const [page, setPage] = useState(1)
+  // H01: status/kategori/pencarian/halaman disinkronkan ke URL.
+  const { values: f, set: setF } = useUrlFilters({
+    status: "ALL",
+    category: "ALL",
+    search: "",
+    page: "1",
+  })
+  const filter = f.status as Filter
+  const categoryFilter = f.category as CategoryFilter
+  const search = f.search
+  const page = parsePage(f.page)
+  const [searchInput, setSearchInput] = useState(f.search)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [rows, setRows] = useState<AdminDisputeItem[]>([])
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
-  const [csvLoading, setCsvLoading] = useState(false)
+
+  // H03: multi-select per halaman.
+  const bulk = useBulkSelection(rows.map((r) => r.id))
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [dryRun, setDryRun] = useState<DryRunResult | null>(null)
+  const [bulkLoading, setBulkLoading] = useState(false)
 
   /**
    * Ambil SEMUA baris yang cocok dengan filter aktif (untuk export CSV dan
@@ -169,66 +209,121 @@ export default function DisputesListPage() {
     void load("initial")
   }, [load])
 
-  const handleFilterChange = (f: Filter) => {
-    setFilter(f)
-    setPage(1)
+  const handleFilterChange = (value: Filter) => {
+    setF({ status: value, page: "1" })
     setActiveIndex(0)
-    void load("initial", 1, f, search, categoryFilter)
   }
 
-  const handleCategoryChange = (c: CategoryFilter) => {
-    setCategoryFilter(c)
-    setPage(1)
+  const handleCategoryChange = (value: CategoryFilter) => {
+    setF({ category: value, page: "1" })
     setActiveIndex(0)
-    void load("initial", 1, filter, search, c)
   }
 
   const handleSearch = () => {
-    const q = searchInput.trim()
-    setSearch(q)
-    setPage(1)
+    setF({ search: searchInput.trim(), page: "1" })
     setActiveIndex(0)
-    void load("initial", 1, filter, q, categoryFilter)
   }
 
   const handlePageChange = (p: number) => {
-    setPage(p)
+    setF({ page: String(p) })
     setActiveIndex(0)
-    void load("initial", p, filter, search, categoryFilter)
   }
 
-  /** Export CSV sesuai filter aktif (status/kategori/pencarian/belum ditugaskan). */
-  const handleExportCsv = async () => {
-    setCsvLoading(true)
-    try {
+  // H14: ekspor sebagai job — backend sengketa belum punya endpoint job,
+  // jadi dipakai fallback unduhan langsung dengan UI status yang sama.
+  const exportJob = useExportJob({
+    request: async () => {
       const all = await fetchAllMatching(filter, search, categoryFilter)
       const stamp = new Date().toISOString().slice(0, 10)
-      downloadCsv(
-        `sengketa-${stamp}.csv`,
-        ["ID Sengketa", "ID Order", "Status", "Kategori", "Umur", "Ditugaskan ke", "Dibuat"],
-        all.map((r) => [
-          r.id,
-          r.orderId,
-          DISPUTE_STATUS_LABEL[r.status] ?? r.status,
-          r.category ? (DISPUTE_CATEGORY_LABEL[r.category] ?? r.category) : "",
-          formatAge(r.createdAt),
-          assignedAdminName(r) ?? r.assignedAdminId ?? "",
-          formatDateTimeWIB(r.createdAt),
-        ]),
-      )
+      return {
+        type: "file" as const,
+        save: () => {
+          downloadCsv(
+            `sengketa-${stamp}.csv`,
+            ["ID Sengketa", "ID Order", "Status", "Kategori", "Umur", "Ditugaskan ke", "Dibuat"],
+            all.map((r) => [
+              r.id,
+              r.orderId,
+              DISPUTE_STATUS_LABEL[r.status] ?? r.status,
+              r.category ? (DISPUTE_CATEGORY_LABEL[r.category] ?? r.category) : "",
+              formatAge(r.createdAt),
+              assignedAdminName(r) ?? r.assignedAdminId ?? "",
+              formatDateTimeWIB(r.createdAt),
+            ]),
+          )
+        },
+      }
+    },
+    getStatus: async () => {
+      throw new Error("Job backend belum tersedia untuk ekspor sengketa.")
+    },
+    download: async () => {},
+    onDone: () => {
       toast.show({
         title: "CSV diunduh",
-        description: `${all.length} sengketa sesuai filter aktif.`,
+        description: "Ekspor sengketa sesuai filter aktif selesai.",
         tone: "success",
       })
-    } catch (e) {
+    },
+  })
+
+  // H06: dry-run client-side — tanpa endpoint dry-run backend, estimasi dari
+  // baris halaman ini (ditandai "Estimasi client-side" di dialog).
+  const computeDryRun = useCallback((): DryRunResult => {
+    const byId = new Map(rows.map((r) => [r.id, r]))
+    const excluded: Array<{ id: string; reason: string }> = []
+    let affected = 0
+    for (const id of bulk.selectedIds) {
+      const r = byId.get(id)
+      if (!r) {
+        excluded.push({ id, reason: "Tidak ada di halaman ini" })
+        continue
+      }
+      if (r.status !== "ASSIGNED") {
+        excluded.push({
+          id,
+          reason: `Status "${DISPUTE_STATUS_LABEL[r.status] ?? r.status}" — hanya ASSIGNED yang bisa masuk review`,
+        })
+        continue
+      }
+      affected += 1
+    }
+    return { affected, excluded, conflicts: [], estimated: true }
+  }, [rows, bulk])
+
+  const openBulkReview = () => {
+    setDryRun(computeDryRun())
+    setBulkOpen(true)
+  }
+
+  const handleBulkReview = async (reason: string, notes: string) => {
+    const targets = bulk.selectedIds.filter((id) => {
+      const r = rows.find((x) => x.id === id)
+      return r?.status === "ASSIGNED"
+    })
+    if (targets.length === 0) return
+    setBulkLoading(true)
+    try {
+      const results = await Promise.allSettled(targets.map((id) => markDisputeUnderReview(id)))
+      const ok = results.filter((r) => r.status === "fulfilled").length
+      const failed = results.length - ok
+      // CATATAN: endpoint under-review backend belum menerima alasan/catatan —
+      // alasan terstruktur tetap diminta di dialog (H04) sebagai disiplin proses
+      // dan siap diteruskan saat backend mendukungnya (additive).
+      void reason
+      void notes
       toast.show({
-        title: "Gagal mengekspor CSV",
-        description: userMessage(e),
-        tone: "danger",
+        title: "Bulk review selesai",
+        description: `${ok} sengketa masuk review${failed > 0 ? `, ${failed} gagal` : ""}.`,
+        tone: failed > 0 ? "danger" : "success",
       })
+      setBulkOpen(false)
+      bulk.clear()
+      void load("refresh")
+    } catch (e) {
+      toast.show({ title: "Gagal menjalankan bulk review", description: userMessage(e), tone: "danger" })
     } finally {
-      setCsvLoading(false)
+      setBulkLoading(false)
     }
   }
 
@@ -255,8 +350,8 @@ export default function DisputesListPage() {
             variant="secondary"
             size="sm"
             fullWidth={false}
-            loading={csvLoading}
-            onClick={() => void handleExportCsv()}
+            loading={exportJob.phase.phase === "requesting" || exportJob.phase.phase === "polling"}
+            onClick={() => void exportJob.start()}
             title="Unduh CSV sesuai filter aktif"
           >
             Unduh CSV
@@ -272,6 +367,17 @@ export default function DisputesListPage() {
           </Button>
         </div>
       </div>
+
+      {/* H14: status job ekspor */}
+      {exportJob.phase.phase !== "idle" ? (
+        <div className="mb-4">
+          <ExportJobPanel
+            phase={exportJob.phase}
+            onDownload={() => {}}
+            onReset={exportJob.reset}
+          />
+        </div>
+      ) : null}
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <Select
@@ -334,8 +440,48 @@ export default function DisputesListPage() {
         </Card>
       ) : (
         <>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              fullWidth={false}
+              onClick={() => (bulk.allPageSelected ? bulk.deselectPage() : bulk.selectPage())}
+            >
+              {bulk.allPageSelected ? "Batalkan pilih halaman ini" : "Pilih halaman ini"}
+            </Button>
+            {bulk.selectedCount > 0 ? (
+              <span className="text-caption text-text-secondary">
+                {bulk.selectedCount} dipilih
+              </span>
+            ) : null}
+          </div>
+          {/* H03: bar scope bulk — jumlah ID eksplisit + penjelasan scope */}
+          <BulkScopeBar
+            selection={bulk}
+            pageSize={rows.length}
+            totalResults={total}
+            scope="selected-page"
+            actions={
+              <Button variant="secondary" size="sm" fullWidth={false} onClick={openBulkReview}>
+                Masukkan ke review
+              </Button>
+            }
+          />
           <DataTable<AdminDisputeItem>
             columns={[
+              {
+                key: "select",
+                header: "",
+                render: (r) => (
+                  <input
+                    type="checkbox"
+                    checked={bulk.isSelected(r.id)}
+                    onChange={() => bulk.toggle(r.id)}
+                    aria-label={`Pilih sengketa order ${r.orderId}`}
+                    className="h-4 w-4 accent-[var(--color-primary)]"
+                  />
+                ),
+              },
               {
                 key: "reason",
                 header: "Sengketa",
@@ -428,6 +574,27 @@ export default function DisputesListPage() {
           />
         </>
       )}
+
+      {/* H03+H04+H06: konfirmasi bulk — scope + dry-run + alasan terstruktur */}
+      <BulkConfirmDialog
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title="Bulk: masukkan ke review"
+        summary={`Tandai ${bulk.selectedCount} sengketa terpilih sebagai "Dalam Review".`}
+        selectedIds={bulk.selectedIds}
+        scope="selected-page"
+        totalResults={total}
+        dryRun={dryRun}
+        reasonOptions={BULK_REVIEW_REASONS}
+        impactItems={[
+          "Sengketa berstatus ASSIGNED → UNDER_REVIEW (siap diberi keputusan)",
+          "Sengketa dengan status lain dilewati otomatis (lihat dry-run)",
+          "Tercatat di audit log per sengketa oleh backend",
+        ]}
+        confirmLabel="Ya, masukkan ke review"
+        loading={bulkLoading}
+        onConfirm={(reason, notes) => void handleBulkReview(reason, notes)}
+      />
     </RoleGate>
   )
 }
