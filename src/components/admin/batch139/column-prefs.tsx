@@ -27,6 +27,7 @@ export type PrefsColumnDef<T> = {
   key: string
   header: string
   render: (row: T) => ReactNode
+  align?: "left" | "center" | "right"
   /** Kolom yang disembunyikan secara default saat pertama kali dibuka. */
   defaultVisible?: boolean
 }
