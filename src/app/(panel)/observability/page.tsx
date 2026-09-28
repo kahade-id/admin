@@ -284,7 +284,7 @@ function ObservabilityInner() {
                 columns={[
                   { key: "key", header: "Kunci" },
                   {
-                    key: "severity", header: "Severity",
+                    key: "severity", header: "Tingkat keparahan",
                     render: (r) => (
                       <Badge tone={r.severity === "critical" ? "danger" : "warning"}>{r.severity}</Badge>
                     ),
@@ -346,7 +346,7 @@ function ObservabilityInner() {
                 columns={[
                   { key: "title", header: "Judul" },
                   {
-                    key: "severity", header: "Severity",
+                    key: "severity", header: "Tingkat keparahan",
                     render: (r: IncidentItem & Record<string, unknown>) => (
                       <Badge tone={r.severity === "SEV1" ? "danger" : r.severity === "SEV2" ? "warning" : "neutral"}>
                         {r.severity}
@@ -408,7 +408,7 @@ function ObservabilityInner() {
                 columns={[
                   { key: "key", header: "Kunci" },
                   {
-                    key: "severity", header: "Severity",
+                    key: "severity", header: "Tingkat keparahan",
                     render: (r: StorageAlert & Record<string, unknown>) => (
                       <Badge tone={r.severity === "critical" ? "danger" : "warning"}>{r.severity}</Badge>
                     ),
@@ -447,7 +447,7 @@ function ObservabilityInner() {
                   { key: "p99", header: "p99", render: (r) => ms(r.p99) },
                   { key: "max", header: "max", render: (r) => ms(r.max) },
                   {
-                    key: "errorRate", header: "Error",
+                    key: "errorRate", header: "Gagal",
                     render: (r) => `${r.errors} (${(r.errorRate * 100).toFixed(1)}%)`,
                   },
                   { key: "release", header: "Release", render: (r) => r.release ?? "-" },
@@ -465,11 +465,11 @@ function ObservabilityInner() {
           <CardBody>
             <DataTable
               columns={[
-                { key: "name", header: "Queue" },
-                { key: "waiting", header: "Waiting" },
-                { key: "active", header: "Active" },
-                { key: "delayed", header: "Delayed" },
-                { key: "failed", header: "Failed" },
+                { key: "name", header: "Antrean" },
+                { key: "waiting", header: "Menunggu" },
+                { key: "active", header: "Aktif" },
+                { key: "delayed", header: "Tertunda" },
+                { key: "failed", header: "Gagal" },
                 { key: "backlog", header: "Backlog" },
                 {
                   key: "available", header: "Status",
@@ -646,7 +646,7 @@ function ObservabilityInner() {
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Severity">
+              <Field label="Tingkat keparahan">
                 <Select
                   value={incidentForm.severity}
                   onChange={(e) => setIncidentForm((f) => ({ ...f, severity: e.target.value }))}

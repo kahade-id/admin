@@ -234,7 +234,7 @@ export default function KycMetricsPage() {
                     { key: "p50", header: "p50", render: (r: { stats: KycReviewStats }) => fmtHours(r.stats.p50) },
                     { key: "p95", header: "p95", render: (r: { stats: KycReviewStats }) => fmtHours(r.stats.p95) },
                     { key: "avg", header: "Rata-rata", render: (r: { stats: KycReviewStats }) => fmtHours(r.stats.avg) },
-                    { key: "min", header: "Min", render: (r: { stats: KycReviewStats }) => fmtHours(r.stats.min) },
+                    { key: "min", header: "Min.", render: (r: { stats: KycReviewStats }) => fmtHours(r.stats.min) },
                     { key: "max", header: "Maks", render: (r: { stats: KycReviewStats }) => fmtHours(r.stats.max) },
                   ]}
                   rows={statRows}

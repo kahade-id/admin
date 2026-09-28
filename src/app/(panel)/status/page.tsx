@@ -100,7 +100,7 @@ function IncidentForm({
       />
       <div className="grid grid-cols-3 gap-3">
         <Select
-          label="Severity"
+          label="Tingkat keparahan"
           value={severity}
           options={SEVERITIES.map((s) => ({ value: s, label: s }))}
           onChange={(e) => setSeverity(e.target.value as IncidentItem["severity"])}
@@ -237,7 +237,7 @@ function StatusInner() {
                 columns={[
                   { key: "title", header: "Judul" },
                   {
-                    key: "severity", header: "Severity",
+                    key: "severity", header: "Tingkat keparahan",
                     render: (r) => <Badge tone={severityTone(r.severity)}>{r.severity}</Badge>,
                   },
                   {
