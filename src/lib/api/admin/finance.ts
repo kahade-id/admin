@@ -302,6 +302,40 @@ export function getTransactionDetail(txId: string): Promise<AdminTransactionDeta
   )
 }
 
+/**
+ * AW-002 (perf-fix): agregat masuk/keluar server-side untuk halaman Keuangan.
+ *
+ * Menggantikan pola lama "fetch massal lalu jumlahkan di browser" yang SALAH
+ * DIAM-DIAM karena backend meng-clamp limit ke 100. Endpoint ini menghitung
+ * SUM di SQL dari SEMUA baris yang cocok filter (tanpa clamp).
+ * Fail-closed: bila gagal, lempar error — JANGAN tampilkan angka tebakan.
+ */
+export interface TransactionsAggregate {
+  /** Total dana masuk (IDR) dari semua transaksi yang cocok filter. */
+  masuk: number
+  /** Total dana keluar (IDR) dari semua transaksi yang cocok filter. */
+  keluar: number
+  /** masuk - keluar. */
+  bersih: number
+  /** Jumlah transaksi yang cocok filter. */
+  count: number
+}
+export async function getTransactionsSummary(
+  query: ListTransactionsQuery = {},
+): Promise<TransactionsAggregate> {
+  const { startDate, endDate, ...rest } = query
+  return adminHttp.get<TransactionsAggregate>(
+    "/v1/admin/finance/transactions/summary",
+    {
+      query: {
+        ...rest,
+        startDate: startDate ?? isoDateDaysAgo(30),
+        endDate: endDate ?? new Date().toISOString(),
+      },
+    },
+  )
+}
+
 /** ADM-213: hasil recheck manual SATU withdrawal PROCESSING ke provider. */
 export type WithdrawalRecheckResult = {
   txId?: string

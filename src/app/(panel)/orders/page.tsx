@@ -55,6 +55,7 @@ import {
 import { getRoomIdByOrder, getRoomMessages } from "@/lib/api/admin/chat"
 import { userMessage } from "@/lib/api/response"
 import { downloadCsv } from "@/lib/csv"
+import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 // ADM-405: PII pihak transaksi di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail, maskName } from "@/lib/pii"
@@ -235,29 +236,37 @@ function OrdersPageContent() {
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [csvLoading, setCsvLoading] = useState(false)
+  /** Progres ekspor CSV: {done, total} halaman — null bila tidak mengekspor. */
+  const [csvProgress, setCsvProgress] = useState<{ done: number; total: number } | null>(null)
   const FETCH_ALL_MAX_PAGES = 50
 
   /** Export CSV order sesuai filter aktif (pencarian/status/escrow/tanggal/urut). */
   const handleExportCsv = async () => {
     setCsvLoading(true)
+    setCsvProgress(null)
     try {
-      const all: AdminOrderItem[] = []
-      for (let p = 1; p <= FETCH_ALL_MAX_PAGES; p++) {
-        const res = await listAdminOrders({
-          page: p,
+      // AW-006 (perf-fix): ambil halaman paralel per batch (maks 4 konkuren)
+      // + tampilkan progres — bukan loop sekuensial 50 halaman.
+      const all = await fetchAllPages<AdminOrderItem>(
+        (page, limit) =>
+          listAdminOrders({
+            page,
+            limit,
+            status: statusFilter || undefined,
+            q: f.search.trim() || undefined,
+            hasEscrow: escrowOnly || undefined,
+            startDate: startDate || undefined,
+            endDate: endDate || undefined,
+            sortBy: sortBy as "createdAt" | "updatedAt" | "orderValue" | "buyerPayAmount" | "completedAt",
+            sortOrder: sortOrder as "asc" | "desc",
+          }),
+        {
+          maxPages: FETCH_ALL_MAX_PAGES,
           limit: 100,
-          status: statusFilter || undefined,
-          q: f.search.trim() || undefined,
-          hasEscrow: escrowOnly || undefined,
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
-          sortBy: sortBy as "createdAt" | "updatedAt" | "orderValue" | "buyerPayAmount" | "completedAt",
-          sortOrder: sortOrder as "asc" | "desc",
-        })
-        const items = res.data ?? []
-        all.push(...items)
-        if (p >= (res.totalPages ?? 1) || items.length === 0) break
-      }
+          concurrency: 4,
+          onProgress: (done, total) => setCsvProgress({ done, total }),
+        },
+      )
       const stamp = new Date().toISOString().slice(0, 10)
       downloadCsv(
         `order-${stamp}.csv`,
@@ -287,6 +296,7 @@ function OrdersPageContent() {
       })
     } finally {
       setCsvLoading(false)
+      setCsvProgress(null)
     }
   }
 
@@ -617,7 +627,9 @@ function OrdersPageContent() {
               onClick={() => void handleExportCsv()}
               title="Unduh CSV sesuai filter aktif"
             >
-              Unduh CSV
+              {csvLoading && csvProgress && csvProgress.total > 1
+                ? `Mengambil ${csvProgress.done}/${csvProgress.total}…`
+                : "Unduh CSV"}
             </Button>
           }
         />

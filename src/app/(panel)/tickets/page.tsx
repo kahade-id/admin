@@ -33,6 +33,7 @@ import {
 import { listTickets, type SupportTicket } from "@/lib/api/admin/support"
 import { userMessage } from "@/lib/api/response"
 import { downloadCsv } from "@/lib/csv"
+import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { ageHours, formatAge, formatDateTimeWIB } from "@/lib/format"
 import { useListShortcuts } from "@/lib/list-shortcuts"
 
@@ -99,6 +100,8 @@ function TicketsListInner() {
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [csvLoading, setCsvLoading] = useState(false)
+  /** Progres ekspor CSV: {done, total} halaman — null bila tidak mengekspor. */
+  const [csvProgress, setCsvProgress] = useState<{ done: number; total: number } | null>(null)
 
   const load = useCallback(
     async (
@@ -167,20 +170,26 @@ function TicketsListInner() {
   /** Export CSV sesuai filter aktif (status/antrean/pencarian). */
   const handleExportCsv = async () => {
     setCsvLoading(true)
+    setCsvProgress(null)
     try {
-      const all: SupportTicket[] = []
-      for (let p = 1; p <= FETCH_ALL_MAX_PAGES; p++) {
-        const res = await listTickets({
-          page: p,
+      // AW-006 (perf-fix): ambil halaman paralel per batch (maks 4 konkuren)
+      // + tampilkan progres — bukan loop sekuensial 50 halaman.
+      const all = await fetchAllPages<SupportTicket>(
+        (page, limit) =>
+          listTickets({
+            page,
+            limit,
+            status: filter === "ALL" ? undefined : filter,
+            priority: queue === "priority" ? true : undefined,
+            search: search.trim() || undefined,
+          }),
+        {
+          maxPages: FETCH_ALL_MAX_PAGES,
           limit: 100,
-          status: filter === "ALL" ? undefined : filter,
-          priority: queue === "priority" ? true : undefined,
-          search: search.trim() || undefined,
-        })
-        const items = res.data ?? []
-        all.push(...items)
-        if (p >= (res.totalPages ?? 1) || items.length === 0) break
-      }
+          concurrency: 4,
+          onProgress: (done, total) => setCsvProgress({ done, total }),
+        },
+      )
       const stamp = new Date().toISOString().slice(0, 10)
       downloadCsv(
         `tiket-${stamp}.csv`,
@@ -210,6 +219,7 @@ function TicketsListInner() {
       })
     } finally {
       setCsvLoading(false)
+      setCsvProgress(null)
     }
   }
 
@@ -324,7 +334,9 @@ function TicketsListInner() {
             onClick={() => void handleExportCsv()}
             title="Unduh CSV sesuai filter aktif"
           >
-            Unduh CSV
+            {csvLoading && csvProgress && csvProgress.total > 1
+              ? `Mengambil ${csvProgress.done}/${csvProgress.total}…`
+              : "Unduh CSV"}
           </Button>
           {/* H02: kustomisasi kolom tabel tiket. */}
           <Button

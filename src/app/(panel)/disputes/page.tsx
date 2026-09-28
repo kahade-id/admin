@@ -146,9 +146,9 @@ function DisputesListInner() {
   }, [f.page, f.status, f.category, f.search])
 
   /**
-   * Ambil SEMUA baris yang cocok dengan filter aktif (untuk export CSV dan
-   * pseudo-filter "Belum ditugaskan"). Backend tidak punya filter unassigned,
-   * jadi UNASSIGNED diambil tanpa filter status lalu disaring client-side.
+   * Ambil SEMUA baris yang cocok dengan filter aktif (untuk export CSV).
+   * AW-001 (perf-fix): filter "belum ditugaskan" sekarang server-side via
+   * param `unassigned` — tidak lagi fetch-all lalu saring client-side.
    */
   const fetchAllMatching = useCallback(
     async (
@@ -165,12 +165,13 @@ function DisputesListInner() {
           status: !unassignedOnly && targetFilter !== "ALL" ? targetFilter : undefined,
           category: targetCategory === "ALL" ? undefined : targetCategory,
           search: targetSearch.trim() || undefined,
+          unassigned: unassignedOnly || undefined,
         })
         const items = res.data ?? []
         out.push(...items)
         if (p >= (res.totalPages ?? 1) || items.length === 0) break
       }
-      return unassignedOnly ? out.filter((r) => !r.assignedAdminId) : out
+      return out
     },
     [],
   )
@@ -187,24 +188,21 @@ function DisputesListInner() {
       else setRefreshing(true)
       setError(null)
       try {
-        if (targetFilter === "UNASSIGNED") {
-          const all = await fetchAllMatching(targetFilter, targetSearch, targetCategory)
-          setRows(all.slice((targetPage - 1) * PAGE_SIZE, targetPage * PAGE_SIZE))
-          setTotal(all.length)
-          setTotalPages(Math.max(1, Math.ceil(all.length / PAGE_SIZE)))
-        } else {
-          const res = await listDisputes({
-            page: targetPage,
-            limit: PAGE_SIZE,
-            status: targetFilter === "ALL" ? undefined : targetFilter,
-            category: targetCategory === "ALL" ? undefined : targetCategory,
-            search: targetSearch.trim() || undefined,
-          })
-          setRows(res.data ?? [])
-          const t = res.total ?? res.data?.length ?? 0
-          setTotal(t)
-          setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
-        }
+        // AW-001 (perf-fix): UNASSIGNED difilter server-side (?unassigned=true)
+        // dengan paginasi normal — tidak lagi fetch-all 50 halaman.
+        const unassignedOnly = targetFilter === "UNASSIGNED"
+        const res = await listDisputes({
+          page: targetPage,
+          limit: PAGE_SIZE,
+          status: !unassignedOnly && targetFilter !== "ALL" ? targetFilter : undefined,
+          category: targetCategory === "ALL" ? undefined : targetCategory,
+          search: targetSearch.trim() || undefined,
+          unassigned: unassignedOnly || undefined,
+        })
+        setRows(res.data ?? [])
+        const t = res.total ?? res.data?.length ?? 0
+        setTotal(t)
+        setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
       } catch (e) {
         const msg = userMessage(e)
         setError(msg)
@@ -214,7 +212,7 @@ function DisputesListInner() {
         setRefreshing(false)
       }
     },
-    [page, filter, categoryFilter, search, toast, fetchAllMatching],
+    [page, filter, categoryFilter, search, toast],
   )
 
   useEffect(() => {
