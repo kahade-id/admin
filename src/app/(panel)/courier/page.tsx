@@ -117,7 +117,7 @@ function ShipmentsTab() {
                   {String(r.bookingState) === "FAILED" ? (
                     <Button size="sm" variant="secondary" fullWidth={false} onClick={() => act(r.id, "retry booking", () => retryShipmentBooking(r.id), "Coba ulang booking kurir?")}>Retry booking</Button>
                   ) : null}
-                  <Button size="sm" variant="secondary" fullWidth={false} onClick={() => act(r.id, "refresh tracking", () => refreshShipmentTrackingAdmin(r.id))}>Refresh</Button>
+                  <Button size="sm" variant="secondary" fullWidth={false} onClick={() => act(r.id, "refresh tracking", () => refreshShipmentTrackingAdmin(r.id))}>Segarkan</Button>
                 </div>) },
             ]}
             rows={rows}

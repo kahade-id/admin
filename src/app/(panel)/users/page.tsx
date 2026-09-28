@@ -32,7 +32,7 @@ import {
   type KycStatus,
 } from "@/lib/api/admin/users"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR } from "@/lib/format"
 // ADM-405: PII (nama, email) di-mask secara default — tanpa tombol unmask (mask-only).
 import { maskEmail, maskName } from "@/lib/pii"
 
@@ -235,7 +235,7 @@ function UsersListInner() {
         key: "wallet",
         header: "Saldo tersedia",
         align: "right",
-        render: (r) => `Rp ${formatNumber(r.wallet?.availableBalance)}`,
+        render: (r) => formatIDR(r.wallet?.availableBalance),
       },
       {
         key: "orders",

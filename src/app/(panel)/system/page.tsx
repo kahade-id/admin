@@ -833,7 +833,7 @@ function WebhookSection() {
               },
               {
                 key: "errorMessage",
-                header: "Error",
+                header: "Pesan error",
                 render: (r) => (
                   <span className="block max-w-md truncate text-text-secondary" title={r.errorMessage ?? ""}>
                     {r.errorMessage ?? "—"}

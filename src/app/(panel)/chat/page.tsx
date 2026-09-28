@@ -48,7 +48,7 @@ type ReviewAction = "REVIEWED" | "DISMISSED" | "ACTIONED"
 
 const FILTER_OPTIONS = [
   { value: "ALL", label: "Semua" },
-  { value: "PENDING", label: "Pending" },
+  { value: "PENDING", label: "Menunggu" },
   { value: "REVIEWED", label: "Ditinjau" },
   { value: "DISMISSED", label: "Diabaikan" },
   { value: "ACTIONED", label: "Ditindak" },
@@ -56,11 +56,11 @@ const FILTER_OPTIONS = [
 
 /** ADM-122: filter severity / aksi otomatis / jenis pelanggaran (didukung backend). */
 const SEVERITY_OPTIONS = [
-  { value: "ALL", label: "Semua severity" },
-  { value: "LOW", label: "Low" },
-  { value: "MEDIUM", label: "Medium" },
-  { value: "HIGH", label: "High" },
-  { value: "CRITICAL", label: "Critical" },
+  { value: "ALL", label: "Semua tingkat" },
+  { value: "LOW", label: "Rendah" },
+  { value: "MEDIUM", label: "Sedang" },
+  { value: "HIGH", label: "Tinggi" },
+  { value: "CRITICAL", label: "Kritis" },
 ]
 
 const MOD_ACTION_OPTIONS = [
@@ -83,6 +83,13 @@ const ACTION_OPTIONS = [
   { value: "DISMISSED", label: "Diabaikan" },
   { value: "ACTIONED", label: "Ditindak" },
 ]
+
+const STATUS_LABEL: Record<string, string> = {
+  PENDING: "Menunggu",
+  REVIEWED: "Ditinjau",
+  DISMISSED: "Diabaikan",
+  ACTIONED: "Ditindak",
+}
 
 const STATUS_TONE: Record<
   string,
@@ -508,7 +515,7 @@ export default function ChatModerationPage() {
           className="w-52"
         />
         <Select
-          label="Severity"
+          label="Tingkat keparahan"
           options={SEVERITY_OPTIONS}
           value={severityFilter}
           onChange={(e) => handleMetaFilterChange("severity", e.target.value)}
@@ -574,7 +581,7 @@ export default function ChatModerationPage() {
                 header: "Status",
                 render: (r) => {
                   const s = String(r.status ?? "")
-                  return <Badge tone={STATUS_TONE[s] ?? "neutral"}>{s}</Badge>
+                  return <Badge tone={STATUS_TONE[s] ?? "neutral"}>{STATUS_LABEL[s] ?? s}</Badge>
                 },
               },
               {
@@ -644,7 +651,7 @@ export default function ChatModerationPage() {
               <p className="text-body font-semibold text-text-primary">
                 {eventKindLabel(detail)}
               </p>
-              <Badge tone={STATUS_TONE[detailStatus] ?? "neutral"}>{detailStatus}</Badge>
+              <Badge tone={STATUS_TONE[detailStatus] ?? "neutral"}>{STATUS_LABEL[detailStatus] ?? detailStatus}</Badge>
             </div>
             {detail.reason ? (
               <p className="text-body text-text-secondary">{String(detail.reason)}</p>
@@ -784,7 +791,9 @@ export default function ChatModerationPage() {
                       <li key={h.id} className="rounded-sm bg-surface px-3 py-2">
                         <p className="text-body text-text-primary">{h.description}</p>
                         <p className="mt-0.5 text-caption text-text-secondary">
-                          {after.status ? `Status: ${String(after.status)}` : ""}
+                          {after.status
+                            ? `Status: ${STATUS_LABEL[String(after.status)] ?? String(after.status)}`
+                            : ""}
                           {after.note ? ` · catatan: ${String(after.note)}` : ""}
                         </p>
                         <p className="text-caption text-text-tertiary">

@@ -591,7 +591,7 @@ function PriorityQueueSection() {
       setAssignTarget(null)
       void load(page)
     } catch (e) {
-      toast.show({ title: "Assign gagal", description: userMessage(e), tone: "danger" })
+      toast.show({ title: "Penugasan gagal", description: userMessage(e), tone: "danger" })
     } finally {
       setAssigning(false)
     }

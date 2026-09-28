@@ -123,24 +123,22 @@ export default function DashboardPage() {
       else setRefreshing(true)
       setError(null)
       try {
-        const [sum, stats, act] = await Promise.all([
-          getDashboardSummary(),
-          getDashboardOrderStats(),
-          getRecentActivity({ limit: 10 }),
-        ])
-        setSummary(sum)
-        setOrderStats(stats)
-        setActivity(Array.isArray(act) ? act : [])
-        // Penarikan menunggu tidak ada di summary dashboard — ambil dari
-        // ringkasan keuangan. Gagal → null (tampil "—", bukan 0 palsu).
-        try {
-          const fin = await getFinancialSummary()
-          setPendingWithdrawals(
-            typeof fin?.pendingWithdrawals === "number" ? fin.pendingWithdrawals : null,
-          )
-        } catch {
-          setPendingWithdrawals(null)
-        }
+        // AW-002: ambil keempatnya paralel — getFinancialSummary gagal (mis. role
+      // tanpa akses keuangan) → null, tampil "—" bukan 0 palsu.
+      const [sum, stats, act, fin] = await Promise.all([
+        getDashboardSummary(),
+        getDashboardOrderStats(),
+        getRecentActivity({ limit: 10 }),
+        getFinancialSummary().catch(() => null),
+      ])
+      setSummary(sum)
+      setOrderStats(stats)
+      setActivity(Array.isArray(act) ? act : [])
+      // Penarikan menunggu tidak ada di summary dashboard — ambil dari
+      // ringkasan keuangan. Gagal → null (tampil "—", bukan 0 palsu).
+      setPendingWithdrawals(
+        typeof fin?.pendingWithdrawals === "number" ? fin.pendingWithdrawals : null,
+      )
       } catch (e) {
         const msg = userMessage(e)
         setError(msg)

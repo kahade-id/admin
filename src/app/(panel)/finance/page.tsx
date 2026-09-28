@@ -106,7 +106,7 @@ const WITHDRAW_STATUS_LABEL: Record<string, string> = {
 // ADM-214: filter status transaksi (backend `listTransactions` mendukung `status`).
 const TX_STATUS_FILTERS: Array<{ value: WalletTransactionStatus | ""; label: string }> = [
   { value: "", label: "Semua status" },
-  { value: "PENDING", label: "Pending" },
+  { value: "PENDING", label: "Menunggu" },
   { value: "SUCCESS", label: "Berhasil" },
   { value: "FAILED", label: "Gagal" },
 ]
