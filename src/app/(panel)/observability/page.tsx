@@ -25,6 +25,8 @@ import { Field, Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
+// H16: status dependensi dengan checked-at + stale→unknown.
+import { DependencyStatusCard } from "@/components/admin/batch139/dependency-status"
 import { useToast } from "@/components/ui/toast"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
@@ -90,6 +92,8 @@ function ObservabilityInner() {
   const [routes, setRoutes] = useState<RouteLatency[]>([])
   const [queues, setQueues] = useState<QueueDepth[]>([])
   const [deps, setDeps] = useState<DependencyInfo[]>([])
+  // H16: kapan dependensi terakhir berhasil diperiksa (untuk umur data/stale).
+  const [depsCheckedAt, setDepsCheckedAt] = useState<string | null>(null)
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [delivery, setDelivery] = useState<DeliveryStats[]>([])
   const [otpProvider, setOtpProvider] = useState<{ provider: string; tokenConfigured: boolean; production: boolean } | null>(null)
@@ -131,6 +135,8 @@ function ObservabilityInner() {
       setRoutes(lat.routes)
       setQueues(q.queues)
       setDeps(d.dependencies)
+      // H16: timestamp pemeriksaan dependensi — untuk label umur & stale.
+      setDepsCheckedAt(new Date().toISOString())
       setAlerts(a.alerts)
       setDelivery(del.stats)
       setOtpProvider(del.otpProvider)
@@ -480,6 +486,22 @@ function ObservabilityInner() {
       </Section>
 
       <Section title="Dependensi" description="ok / degraded / down + latency — tanpa kredensial (G488).">
+        {/* H16: kartu per dependensi dengan checked-at + umur data; data lama
+            > 5 menit otomatis dianggap unknown (stale). */}
+        {deps.length > 0 ? (
+          <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {deps.map((d) => (
+              <DependencyStatusCard
+                key={d.name}
+                name={d.name}
+                status={d.status}
+                latencyMs={d.latencyMs}
+                checkedAt={depsCheckedAt}
+                detail={d.detail}
+              />
+            ))}
+          </div>
+        ) : null}
         <Card>
           <CardBody>
             <DataTable
