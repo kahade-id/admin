@@ -13,10 +13,15 @@
  * <ConfirmDialog>: komposit konfirmasi — tombol di-stack vertikal (konfirmasi
  * di atas, batal ghost di bawah): hierarki primary > ghost tegas dan label
  * tidak terpotong di lebar sempit.
+ *
+ * H17: prop `dirty` — bila true, Escape / klik overlay / tombol × memunculkan
+ * konfirmasi inline ("tutup tanpa menyimpan?") alih-alih membuang perubahan
+ * diam-diam. Saat konfirmasi tampil, Escape berarti "Kembali". Fokus tetap
+ * di-trap di panel dan dikembalikan ke pemicu saat dialog benar-benar tutup.
  */
 "use client"
 
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { cn } from "@/lib/cn"
 import { Button } from "./button"
 
@@ -28,6 +33,14 @@ export type DialogProps = {
   children?: ReactNode
   footer?: ReactNode
   className?: string
+  /**
+   * H17 — bila true, penutupan via Escape / klik overlay / tombol × TIDAK
+   * langsung menutup: tampilkan konfirmasi inline dulu agar perubahan tidak
+   * terbuang diam-diam. Penutupan programatik (parent set open=false,
+   * mis. setelah simpan sukses) tidak terpengaruh.
+   */
+  dirty?: boolean
+  dirtyMessage?: string
 }
 
 export function Dialog({
@@ -38,25 +51,47 @@ export function Dialog({
   children,
   footer,
   className,
+  dirty = false,
+  dirtyMessage = "Ada perubahan belum disimpan. Tutup tanpa menyimpan?",
 }: DialogProps) {
   const [rendered, setRendered] = useState(open)
   const [entered, setEntered] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  // H17: status konfirmasi buang-perubahan (Escape/overlay/× saat dirty).
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
+  const discardBackRef = useRef<HTMLButtonElement>(null)
 
   // Mount/unmount + animasi masuk/keluar (§8 motion.overlay)
   useEffect(() => {
     if (open) {
       setRendered(true)
       setEntered(false)
+      setConfirmingDiscard(false)
       const raf = requestAnimationFrame(() => requestAnimationFrame(() => setEntered(true)))
       return () => cancelAnimationFrame(raf)
     }
     // Keluar: mainkan fade-out 200ms dulu, baru unmount
     setEntered(false)
+    setConfirmingDiscard(false)
     const timer = setTimeout(() => setRendered(false), 200)
     return () => clearTimeout(timer)
   }, [open])
+
+  // H17: penutupan oleh pengguna — cegat bila dirty.
+  // useCallback agar effect keydown tidak re-subscribe tiap render.
+  const requestClose = useCallback(() => {
+    if (dirty && !confirmingDiscard) {
+      setConfirmingDiscard(true)
+      return
+    }
+    onClose()
+  }, [dirty, confirmingDiscard, onClose])
+
+  // H17: saat konfirmasi discard muncul, pindahkan fokus ke tombol "Kembali".
+  useEffect(() => {
+    if (confirmingDiscard) discardBackRef.current?.focus({ preventScroll: true })
+  }, [confirmingDiscard])
 
   // Escape menutup + trap fokus Tab di dalam panel (WCAG 2.1.2 — G515).
   // Tanpa trap, Tab bisa "kabur" ke konten latar di belakang modal.
@@ -65,7 +100,13 @@ export function Dialog({
     const panel = panelRef.current
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose()
+        // H17: bila konfirmasi discard sedang tampil, Escape = "Kembali"
+        // (jangan buang perubahan diam-diam).
+        if (confirmingDiscard) {
+          setConfirmingDiscard(false)
+          return
+        }
+        requestClose()
         return
       }
       if (e.key !== "Tab" || !panel) return
@@ -95,7 +136,7 @@ export function Dialog({
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [rendered, onClose])
+  }, [rendered, requestClose, confirmingDiscard])
 
   // Autofocus panel + kunci scroll body + kembalikan fokus ke pemicu
   useEffect(() => {
@@ -114,10 +155,10 @@ export function Dialog({
 
   return (
     <div className="fixed inset-0 z-modal flex items-center justify-center px-5">
-      {/* Overlay — klik menutup */}
+      {/* Overlay — klik menutup (H17: dicegat bila dirty) */}
       <div
         aria-hidden="true"
-        onClick={onClose}
+        onClick={requestClose}
         className={cn(
           "absolute inset-0 bg-overlay transition-opacity duration-200",
           entered ? "opacity-100" : "opacity-0",
@@ -140,7 +181,7 @@ export function Dialog({
         {/* AW-012: tombol tutup yang bisa difokus keyboard (selain Escape/overlay) */}
         <button
           type="button"
-          onClick={onClose}
+          onClick={requestClose}
           aria-label="Tutup dialog"
           className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-sm text-h3 leading-none text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus focus-visible:ring-offset-2 focus-visible:ring-offset-surface-elevated"
         >
@@ -149,6 +190,38 @@ export function Dialog({
         <h3 className="pr-10 text-h3 font-semibold text-text-primary">{title}</h3>
         {description ? (
           <p className="mt-2 text-body text-text-secondary">{description}</p>
+        ) : null}
+        {/* H17: konfirmasi inline bila pengguna mencoba menutup saat dirty */}
+        {confirmingDiscard ? (
+          <div
+            role="alertdialog"
+            aria-label="Konfirmasi tutup dialog"
+            aria-describedby="dirty-confirm-msg"
+            className="mt-4 rounded-sm border border-warning bg-warning/10 p-3"
+          >
+            <p id="dirty-confirm-msg" className="text-body font-semibold text-text-primary">
+              {dirtyMessage}
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                onClick={() => onClose()}
+              >
+                Ya, tutup tanpa menyimpan
+              </Button>
+              {/* Tombol native (bukan <Button>) agar bisa menerima ref fokus — ButtonProps tidak mengekspos ref. */}
+              <button
+                type="button"
+                ref={discardBackRef}
+                onClick={() => setConfirmingDiscard(false)}
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-sm bg-primary px-4 py-2 text-label font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-focus focus-visible:ring-offset-2"
+              >
+                Kembali
+              </button>
+            </div>
+          </div>
         ) : null}
         {children ? <div className="mt-4">{children}</div> : null}
         {footer ? <div className="mt-5">{footer}</div> : null}

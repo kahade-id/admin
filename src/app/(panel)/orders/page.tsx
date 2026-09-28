@@ -15,8 +15,7 @@
  */
 "use client"
 
-import { Suspense, useCallback, useEffect, useState } from "react"
-import { useSearchParams } from "next/navigation"
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -31,6 +30,13 @@ import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { useAuth } from "@/lib/auth-context"
 import { Select } from "@/components/admin/select"
+// H01: filter di URL. H02: preferensi kolom per admin.
+import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
+import {
+  ColumnCustomizer,
+  useColumnPrefs,
+  type PrefsColumnDef,
+} from "@/components/admin/batch139/column-prefs"
 
 import {
   forceCancelOrder,
@@ -187,26 +193,39 @@ function OrdersPageContent() {
   // A5 (audit 2026-09-26): role dipakai untuk menyembunyikan tombol intervensi
   // yang pasti ditolak backend (403) — backend tetap gate utama.
   const { role } = useAuth()
-  // ADM-116: deep-link dari halaman milestone (?search=<orderId>).
-  const searchParams = useSearchParams()
+  // H01: filter/sort/pencarian/halaman disinkronkan ke URL — deep-link
+  // ?search=<orderId> (ADM-116) tetap jalan, plus share/back-forward aman.
+  const { values: f, set: setF } = useUrlFilters({
+    search: "",
+    status: "",
+    escrow: "",
+    start: "",
+    end: "",
+    sortBy: "createdAt",
+    sortOrder: "desc",
+    page: "1",
+  })
+  const [searchInput, setSearchInput] = useState(f.search)
+  const debouncedSearch = useDebouncedValue(searchInput, 400)
 
-  // ------------------------------------------------------------------
-  // Daftar order
-  // ------------------------------------------------------------------
-  const [search, setSearch] = useState(() => searchParams.get("search") ?? "")
-  const debouncedSearch = useDebouncedValue(search, 400)
-  const [statusFilter, setStatusFilter] = useState<AdminOrderStatus | "">("")
+  const statusFilter = (f.status || "") as AdminOrderStatus | ""
   // AW-016: backend hanya menerapkan filter saat hasEscrow === true
   // (admin-orders.service.ts) — UI berupa pilihan "Dengan escrow" saja.
-  const [escrowOnly, setEscrowOnly] = useState(false)
+  const escrowOnly = f.escrow === "yes"
   // ADM-117: rentang tanggal + pengurutan (didukung backend).
-  const [startDate, setStartDate] = useState("")
-  const [endDate, setEndDate] = useState("")
-  const [sortBy, setSortBy] = useState("createdAt")
-  const [sortOrder, setSortOrder] = useState("desc")
+  const startDate = f.start
+  const endDate = f.end
+  const sortBy = f.sortBy || "createdAt"
+  const sortOrder = f.sortOrder || "desc"
+  const page = parsePage(f.page)
+
+  // Komit pencarian debounce ke URL (+ reset ke halaman 1).
+  useEffect(() => {
+    if (debouncedSearch !== f.search) setF({ search: debouncedSearch, page: "1" })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch])
 
   const [rows, setRows] = useState<AdminOrderItem[]>([])
-  const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
@@ -223,7 +242,7 @@ function OrdersPageContent() {
           page: p,
           limit: 100,
           status: statusFilter || undefined,
-          q: debouncedSearch.trim() || undefined,
+          q: f.search.trim() || undefined,
           hasEscrow: escrowOnly || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
@@ -274,7 +293,8 @@ function OrdersPageContent() {
           page: targetPage,
           limit: PAGE_SIZE,
           status: statusFilter || undefined,
-          q: debouncedSearch.trim() || undefined,
+          // H01: pakai nilai pencarian yang sudah terkomit ke URL.
+          q: f.search.trim() || undefined,
           hasEscrow: escrowOnly || undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
@@ -295,7 +315,7 @@ function OrdersPageContent() {
         setLoading(false)
       }
     },
-    [statusFilter, debouncedSearch, escrowOnly, startDate, endDate, sortBy, sortOrder, toast],
+    [statusFilter, f.search, escrowOnly, startDate, endDate, sortBy, sortOrder, toast],
   )
 
   useEffect(() => {
@@ -303,13 +323,12 @@ function OrdersPageContent() {
   }, [page, loadOrders])
 
   const handleStatusChange = (value: string) => {
-    setStatusFilter(value as AdminOrderStatus | "")
-    setPage(1)
+    // H01: filter status tersimpan di URL.
+    setF({ status: value, page: "1" })
   }
 
   const handleEscrowChange = (value: string) => {
-    setEscrowOnly(value === "yes")
-    setPage(1)
+    setF({ escrow: value === "yes" ? "yes" : "", page: "1" })
   }
 
   // ------------------------------------------------------------------
@@ -452,6 +471,80 @@ function OrdersPageContent() {
       ? "Order akan dibatalkan dan escrow (bila ada) dikembalikan ke pembeli. Tindakan ini tidak bisa dibatalkan."
       : "Order akan diselesaikan dan escrow dicairkan ke penjual. Tindakan ini tidak bisa dibatalkan."
 
+  // H02: kolom tabel order bisa dipilih/diurutkan — preferensi per admin.
+  const columnDefs = useMemo<PrefsColumnDef<AdminOrderItem>[]>(
+    () => [
+      {
+        key: "orderId",
+        header: "Order",
+        defaultVisible: true,
+        render: (r) => (
+          <div>
+            <p className="font-semibold">{r.title ?? r.orderId}</p>
+            <p className="break-all font-mono text-caption text-text-secondary">
+              {r.orderId}
+            </p>
+          </div>
+        ),
+      },
+      {
+        key: "buyer",
+        header: "Pembeli",
+        defaultVisible: true,
+        render: (r) => partyName(r.buyer),
+      },
+      {
+        key: "seller",
+        header: "Penjual",
+        defaultVisible: true,
+        render: (r) => partyName(r.seller),
+      },
+      {
+        key: "orderValue",
+        header: "Nilai",
+        defaultVisible: true,
+        align: "right",
+        render: (r) => (
+          <span className="font-semibold">{formatRupiah(r.orderValue)}</span>
+        ),
+      },
+      {
+        key: "status",
+        header: "Status",
+        defaultVisible: true,
+        render: (r) => (
+          <Badge tone={STATUS_TONE[String(r.status)] ?? "neutral"}>
+            {STATUS_LABEL[String(r.status)] ?? String(r.status)}
+          </Badge>
+        ),
+      },
+      {
+        key: "createdAt",
+        header: "Dibuat",
+        defaultVisible: true,
+        render: (r) => formatDateTimeWIB(r.createdAt),
+      },
+      {
+        key: "action",
+        header: "",
+        defaultVisible: true,
+        align: "right",
+        render: (r) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            fullWidth={false}
+            onClick={() => openDetail(r)}
+          >
+            Detail
+          </Button>
+        ),
+      },
+    ],
+    [openDetail],
+  )
+  const cols = useColumnPrefs<AdminOrderItem>("orders", columnDefs)
+
   return (
     <RoleGate href="/orders">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -469,6 +562,15 @@ function OrdersPageContent() {
           onClick={() => loadOrders(page)}
         >
           Muat ulang
+        </Button>
+        {/* H02: kustomisasi kolom tabel order. */}
+        <Button
+          variant="secondary"
+          size="sm"
+          fullWidth={false}
+          onClick={() => cols.setCustomizerOpen(true)}
+        >
+          Kolom
         </Button>
       </div>
 
@@ -494,11 +596,8 @@ function OrdersPageContent() {
             <Input
               label="Cari"
               placeholder="Cari orderId / judul / nomor resi…"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value)
-                setPage(1)
-              }}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
             />
             <Select
               label="Status"
@@ -523,104 +622,30 @@ function OrdersPageContent() {
               label="Dari tanggal"
               type="date"
               value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value)
-                setPage(1)
-              }}
+              onChange={(e) => setF({ start: e.target.value, page: "1" })}
             />
             <Input
               label="Sampai tanggal"
               type="date"
               value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value)
-                setPage(1)
-              }}
+              onChange={(e) => setF({ end: e.target.value, page: "1" })}
             />
             <Select
               label="Urutkan"
               value={sortBy}
-              onChange={(e) => {
-                setSortBy(e.target.value)
-                setPage(1)
-              }}
+              onChange={(e) => setF({ sortBy: e.target.value, page: "1" })}
               options={SORT_BY_OPTIONS}
             />
             <Select
               label="Arah"
               value={sortOrder}
-              onChange={(e) => {
-                setSortOrder(e.target.value)
-                setPage(1)
-              }}
+              onChange={(e) => setF({ sortOrder: e.target.value, page: "1" })}
               options={SORT_ORDER_OPTIONS}
             />
           </div>
 
           <DataTable<AdminOrderItem>
-            columns={[
-              {
-                key: "orderId",
-                header: "Order",
-                render: (r) => (
-                  <div>
-                    <p className="font-semibold">{r.title ?? r.orderId}</p>
-                    <p className="break-all font-mono text-caption text-text-secondary">
-                      {r.orderId}
-                    </p>
-                  </div>
-                ),
-              },
-              {
-                key: "buyer",
-                header: "Pembeli",
-                render: (r) => partyName(r.buyer),
-              },
-              {
-                key: "seller",
-                header: "Penjual",
-                render: (r) => partyName(r.seller),
-              },
-              {
-                key: "orderValue",
-                header: "Nilai",
-                align: "right",
-                render: (r) => (
-                  <span className="font-semibold">
-                    {formatRupiah(r.orderValue)}
-                  </span>
-                ),
-              },
-              {
-                key: "status",
-                header: "Status",
-                render: (r) => (
-                  <Badge tone={STATUS_TONE[String(r.status)] ?? "neutral"}>
-                    {STATUS_LABEL[String(r.status)] ?? String(r.status)}
-                  </Badge>
-                ),
-              },
-              {
-                key: "createdAt",
-                header: "Dibuat",
-                render: (r) => formatDateTimeWIB(r.createdAt),
-              },
-              {
-                key: "action",
-                header: "",
-                align: "right",
-                render: (r) => (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    fullWidth={false}
-                    onClick={() => openDetail(r)}
-                  >
-                    Detail
-                  </Button>
-                ),
-              },
-            ]}
+            columns={cols.visible}
             rows={rows}
             rowKey={(r) => r.id}
             loading={loading}
@@ -632,7 +657,7 @@ function OrdersPageContent() {
               totalPages={totalPages}
               total={total}
               pageSize={PAGE_SIZE}
-              onPageChange={setPage}
+              onPageChange={(p) => setF({ page: String(p) })}
               disabled={loading}
             />
           </div>
@@ -934,6 +959,8 @@ function OrdersPageContent() {
         loading={submitting}
         onConfirm={() => void executeForceAction()}
       />
+      {/* H02: dialog kustomisasi kolom */}
+      <ColumnCustomizer prefs={cols} />
     </RoleGate>
   )
 }

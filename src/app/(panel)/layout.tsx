@@ -16,6 +16,7 @@ import { ToastProvider } from "@/components/ui/toast"
 import { AuthProvider, RequireAuth, useAuth } from "@/lib/auth-context"
 import { menuForRole, roleLabel } from "@/lib/rbac"
 import { Breadcrumb } from "@/components/admin/breadcrumb"
+import { EnvBanner } from "@/components/admin/batch139/env-banner"
 import { cn } from "@/lib/cn"
 
 function Sidebar() {
@@ -89,13 +90,17 @@ function Header() {
 function PanelShell({ children }: { children: ReactNode }) {
   return (
     <RequireAuth>
-      <div className="flex min-h-screen bg-background">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <Header />
-          {/* ADM-416: breadcrumb otomatis dari pathname aktif. */}
-          <Breadcrumb />
-          <main className="flex-1 overflow-y-auto p-6">{children}</main>
+      <div className="flex min-h-screen flex-col bg-background">
+        {/* H15: banner environment selalu terlihat di paling atas panel. */}
+        <EnvBanner />
+        <div className="flex min-h-0 flex-1">
+          <Sidebar />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <Header />
+            {/* ADM-416: breadcrumb otomatis dari pathname aktif. */}
+            <Breadcrumb />
+            <main className="flex-1 overflow-y-auto p-6">{children}</main>
+          </div>
         </div>
       </div>
     </RequireAuth>

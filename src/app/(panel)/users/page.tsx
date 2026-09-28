@@ -7,7 +7,7 @@
 "use client"
 
 import Link from "next/link"
-import { useCallback, useEffect, useState } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,14 @@ import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { Select } from "@/components/admin/select"
 import { RoleGate } from "@/components/admin/role-gate"
+// H01: filter tersimpan di URL — refresh/berbagi tautan tidak menghilangkan filter.
+import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
+// H02: kolom tabel dapat dikustomisasi per admin.
+import {
+  ColumnCustomizer,
+  useColumnPrefs,
+  type PrefsColumnDef,
+} from "@/components/admin/batch139/column-prefs"
 import {
   listAdminUsers,
   type AdminUserStatusFilter,
@@ -86,13 +94,29 @@ function StatusCell({ user }: { user: AdminUserSummary }) {
 }
 
 export default function UsersListPage() {
+  // H01: useSearchParams wajib di dalam Suspense (aturan Next.js).
+  return (
+    <Suspense fallback={null}>
+      <UsersListInner />
+    </Suspense>
+  )
+}
+
+function UsersListInner() {
   const toast = useToast()
 
-  const [query, setQuery] = useState("")
-  const [filter, setFilter] = useState<StatusFilter>("all")
-  const [sort, setSort] = useState<SortOption>("createdAt-desc")
-  const [page, setPage] = useState(1)
+  // H01: query/page/sort/filter disinkronkan ke URL.
+  const { values: f, set: setF } = useUrlFilters({
+    q: "",
+    status: "all",
+    sort: "createdAt-desc",
+    page: "1",
+  })
+  const [query, setQuery] = useState(f.q)
   const debouncedQuery = useDebouncedValue(query, DEBOUNCE_MS)
+  const filter = (STATUS_OPTIONS.some((o) => o.value === f.status) ? f.status : "all") as StatusFilter
+  const sort = (SORT_OPTIONS.some((o) => o.value === f.sort) ? f.sort : "createdAt-desc") as SortOption
+  const page = parsePage(f.page)
 
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -142,26 +166,104 @@ export default function UsersListPage() {
     [toast],
   )
 
-  // Muat ulang saat pencarian (debounce) / filter / sortir berubah — kembali ke hal. 1.
+  // Muat ulang saat pencarian (debounce) / filter / sortir / page berubah.
+  // Perubahan via URL (tombol back/forward, tautan berbagi) ikut ter-refresh.
   useEffect(() => {
-    void load("initial", 1, filter, debouncedQuery, sort)
+    void load("initial", page, filter, debouncedQuery, sort)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQuery, filter, sort])
+  }, [page, debouncedQuery, filter, sort])
+
+  // H01: sinkronkan pencarian (sudah debounce) ke URL; reset ke hal. 1
+  // hanya bila query benar-benar berubah (jaga tautan ?page=3).
+  const prevQ = useRef(debouncedQuery)
+  useEffect(() => {
+    if (prevQ.current !== debouncedQuery) {
+      prevQ.current = debouncedQuery
+      setF({ q: debouncedQuery, page: "1" })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQuery])
 
   const handleFilterChange = (value: StatusFilter) => {
-    setFilter(value)
-    setPage(1)
+    setF({ status: value, page: "1" })
   }
 
   const handleSortChange = (value: SortOption) => {
-    setSort(value)
-    setPage(1)
+    setF({ sort: value, page: "1" })
   }
 
   const handlePageChange = (p: number) => {
-    setPage(p)
-    void load("initial", p, filter, debouncedQuery, sort)
+    setF({ page: String(p) })
   }
+
+  // H02: definisi kolom + preferensi per admin (pilih tampil/sembunyi + urutan).
+  const columnDefs = useMemo<PrefsColumnDef<AdminUserSummary>[]>(
+    () => [
+      {
+        key: "user",
+        header: "Pengguna",
+        render: (r) => {
+          // ADM-405: mask nama + email pengguna di daftar.
+          const name = maskName(r.fullName?.trim() || null)
+          return (
+            <div className="min-w-0">
+              <Link
+                href={`/users/${r.id}`}
+                className="font-semibold text-info-text hover:underline"
+              >
+                {name}
+              </Link>
+              {r.username ? (
+                <p className="text-caption text-text-secondary">@{r.username}</p>
+              ) : null}
+              <p className="truncate text-caption text-text-secondary">{maskEmail(r.email)}</p>
+            </div>
+          )
+        },
+      },
+      {
+        key: "status",
+        header: "Status",
+        render: (r) => <StatusCell user={r} />,
+      },
+      {
+        key: "kyc",
+        header: "KYC",
+        render: (r) => <KycBadge status={r.kycStatus} />,
+      },
+      {
+        key: "wallet",
+        header: "Saldo tersedia",
+        align: "right",
+        render: (r) => `Rp ${formatNumber(r.wallet?.availableBalance)}`,
+      },
+      {
+        key: "orders",
+        header: "Order",
+        render: (r) => `${r.totalOrdersAsBuyer} beli · ${r.totalOrdersAsSeller} jual`,
+      },
+      {
+        key: "createdAt",
+        header: "Terdaftar",
+        render: (r) => formatDateTimeWIB(r.createdAt),
+      },
+      {
+        key: "action",
+        header: "",
+        align: "right",
+        render: (r) => (
+          <Link
+            href={`/users/${r.id}`}
+            className="font-semibold text-info-text hover:underline"
+          >
+            Lihat
+          </Link>
+        ),
+      },
+    ],
+    [],
+  )
+  const cols = useColumnPrefs<AdminUserSummary>("users", columnDefs)
 
   return (
     <RoleGate href="/users">
@@ -169,14 +271,24 @@ export default function UsersListPage() {
         title="Pengguna"
         description="Kelola akun pengguna Kahade: cari, filter status, dan tinjau detail."
         actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            fullWidth={false}
-            onClick={() => setExportOpen(true)}
-          >
-            Ekspor CSV
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              onClick={() => cols.setCustomizerOpen(true)}
+            >
+              Kolom
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              onClick={() => setExportOpen(true)}
+            >
+              Ekspor CSV
+            </Button>
+          </>
         }
         onRefresh={() => {
           void load("refresh", page, filter, debouncedQuery, sort)
@@ -189,10 +301,7 @@ export default function UsersListPage() {
           <Input
             placeholder="Cari nama, email, username, ID, atau HP…"
             value={query}
-            onChange={(e) => {
-              setQuery(e.target.value)
-              setPage(1)
-            }}
+            onChange={(e) => setQuery(e.target.value)}
             aria-label="Cari pengguna"
           />
         </div>
@@ -225,70 +334,7 @@ export default function UsersListPage() {
       ) : (
         <>
           <DataTable<AdminUserSummary>
-            columns={[
-              {
-                key: "user",
-                header: "Pengguna",
-                render: (r) => {
-                  // ADM-405: mask nama + email pengguna di daftar.
-                  const name = maskName(r.fullName?.trim() || null)
-                  return (
-                    <div className="min-w-0">
-                      <Link
-                        href={`/users/${r.id}`}
-                        className="font-semibold text-info-text hover:underline"
-                      >
-                        {name}
-                      </Link>
-                      {r.username ? (
-                        <p className="text-caption text-text-secondary">@{r.username}</p>
-                      ) : null}
-                      <p className="truncate text-caption text-text-secondary">{maskEmail(r.email)}</p>
-                    </div>
-                  )
-                },
-              },
-              {
-                key: "status",
-                header: "Status",
-                render: (r) => <StatusCell user={r} />,
-              },
-              {
-                key: "kyc",
-                header: "KYC",
-                render: (r) => <KycBadge status={r.kycStatus} />,
-              },
-              {
-                key: "wallet",
-                header: "Saldo tersedia",
-                align: "right",
-                render: (r) => `Rp ${formatNumber(r.wallet?.availableBalance)}`,
-              },
-              {
-                key: "orders",
-                header: "Order",
-                render: (r) =>
-                  `${r.totalOrdersAsBuyer} beli · ${r.totalOrdersAsSeller} jual`,
-              },
-              {
-                key: "createdAt",
-                header: "Terdaftar",
-                render: (r) => formatDateTimeWIB(r.createdAt),
-              },
-              {
-                key: "action",
-                header: "",
-                align: "right",
-                render: (r) => (
-                  <Link
-                    href={`/users/${r.id}`}
-                    className="font-semibold text-info-text hover:underline"
-                  >
-                    Lihat
-                  </Link>
-                ),
-              },
-            ]}
+            columns={cols.visible}
             rows={rows}
             rowKey={(r) => r.id}
             emptyText={
@@ -315,6 +361,8 @@ export default function UsersListPage() {
         q={debouncedQuery}
         status={filter === "all" ? undefined : filter}
       />
+      {/* H02: dialog kustomisasi kolom */}
+      <ColumnCustomizer prefs={cols} />
     </RoleGate>
   )
 }

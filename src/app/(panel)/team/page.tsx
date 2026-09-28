@@ -18,6 +18,8 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardBody } from "@/components/ui/card"
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+// H05: step-up re-auth untuk aksi kritis RBAC.
+import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
 import { Select } from "@/components/admin/select"
@@ -184,6 +186,8 @@ function TeamPageContent() {
   const [createOpen, setCreateOpen] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
   const [confirming, setConfirming] = useState(false)
+  // H05: gate verifikasi ulang untuk aksi kritis RBAC.
+  const reauth = useReauthGate()
 
   const selfId = profile?.id ?? null
   const selfAdminId = profile?.adminId ?? null
@@ -516,10 +520,19 @@ function TeamPageContent() {
         title={meta.title}
         description={meta.description}
         confirmLabel={meta.confirmLabel}
-        onConfirm={handleConfirm}
+        // H05: aksi kritis RBAC (reset 2FA / kunci / hapus admin) wajib
+        // verifikasi ulang sebelum dijalankan.
+        onConfirm={() =>
+          reauth.require(
+            () => void handleConfirm(),
+            `${meta.confirmLabel}${confirm?.admin?.fullName ? ` — ${confirm.admin.fullName}` : ""}`,
+          )
+        }
         loading={confirming}
         destructive={meta.destructive}
       />
+      {/* H05: dialog verifikasi ulang untuk aksi RBAC kritis. */}
+      <ReauthDialog {...reauth.dialog} />
     </div>
   )
 }
