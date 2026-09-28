@@ -9,7 +9,7 @@
  */
 
 import Link from "next/link"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
@@ -23,6 +23,13 @@ import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import { Input } from "@/components/ui/input"
+// H01: filter di URL. H02: preferensi kolom per admin.
+import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
+import {
+  ColumnCustomizer,
+  useColumnPrefs,
+  type PrefsColumnDef,
+} from "@/components/admin/batch139/column-prefs"
 import { listTickets, type SupportTicket } from "@/lib/api/admin/support"
 import { userMessage } from "@/lib/api/response"
 import { downloadCsv } from "@/lib/csv"
@@ -63,13 +70,28 @@ const FILTER_OPTIONS = [
 ]
 
 export default function TicketsListPage() {
+  return (
+    <Suspense>
+      <TicketsListInner />
+    </Suspense>
+  )
+}
+
+function TicketsListInner() {
   const toast = useToast()
 
-  const [filter, setFilter] = useState<Filter>("ALL")
-  const [queue, setQueue] = useState<QueueTab>("general")
-  const [searchInput, setSearchInput] = useState("")
-  const [search, setSearch] = useState("")
-  const [page, setPage] = useState(1)
+  // H01: status/antrean/pencarian/halaman disinkronkan ke URL.
+  const { values: f, set: setF } = useUrlFilters({
+    status: "ALL",
+    queue: "general",
+    search: "",
+    page: "1",
+  })
+  const filter = f.status as Filter
+  const queue = f.queue as QueueTab
+  const search = f.search
+  const page = parsePage(f.page)
+  const [searchInput, setSearchInput] = useState(f.search)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -118,29 +140,26 @@ export default function TicketsListPage() {
   }, [load])
 
   const handleQueueChange = (q: QueueTab) => {
-    setQueue(q)
-    setPage(1)
+    setF({ queue: q, page: "1" })
     setActiveIndex(0)
     void load("initial", 1, filter, q, search)
   }
 
-  const handleFilterChange = (f: Filter) => {
-    setFilter(f)
-    setPage(1)
+  const handleFilterChange = (fl: Filter) => {
+    setF({ status: fl, page: "1" })
     setActiveIndex(0)
-    void load("initial", 1, f, queue, search)
+    void load("initial", 1, fl, queue, search)
   }
 
   const handleSearch = () => {
     const q = searchInput.trim()
-    setSearch(q)
-    setPage(1)
+    setF({ search: q, page: "1" })
     setActiveIndex(0)
     void load("initial", 1, filter, queue, q)
   }
 
   const handlePageChange = (p: number) => {
-    setPage(p)
+    setF({ page: String(p) })
     setActiveIndex(0)
     void load("initial", p, filter, queue, search)
   }
@@ -205,6 +224,88 @@ export default function TicketsListPage() {
 
   const activeTab = QUEUE_TABS.find((t) => t.value === queue)
 
+  // H02: kolom tabel tiket bisa dipilih/diurutkan — preferensi per admin.
+  const ticketColumnDefs = useMemo<PrefsColumnDef<SupportTicket>[]>(
+    () => [
+      {
+        key: "subject",
+        header: "Tiket",
+        defaultVisible: true,
+        render: (r) => (
+          <div>
+            <p className="font-semibold">
+              {r.subject}{" "}
+              {queue === "priority" || r.isPriority ? (
+                <Badge tone="accent" variant="outline">
+                  Prioritas
+                </Badge>
+              ) : null}
+            </p>
+            <p className="text-caption text-text-secondary">
+              {r.user?.fullName?.trim() || r.user?.email || r.userId} ·{" "}
+              {formatDateTimeWIB(r.createdAt)}
+            </p>
+          </div>
+        ),
+      },
+      {
+        key: "category",
+        header: "Kategori",
+        defaultVisible: true,
+        render: (r) => r.category ?? "—",
+      },
+      {
+        key: "age",
+        header: "Umur",
+        defaultVisible: true,
+        render: (r) => {
+          const lastTouch = r.updatedAt ?? r.createdAt
+          const stale =
+            (r.status === "OPEN" || r.status === "IN_PROGRESS") &&
+            (ageHours(lastTouch) ?? 0) >= TICKET_STALE_HOURS
+          return (
+            <div className="flex flex-col gap-1">
+              <span className="tabular-nums text-[13px]">
+                {formatAge(r.createdAt)}
+              </span>
+              {stale ? (
+                <Badge tone="warning">
+                  Tak tersentuh {formatAge(lastTouch)}
+                </Badge>
+              ) : null}
+            </div>
+          )
+        },
+      },
+      {
+        key: "status",
+        header: "Status",
+        defaultVisible: true,
+        render: (r) => (
+          <Badge tone={TICKET_STATUS_TONE[r.status] ?? "neutral"}>
+            {TICKET_STATUS_LABEL[r.status] ?? r.status}
+          </Badge>
+        ),
+      },
+      {
+        key: "action",
+        header: "",
+        defaultVisible: true,
+        align: "right",
+        render: (r) => (
+          <Link
+            href={`/tickets/${r.id}`}
+            className="font-semibold text-info-text hover:underline"
+          >
+            Tinjau
+          </Link>
+        ),
+      },
+    ],
+    [queue],
+  )
+  const cols = useColumnPrefs<SupportTicket>("tickets", ticketColumnDefs)
+
   return (
     <RoleGate href="/tickets">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -224,6 +325,15 @@ export default function TicketsListPage() {
             title="Unduh CSV sesuai filter aktif"
           >
             Unduh CSV
+          </Button>
+          {/* H02: kustomisasi kolom tabel tiket. */}
+          <Button
+            variant="secondary"
+            size="sm"
+            fullWidth={false}
+            onClick={() => cols.setCustomizerOpen(true)}
+          >
+            Kolom
           </Button>
           <Button
             variant="secondary"
@@ -318,77 +428,7 @@ export default function TicketsListPage() {
       ) : (
         <>
           <DataTable<SupportTicket>
-            columns={[
-              {
-                key: "subject",
-                header: "Tiket",
-                render: (r) => (
-                  <div>
-                    <p className="font-semibold">
-                      {r.subject}{" "}
-                      {queue === "priority" || r.isPriority ? (
-                        <Badge tone="accent" variant="outline">
-                          Prioritas
-                        </Badge>
-                      ) : null}
-                    </p>
-                    <p className="text-caption text-text-secondary">
-                      {r.user?.fullName?.trim() || r.user?.email || r.userId} ·{" "}
-                      {formatDateTimeWIB(r.createdAt)}
-                    </p>
-                  </div>
-                ),
-              },
-              {
-                key: "category",
-                header: "Kategori",
-                render: (r) => r.category ?? "—",
-              },
-              {
-                key: "age",
-                header: "Umur",
-                render: (r) => {
-                  const lastTouch = r.updatedAt ?? r.createdAt
-                  const stale =
-                    (r.status === "OPEN" || r.status === "IN_PROGRESS") &&
-                    (ageHours(lastTouch) ?? 0) >= TICKET_STALE_HOURS
-                  return (
-                    <div className="flex flex-col gap-1">
-                      <span className="tabular-nums text-[13px]">
-                        {formatAge(r.createdAt)}
-                      </span>
-                      {stale ? (
-                        <Badge tone="warning">
-                          Tak tersentuh {formatAge(lastTouch)}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  )
-                },
-              },
-              {
-                key: "status",
-                header: "Status",
-                render: (r) => (
-                  <Badge tone={TICKET_STATUS_TONE[r.status] ?? "neutral"}>
-                    {TICKET_STATUS_LABEL[r.status] ?? r.status}
-                  </Badge>
-                ),
-              },
-              {
-                key: "action",
-                header: "",
-                align: "right",
-                render: (r) => (
-                  <Link
-                    href={`/tickets/${r.id}`}
-                    className="font-semibold text-info-text hover:underline"
-                  >
-                    Tinjau
-                  </Link>
-                ),
-              },
-            ]}
+            columns={cols.visible}
             rows={rows}
             rowKey={(r) => r.id}
             rowClassName={(_, i) => (i === activeIndex ? "bg-info-soft" : undefined)}
@@ -404,6 +444,8 @@ export default function TicketsListPage() {
           />
         </>
       )}
+      {/* H02: dialog kustomisasi kolom */}
+      <ColumnCustomizer prefs={cols} />
     </RoleGate>
   )
 }
