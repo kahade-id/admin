@@ -22,8 +22,8 @@
  * Port dari frontend/app/admin/(panel)/disputes/[id].tsx → web desktop.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react"
-import { useParams } from "next/navigation"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
+import { useParams, useRouter } from "next/navigation"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -41,6 +41,7 @@ import {
   getDisputeDetail,
   getDisputeChat,
   getDisputeMessages,
+  listDisputes,
   markDisputeUnderReview,
   previewResolveDispute,
   resolveDispute,
@@ -142,7 +143,66 @@ const ROLE_LABEL: Record<string, string> = {
   SYSTEM: "Sistem",
 }
 
-function KeyValue({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
+/** SLA mediasi sengketa — selaras DISPUTE_SLA_HOURS backend (72 jam). */
+const DISPUTE_SLA_HOURS = 72
+
+/** "2h 5j 30m 12d" / "Lewat 1j 20m" — hitung mundur live tiap detik. */
+function formatCountdown(ms: number): string {
+  const abs = Math.abs(ms)
+  const d = Math.floor(abs / 86_400_000)
+  const h = Math.floor((abs % 86_400_000) / 3_600_000)
+  const m = Math.floor((abs % 3_600_000) / 60_000)
+  const s = Math.floor((abs % 60_000) / 1_000)
+  const core =
+    d > 0 ? `${d}h ${h}j ${m}m` : h > 0 ? `${h}j ${m}m ${s}d` : `${m}m ${s}d`
+  return ms < 0 ? `Lewat ${core}` : core
+}
+
+/** Countdown sisa SLA 72 jam sejak sengketa dibuat — live tiap detik. */
+function SlaCountdown({ createdAt, resolved }: { createdAt?: string; resolved: boolean }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (resolved) return
+    const t = setInterval(() => setNow(Date.now()), 1_000)
+    return () => clearInterval(t)
+  }, [resolved])
+  if (!createdAt) return <>—</>
+  const deadline = new Date(createdAt).getTime() + DISPUTE_SLA_HOURS * 3_600_000
+  if (!Number.isFinite(deadline)) return <>—</>
+  const diff = deadline - now
+  const breached = diff < 0
+  return (
+    <span className="flex flex-wrap items-center justify-end gap-2">
+      <span className={breached ? "font-semibold tabular-nums text-danger-text" : "font-semibold tabular-nums"}>
+        {resolved ? "—" : formatCountdown(diff)}
+      </span>
+      {resolved ? null : breached ? <Badge tone="danger">Lewat SLA</Badge> : null}
+    </span>
+  )
+}
+
+function KeyValue({
+  label,
+  value,
+  mono = false,
+  copyText,
+}: {
+  label: string
+  value: ReactNode
+  mono?: boolean
+  /** Bila diisi, tampilkan tombol "Salin" cepat di samping nilai. */
+  copyText?: string
+}) {
+  const toast = useToast()
+  const copy = async () => {
+    if (!copyText) return
+    try {
+      await navigator.clipboard.writeText(copyText)
+      toast.show({ title: "Disalin", description: copyText, tone: "success" })
+    } catch {
+      toast.show({ title: "Gagal menyalin", tone: "danger" })
+    }
+  }
   return (
     <div className="flex flex-wrap items-start justify-between gap-2 border-b border-border py-2.5 last:border-b-0">
       <dt className="shrink-0 text-caption font-semibold text-text-secondary">{label}</dt>
@@ -153,7 +213,19 @@ function KeyValue({ label, value, mono = false }: { label: string; value: ReactN
             : "min-w-0 flex-1 text-right text-body text-text-primary"
         }
       >
-        {value}
+        <span className="inline-flex max-w-full flex-wrap items-center justify-end gap-2">
+          <span className="min-w-0 break-all">{value}</span>
+          {copyText ? (
+            <button
+              type="button"
+              onClick={() => void copy()}
+              title={`Salin ${label}`}
+              className="shrink-0 rounded-sm border border-border px-2 py-0.5 text-caption text-text-secondary hover:border-primary hover:text-primary"
+            >
+              Salin
+            </button>
+          ) : null}
+        </span>
       </dd>
     </div>
   )
@@ -164,7 +236,14 @@ function KeyValue({ label, value, mono = false }: { label: string; value: ReactN
  * Data sudah disediakan backend (`initiator`, `order`, `evidences`) — sebelumnya
  * tidak ditampilkan sama sekali sehingga putusan dana diambil tanpa konteks.
  */
-function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
+function PartiesAndEvidence({
+  dispute,
+  hasNewEvidence,
+}: {
+  dispute: AdminDisputeItem
+  /** Penanda polling: ada bukti baru sejak halaman dibuka. */
+  hasNewEvidence?: boolean
+}) {
   const initiator = asRecord(dispute.initiator) as DisputeParty | null
   const order = asRecord(dispute.order) as DisputeOrderInfo | null
   const rawEvidences = Array.isArray(dispute.evidences) ? dispute.evidences : []
@@ -184,6 +263,28 @@ function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
         createdAt: typeof e.createdAt === "string" ? e.createdAt : undefined,
       }),
     )
+
+  // Lightbox: kumpulkan semua URL gambar bukti (lintas evidence) agar bisa
+  // dinavigasi sebelum/sesudah tanpa keluar halaman.
+  const imageIndexOf = new Map<string, number>()
+  const imageUrls: string[] = []
+  evidences.forEach((ev) => {
+    const typesAligned =
+      Array.isArray(ev.fileTypes) && ev.fileTypes.length === ev.fileUrls?.length
+    ev.fileUrls?.forEach((url, i) => {
+      const kind = typesAligned ? evidenceKind(ev.fileTypes?.[i]) : "other"
+      if (kind === "image" && !imageIndexOf.has(url)) {
+        imageIndexOf.set(url, imageUrls.length)
+        imageUrls.push(url)
+      }
+    })
+  })
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const closeLightbox = () => setLightboxIdx(null)
+  const stepLightbox = (dir: 1 | -1) => {
+    if (lightboxIdx === null || imageUrls.length === 0) return
+    setLightboxIdx((lightboxIdx + dir + imageUrls.length) % imageUrls.length)
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -212,8 +313,9 @@ function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
       </dl>
 
       <div>
-        <h3 className="mb-2 text-label font-semibold text-text-secondary">
+        <h3 className="mb-2 flex flex-wrap items-center gap-2 text-label font-semibold text-text-secondary">
           Bukti ({evidences.length})
+          {hasNewEvidence ? <Badge tone="info">Ada bukti baru</Badge> : null}
         </h3>
         {evidences.length === 0 ? (
           <p className="text-body text-text-secondary">Belum ada bukti yang dilampirkan.</p>
@@ -246,11 +348,14 @@ function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
                           className="overflow-hidden rounded-sm border border-border"
                         >
                           {kind === "image" ? (
-                            <a
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title="Buka ukuran penuh"
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const gi = imageIndexOf.get(url)
+                                if (gi !== undefined) setLightboxIdx(gi)
+                              }}
+                              title="Buka lightbox — klik untuk memperbesar, navigasi antar gambar"
+                              className="block w-full cursor-zoom-in"
                             >
                               <img
                                 src={url}
@@ -258,7 +363,7 @@ function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
                                 loading="lazy"
                                 className="h-32 w-full object-cover"
                               />
-                            </a>
+                            </button>
                           ) : kind === "video" ? (
                             <video
                               src={url}
@@ -286,6 +391,46 @@ function PartiesAndEvidence({ dispute }: { dispute: AdminDisputeItem }) {
           </ul>
         )}
       </div>
+
+      {/* Lightbox bukti gambar dalam halaman + navigasi sebelum/sesudah. */}
+      {lightboxIdx !== null && imageUrls.length > 0 ? (
+        <Dialog
+          open
+          onClose={closeLightbox}
+          title={`Bukti gambar ${lightboxIdx + 1} / ${imageUrls.length}`}
+          description="Klik Sebelumnya/Berikutnya untuk berpindah antar bukti gambar tanpa keluar halaman."
+          className="max-w-4xl"
+          footer={
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="secondary"
+                fullWidth={false}
+                disabled={imageUrls.length <= 1}
+                onClick={() => stepLightbox(-1)}
+              >
+                ← Sebelumnya
+              </Button>
+              <span className="text-caption tabular-nums text-text-secondary">
+                {lightboxIdx + 1} / {imageUrls.length}
+              </span>
+              <Button
+                variant="secondary"
+                fullWidth={false}
+                disabled={imageUrls.length <= 1}
+                onClick={() => stepLightbox(1)}
+              >
+                Berikutnya →
+              </Button>
+            </div>
+          }
+        >
+          <img
+            src={imageUrls[lightboxIdx]}
+            alt={`Bukti gambar ${lightboxIdx + 1}`}
+            className="max-h-[70vh] w-full rounded-sm bg-black object-contain"
+          />
+        </Dialog>
+      ) : null}
     </div>
   )
 }
@@ -427,6 +572,8 @@ export default function DisputeDetailPage() {
   const [adminId, setAdminId] = useState("")
   const [adminOptions, setAdminOptions] = useState<{ value: string; label: string }[]>([])
   const [adminsLoading, setAdminsLoading] = useState(false)
+  // Pencarian nama admin di dialog assign (filter client-side dari daftar yang dimuat).
+  const [adminSearch, setAdminSearch] = useState("")
   const [resolveOpen, setResolveOpen] = useState(false)
   const [resolution, setResolution] = useState<Resolution>("FULL_BUYER")
   const [notes, setNotes] = useState("")
@@ -439,18 +586,32 @@ export default function DisputeDetailPage() {
   const [escalateReason, setEscalateReason] = useState("")
   // DP-021: kapan data terakhir disegarkan (polling otomatis).
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  // Penanda polling: pesan mediasi / bukti baru sejak halaman dibuka.
+  const [newMessages, setNewMessages] = useState(false)
+  const [newEvidence, setNewEvidence] = useState(false)
+  const messagesRef = useRef<Set<string>>(new Set())
+  const evidenceCountRef = useRef<number | null>(null)
+  // Navigasi sengketa sebelumnya/berikutnya (tetangga di daftar 100 terbaru).
+  const router = useRouter()
+  const [prevDispute, setPrevDispute] = useState<{ id: string; orderId: string } | null>(null)
+  const [nextDispute, setNextDispute] = useState<{ id: string; orderId: string } | null>(null)
 
   const load = useCallback(
-    async (mode: "initial" | "refresh" = "initial") => {
+    async (mode: "initial" | "refresh" = "initial"): Promise<AdminDisputeItem | null> => {
       if (mode === "initial") setLoading(true)
       else setRefreshing(true)
       setError(null)
       try {
-        setDispute(await getDisputeDetail(disputeId))
+        const d = await getDisputeDetail(disputeId)
+        setDispute(d)
+        // Baseline jumlah bukti untuk deteksi bukti baru saat polling.
+        evidenceCountRef.current = Array.isArray(d.evidences) ? d.evidences.length : 0
         // DP-021: penanda kesegaran data untuk indikator di header.
         setLastUpdated(new Date().toISOString())
+        return d
       } catch (e) {
         setError(userMessage(e))
+        return null
       } finally {
         setLoading(false)
         setRefreshing(false)
@@ -467,6 +628,7 @@ export default function DisputeDetailPage() {
     try {
       const res = await getDisputeMessages(disputeId)
       setMessages(res.messages)
+      messagesRef.current = new Set(res.messages.map((m) => m.id))
       setMsgCursor(res.nextCursor)
       setMsgHasMore(res.hasMore)
     } catch (e) {
@@ -531,20 +693,82 @@ export default function DisputeDetailPage() {
   }, [disputeId, load, loadMessages, loadOrderChat])
 
   // DP-021: polling ringan tiap 20 detik, hanya saat tab aktif, agar admin
-  // tahu bila ada bukti/klaim/pesan baru tanpa refresh manual. Interval
-  // disengaja tidak agresif; tombol "Muat ulang" tetap tersedia.
+  // tahu bila ada bukti/klaim/pesan baru tanpa refresh manual. Penanda
+  // eksplisit (badge + toast) bila polling menemukan pesan/bukti BARU.
+  const pollTick = useCallback(async () => {
+    // Tangkap baseline SEBELUM load menimpa ref — kalau tidak, perbandingan
+    // bukti baru selalu false.
+    const prevEvCount = evidenceCountRef.current
+    const d = await load("refresh")
+    if (d) {
+      const evCount = Array.isArray(d.evidences) ? d.evidences.length : 0
+      if (prevEvCount !== null && evCount > prevEvCount) {
+        setNewEvidence(true)
+        toast.show({
+          title: "Bukti baru ditambahkan",
+          description: "Ada bukti baru pada sengketa ini — lihat bagian Bukti.",
+          tone: "info",
+        })
+      }
+    }
+    try {
+      const res = await getDisputeMessages(disputeId)
+      const prevIds = messagesRef.current
+      const fresh = res.messages.filter((m) => !prevIds.has(m.id))
+      if (fresh.length > 0 && prevIds.size > 0) {
+        setNewMessages(true)
+        toast.show({
+          title: `${fresh.length} pesan mediasi baru`,
+          description: "Lihat bagian Riwayat pesan mediasi.",
+          tone: "info",
+        })
+      }
+      messagesRef.current = new Set(res.messages.map((m) => m.id))
+      setMessages(res.messages)
+      setMsgCursor(res.nextCursor)
+      setMsgHasMore(res.hasMore)
+    } catch {
+      // Polling pesan berjalan senyap — error ditampilkan di pemuatan manual.
+    }
+  }, [disputeId, load, toast])
+
   useEffect(() => {
     if (!disputeId) return
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") {
-        void load("refresh")
-        void loadMessages()
+        void pollTick()
       }
     }, 20_000)
     return () => clearInterval(timer)
-  }, [disputeId, load, loadMessages])
+  }, [disputeId, pollTick])
+
+  // Navigasi sengketa sebelumnya/berikutnya: tetangga di daftar 100 terbaru
+  // (urutan createdAt desc, sama dengan halaman daftar).
+  useEffect(() => {
+    if (!disputeId) return
+    listDisputes({ page: 1, limit: 100 })
+      .then((res) => {
+        const items = res.data ?? []
+        const idx = items.findIndex((x) => x.id === disputeId)
+        if (idx === -1) {
+          setPrevDispute(null)
+          setNextDispute(null)
+          return
+        }
+        setPrevDispute(idx > 0 ? { id: items[idx - 1].id, orderId: items[idx - 1].orderId } : null)
+        setNextDispute(
+          idx < items.length - 1 ? { id: items[idx + 1].id, orderId: items[idx + 1].orderId } : null,
+        )
+      })
+      .catch(() => {
+        setPrevDispute(null)
+        setNextDispute(null)
+      })
+  }, [disputeId])
 
   const reloadAll = () => {
+    setNewMessages(false)
+    setNewEvidence(false)
     void load("refresh")
     void loadMessages()
     void loadOrderChat()
@@ -626,6 +850,7 @@ export default function DisputeDetailPage() {
 
   const openAssign = useCallback(() => {
     setAssignOpen(true)
+    setAdminSearch("")
     setAdminsLoading(true)
     // Dropdown admin yang boleh menangani sengketa — menggantikan ketik ID
     // manual yang rawan salah ketik (sengketa bisa nyasar/tak bertuan).
@@ -774,6 +999,41 @@ export default function DisputeDetailPage() {
               Diperbarui {formatDateTimeWIB(lastUpdated)} · refresh otomatis tiap 20 dtk
             </p>
           ) : null}
+          {/* Navigasi sengketa sebelumnya/berikutnya (daftar 100 terbaru). */}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              disabled={!prevDispute}
+              title={
+                prevDispute
+                  ? `Sengketa sebelumnya — order ${prevDispute.orderId}`
+                  : "Tidak ada sengketa sebelumnya di daftar terbaru"
+              }
+              onClick={() => {
+                if (prevDispute) router.push(`/disputes/${prevDispute.id}`)
+              }}
+            >
+              ← Sebelumnya
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              disabled={!nextDispute}
+              title={
+                nextDispute
+                  ? `Sengketa berikutnya — order ${nextDispute.orderId}`
+                  : "Tidak ada sengketa berikutnya di daftar terbaru"
+              }
+              onClick={() => {
+                if (nextDispute) router.push(`/disputes/${nextDispute.id}`)
+              }}
+            >
+              Berikutnya →
+            </Button>
+          </div>
           <Button
             variant="secondary"
             size="sm"
@@ -824,8 +1084,13 @@ export default function DisputeDetailPage() {
             />
             <CardBody>
               <dl>
-                <KeyValue label="ID Sengketa" value={dispute.id} mono />
-                <KeyValue label="ID Order" value={dispute.orderId} mono />
+                <KeyValue label="ID Sengketa" value={dispute.id} mono copyText={dispute.id} />
+                <KeyValue label="ID Order" value={dispute.orderId} mono copyText={dispute.orderId} />
+                {/* Countdown sisa SLA 72 jam — live tiap detik. */}
+                <KeyValue
+                  label="Sisa SLA"
+                  value={<SlaCountdown createdAt={dispute.createdAt} resolved={isResolved} />}
+                />
                 {dispute.reason ? <KeyValue label="Alasan" value={dispute.reason} /> : null}
                 {/* A9 (audit 2026-09-26): tampilkan nama admin pelaksana bila tersedia,
                     bukan ID mentah. Backend menyertakan relasi assignedAdmin. */}
@@ -917,7 +1182,7 @@ export default function DisputeDetailPage() {
           <Card padded={false} className="xl:col-span-2">
             <CardHeader title="Pihak, nominal & bukti" />
             <CardBody>
-              <PartiesAndEvidence dispute={dispute} />
+              <PartiesAndEvidence dispute={dispute} hasNewEvidence={newEvidence} />
             </CardBody>
           </Card>
 
@@ -1010,7 +1275,10 @@ export default function DisputeDetailPage() {
           </Card>
 
           <Card padded={false} className="xl:col-span-2">
-            <CardHeader title="Riwayat pesan mediasi" />
+            <CardHeader
+              title="Riwayat pesan mediasi"
+              action={newMessages ? <Badge tone="info">Ada pesan baru</Badge> : undefined}
+            />
             <CardBody>
               {msgLoading ? (
                 <p className="text-body text-text-secondary">Memuat pesan…</p>
@@ -1208,9 +1476,22 @@ export default function DisputeDetailPage() {
           </div>
         }
       >
+        <Input
+          label="Cari nama admin"
+          value={adminSearch}
+          onChange={(e) => setAdminSearch(e.target.value)}
+          placeholder="Ketik nama admin…"
+          disabled={adminsLoading}
+          hint="Saring daftar di bawah berdasarkan nama."
+        />
         <Select
           label="Admin penangan"
-          options={[{ value: "", label: adminsLoading ? "Memuat…" : "— Pilih admin —" }, ...adminOptions]}
+          options={[
+            { value: "", label: adminsLoading ? "Memuat…" : "— Pilih admin —" },
+            ...adminOptions.filter((o) =>
+              o.label.toLowerCase().includes(adminSearch.trim().toLowerCase()),
+            ),
+          ]}
           value={adminId}
           onChange={(e) => setAdminId(e.target.value)}
           disabled={adminsLoading}

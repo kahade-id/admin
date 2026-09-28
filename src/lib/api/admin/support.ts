@@ -34,6 +34,8 @@ export function listTickets(params?: {
   status?: string
   /** true = hanya tiket prioritas dari subscriber Kahade+ aktif. */
   priority?: boolean
+  /** Cari berdasarkan subjek/pesan/email/username/nama pengguna (didukung backend). */
+  search?: string
 }): Promise<Paginated<SupportTicket>> {
   return adminHttp.get<Paginated<SupportTicket>>("/v1/admin/support/tickets", { query: params })
 }

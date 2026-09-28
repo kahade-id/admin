@@ -43,6 +43,7 @@ import {
 } from "@/lib/api/admin/orders"
 import { getRoomIdByOrder, getRoomMessages } from "@/lib/api/admin/chat"
 import { userMessage } from "@/lib/api/response"
+import { downloadCsv } from "@/lib/csv"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
 // ADM-405: PII pihak transaksi di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail, maskName } from "@/lib/pii"
@@ -209,6 +210,61 @@ function OrdersPageContent() {
   const [total, setTotal] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [csvLoading, setCsvLoading] = useState(false)
+  const FETCH_ALL_MAX_PAGES = 50
+
+  /** Export CSV order sesuai filter aktif (pencarian/status/escrow/tanggal/urut). */
+  const handleExportCsv = async () => {
+    setCsvLoading(true)
+    try {
+      const all: AdminOrderItem[] = []
+      for (let p = 1; p <= FETCH_ALL_MAX_PAGES; p++) {
+        const res = await listAdminOrders({
+          page: p,
+          limit: 100,
+          status: statusFilter || undefined,
+          q: debouncedSearch.trim() || undefined,
+          hasEscrow: escrowOnly || undefined,
+          startDate: startDate || undefined,
+          endDate: endDate || undefined,
+          sortBy: sortBy as "createdAt" | "updatedAt" | "orderValue" | "buyerPayAmount" | "completedAt",
+          sortOrder: sortOrder as "asc" | "desc",
+        })
+        const items = res.data ?? []
+        all.push(...items)
+        if (p >= (res.totalPages ?? 1) || items.length === 0) break
+      }
+      const stamp = new Date().toISOString().slice(0, 10)
+      downloadCsv(
+        `order-${stamp}.csv`,
+        ["ID Order", "Judul", "Status", "Pembeli", "Penjual", "Nilai", "Dibayar pembeli", "Diterima penjual", "Dibuat"],
+        all.map((r) => [
+          r.orderId,
+          r.title ?? "",
+          STATUS_LABEL[String(r.status)] ?? String(r.status),
+          partyName(r.buyer),
+          partyName(r.seller),
+          typeof r.orderValue === "number" ? r.orderValue : "",
+          r.buyerPayAmount ?? "",
+          r.sellerReceiveAmount ?? "",
+          formatDateTimeWIB(r.createdAt),
+        ]),
+      )
+      toast.show({
+        title: "CSV diunduh",
+        description: `${all.length} order sesuai filter aktif.`,
+        tone: "success",
+      })
+    } catch (e) {
+      toast.show({
+        title: "Gagal mengekspor CSV",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setCsvLoading(false)
+    }
+  }
 
   const loadOrders = useCallback(
     async (targetPage: number) => {
@@ -420,6 +476,18 @@ function OrdersPageContent() {
         <CardHeader
           title="Daftar order"
           subtitle="Klik Detail untuk melihat pihak, nominal, status escrow, dan timeline."
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              loading={csvLoading}
+              onClick={() => void handleExportCsv()}
+              title="Unduh CSV sesuai filter aktif"
+            >
+              Unduh CSV
+            </Button>
+          }
         />
         <CardBody>
           <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">

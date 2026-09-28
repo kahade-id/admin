@@ -359,26 +359,84 @@ export default function FinancePage() {
   const [txTotal, setTxTotal] = useState(0)
   const [txTotalPages, setTxTotalPages] = useState(1)
   const [txLoading, setTxLoading] = useState(true)
+  // Baris agregat masuk/keluar/bersih — mengikuti filter aktif (dihitung dari
+  // SEMUA transaksi yang cocok, bukan hanya halaman saat ini).
+  const [txAggregate, setTxAggregate] = useState<{
+    masuk: number
+    keluar: number
+    count: number
+    capped: boolean
+  } | null>(null)
+  const [aggLoading, setAggLoading] = useState(false)
+
+  /** Maksimum baris yang diambil untuk agregat (dibatasi agar ringan). */
+  const AGGREGATE_CAP = 3000
+
+  const loadAggregate = useCallback(
+    async (
+      total: number,
+      params: {
+        type?: WalletTransactionType
+        status?: WalletTransactionStatus
+        q?: string
+        startDate: string
+        endDate: string
+      },
+    ) => {
+      if (total <= 0) {
+        setTxAggregate({ masuk: 0, keluar: 0, count: 0, capped: false })
+        return
+      }
+      setAggLoading(true)
+      try {
+        const limit = Math.min(total, AGGREGATE_CAP)
+        const res = await listTransactions({ ...params, page: 1, limit })
+        const items = res.data ?? []
+        const minusSign = TX_META.WITHDRAW.sign
+        let masuk = 0
+        let keluar = 0
+        for (const r of items) {
+          const meta = TX_META[String(r.type)]
+          const amt =
+            typeof r.amount === "number" && Number.isFinite(r.amount) ? r.amount : 0
+          if (meta?.sign === "+") masuk += amt
+          else if (meta?.sign === minusSign) keluar += amt
+        }
+        setTxAggregate({
+          masuk,
+          keluar,
+          count: items.length,
+          capped: total > AGGREGATE_CAP,
+        })
+      } catch {
+        // Agregat gagal → tabel tetap tampil; agregat disembunyikan.
+        setTxAggregate(null)
+      } finally {
+        setAggLoading(false)
+      }
+    },
+    [],
+  )
 
   const loadTransactions = useCallback(
     async (page: number) => {
       setTxLoading(true)
       try {
-        const res = await listTransactions({
-          page,
-          limit: PAGE_SIZE,
+        const params = {
           type: typeFilter || undefined,
           status: txStatusFilter || undefined,
           q: debouncedSearch.trim() || undefined,
           startDate: range.start,
           endDate: range.end,
-        })
+        }
+        const res = await listTransactions({ ...params, page, limit: PAGE_SIZE })
         setTxRows(res.data ?? [])
         const total = res.total ?? res.data?.length ?? 0
         setTxTotal(total)
         setTxTotalPages(
           res.totalPages ?? Math.max(1, Math.ceil(total / PAGE_SIZE)),
         )
+        void loadAggregate(total, params)
       } catch (e) {
         toast.show({
           title: "Gagal memuat transaksi",
@@ -389,7 +447,7 @@ export default function FinancePage() {
         setTxLoading(false)
       }
     },
-    [debouncedSearch, typeFilter, txStatusFilter, range, toast],
+    [debouncedSearch, typeFilter, txStatusFilter, range, toast, loadAggregate],
   )
 
   useEffect(() => {
@@ -885,6 +943,49 @@ export default function FinancePage() {
                 onChange={(e) => handleDateChange(dateInputs.start, e.target.value)}
                 error={dateError ?? undefined}
               />
+            </div>
+
+            {/* Baris agregat masuk/keluar/bersih — mengikuti filter aktif. */}
+            <div
+              className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-sm border border-border bg-surface px-4 py-3"
+              aria-live="polite"
+              aria-label="Agregat transaksi sesuai filter"
+            >
+              {aggLoading && !txAggregate ? (
+                <span className="flex items-center gap-2 text-body text-text-secondary">
+                  <Spinner size="sm" /> Menghitung agregat…
+                </span>
+              ) : txAggregate ? (
+                <>
+                  <p className="text-body">
+                    <span className="text-text-secondary">Masuk: </span>
+                    <span className="font-semibold text-success-text">
+                      {formatRupiah(txAggregate.masuk)}
+                    </span>
+                  </p>
+                  <p className="text-body">
+                    <span className="text-text-secondary">Keluar: </span>
+                    <span className="font-semibold text-danger-text">
+                      {formatRupiah(txAggregate.keluar)}
+                    </span>
+                  </p>
+                  <p className="text-body">
+                    <span className="text-text-secondary">Bersih: </span>
+                    <span className="font-semibold text-text-primary">
+                      {formatRupiah(txAggregate.masuk - txAggregate.keluar)}
+                    </span>
+                  </p>
+                  <p className="text-caption text-text-secondary">
+                    dari {formatNumber(txAggregate.count)} transaksi sesuai filter
+                    {txAggregate.capped ? ` (dibatasi ${formatNumber(AGGREGATE_CAP)} pertama)` : ""}
+                    {aggLoading ? " · memperbarui…" : ""}
+                  </p>
+                </>
+              ) : (
+                <p className="text-caption text-text-secondary">
+                  Agregat tidak tersedia.
+                </p>
+              )}
             </div>
 
             <DataTable<AdminTransactionItem>
