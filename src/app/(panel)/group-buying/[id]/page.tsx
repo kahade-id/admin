@@ -44,7 +44,7 @@ function KeyValue({ label, value }: { label: string; value: ReactNode }) {
 function GroupBuyDetailContent() {
   const params = useParams<{ id: string }>()
   const toast = useToast()
-  const id = decodeURIComponent(params.id)
+  const id = params.id
 
   const [detail, setDetail] = useState<GroupBuyDetail | null>(null)
   const [loading, setLoading] = useState(true)

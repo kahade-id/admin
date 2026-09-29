@@ -69,7 +69,7 @@ function VoucherDetailContent() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const toast = useToast()
-  const id = decodeURIComponent(params.id)
+  const id = params.id
 
   const [detail, setDetail] = useState<AdminVoucherDetail | null>(null)
   const [loading, setLoading] = useState(true)

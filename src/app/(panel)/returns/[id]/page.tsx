@@ -62,7 +62,7 @@ function countDeadlineExtensions(timeline?: TimelineEntry[]): number {
 
 export default function ReturnDetailPage({ params }: { params: { id: string } }) {
   const toast = useToast()
-  const id = decodeURIComponent(params.id)
+  const id = params.id
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [detail, setDetail] = useState<ReturnDetail | null>(null)

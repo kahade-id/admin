@@ -37,7 +37,7 @@ function KeyValue({ label, value }: { label: string; value: ReactNode }) {
 function BannerDetailContent() {
   const params = useParams<{ id: string }>()
   const toast = useToast()
-  const id = decodeURIComponent(params.id)
+  const id = params.id
 
   const [banner, setBanner] = useState<AdminBannerItem | null>(null)
   const [loading, setLoading] = useState(true)

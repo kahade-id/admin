@@ -112,7 +112,7 @@ function CampaignDetailContent() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const toast = useToast()
-  const id = decodeURIComponent(params.id)
+  const id = params.id
 
   const [campaign, setCampaign] = useState<AdminCampaignItem | null>(null)
   const [versions, setVersions] = useState<AdminCampaignVersion[] | null>(null)

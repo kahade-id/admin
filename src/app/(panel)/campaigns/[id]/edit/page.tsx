@@ -145,7 +145,7 @@ function CampaignEditContent() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const toast = useToast()
-  const id = decodeURIComponent(params.id)
+  const id = params.id
 
   const [original, setOriginal] = useState<AdminCampaignItem | null>(null)
   const [values, setValues] = useState<EditableValues | null>(null)

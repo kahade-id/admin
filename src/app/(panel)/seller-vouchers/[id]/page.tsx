@@ -52,7 +52,7 @@ function discountLabel(v: SellerVoucherItem): string {
 function SellerVoucherDetailContent() {
   const params = useParams<{ id: string }>()
   const toast = useToast()
-  const id = decodeURIComponent(params.id)
+  const id = params.id
 
   const [detail, setDetail] = useState<SellerVoucherDetail | null>(null)
   const [loading, setLoading] = useState(true)
