@@ -3,7 +3,7 @@
  *
  * E3 (G326–G350):
  * - Detail diperkaya: pemilik wallet, order, referensi eksternal provider
- *   (midtransOrderId, flashTransactionId, irisPayoutId/ref), status
+ *   (providerOrderId, flashTransactionId, irisPayoutId/ref), status
  *   provider, webhook terkait, dan reversal. Metadata & payload webhook
  *   sudah di-mask dari secret oleh backend.
  * - Timeline kronologis: event LEDGER (mutasi wallet), PROVIDER (status
@@ -121,7 +121,7 @@ export function TransactionDetailDialog({
           <div>
             <h4 className="mb-2 text-body font-semibold text-text-primary">Referensi eksternal</h4>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-              <Field label="Midtrans order ID">{ext?.midtransOrderId ?? "—"}</Field>
+              <Field label="Provider order ID">{ext?.providerOrderId ?? "—"}</Field>
               <Field label="Flash transaction ID">{ext?.flashTransactionId ?? "—"}</Field>
               <Field label="Iris payout ID">{ext?.irisPayoutId ?? "—"}</Field>
               <Field label="Iris ref">{ext?.irisRef ?? "—"}</Field>
