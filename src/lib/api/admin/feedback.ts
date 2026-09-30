@@ -10,16 +10,16 @@
  * - POST   /v1/admin/feedback/:id/unassign
  * - POST   /v1/admin/feedback/:id/notes       { note }
  * - PATCH  /v1/admin/feedback/:id/tags        { tags, impactLabel }
- * - POST   /v1/admin/feedback/:id/reply       { message }
+ * - POST   /v1/admin/feedback/:id/reply       { body }
  * - GET    /v1/admin/feedback/:id/contact     { contact, maskedContact, consent, visibleToRole }
- * - POST   /v1/admin/feedback/:id/escalate    { riskType, reason }
- * - POST   /v1/admin/feedback/:id/close       { reasonCode, note? }
+ * - POST   /v1/admin/feedback/:id/escalate    { risk, note? }
+ * - POST   /v1/admin/feedback/:id/close       { reason }
  * - GET    /v1/admin/feedback/:id/duplicates  { items }
  * - GET    /v1/admin/feedback/export?...filter → { url } (URL unduhan bertanda)
  * - GET    /v1/admin/feedback/summary         → agregat ringkasan
  * - GET    /v1/admin/feedback/sla-rules       → daftar aturan SLA
- * - POST   /v1/admin/feedback/sla-rules       { name, slaHours, category?, platform?, priority?, isActive }
- * - PATCH  /v1/admin/feedback/sla-rules/:ruleId
+ * - POST   /v1/admin/feedback/sla-rules       { category, hours, isCritical? }
+ * - PATCH  /v1/admin/feedback/sla-rules/:ruleId { category?, hours?, isCritical? }
  * - DELETE /v1/admin/feedback/sla-rules/:ruleId
  *
  * Kontak pengirim hanya dikembalikan backend dalam bentuk TERMASKING kecuali
@@ -191,9 +191,9 @@ export function updateFeedbackTags(
   })
 }
 
-export function replyToFeedback(feedbackId: string, message: string): Promise<unknown> {
+export function replyToFeedback(feedbackId: string, body: string): Promise<unknown> {
   return adminHttp.post(`/v1/admin/feedback/${encodeURIComponent(feedbackId)}/reply`, {
-    message,
+    body,
   })
 }
 
@@ -216,23 +216,21 @@ export function getFeedbackContact(feedbackId: string): Promise<FeedbackContact>
 
 export function escalateFeedback(
   feedbackId: string,
-  riskType: "SECURITY_RISK" | "FRAUD_RISK",
-  reason: string,
+  risk: "SECURITY_RISK" | "FRAUD_RISK",
+  note?: string,
 ): Promise<unknown> {
   return adminHttp.post(`/v1/admin/feedback/${encodeURIComponent(feedbackId)}/escalate`, {
-    riskType,
-    reason,
+    risk,
+    note: note?.trim() || undefined,
   })
 }
 
 export function closeFeedback(
   feedbackId: string,
-  reasonCode: FeedbackCloseReason,
-  note?: string,
+  reason: FeedbackCloseReason,
 ): Promise<unknown> {
   return adminHttp.post(`/v1/admin/feedback/${encodeURIComponent(feedbackId)}/close`, {
-    reasonCode,
-    note: note || undefined,
+    reason,
   })
 }
 
@@ -310,38 +308,38 @@ export function getFeedbackSummary(): Promise<FeedbackSummary> {
     })
 }
 
+/** Bentuk aturan SLA — selaras dengan AdminFeedbackSlaRuleDto backend (BAI-002). */
 export type FeedbackSlaRule = {
   id: string
-  name: string
-  slaHours: number
-  category?: string | null
-  platform?: string | null
-  priority?: number
-  isActive: boolean
+  category: string
+  hours: number
+  isCritical: boolean
   createdAt?: string
   updatedAt?: string
 }
 
-export function listSlaRules(): Promise<{ items: FeedbackSlaRule[] } | FeedbackSlaRule[]> {
-  return adminHttp.get<{ items: FeedbackSlaRule[] } | FeedbackSlaRule[]>(
-    "/v1/admin/feedback/sla-rules",
-  )
+/** GET /v1/admin/feedback/sla-rules — backend mengembalikan array rule. */
+export function listSlaRules(): Promise<FeedbackSlaRule[]> {
+  return adminHttp.get<FeedbackSlaRule[]>("/v1/admin/feedback/sla-rules")
 }
 
-export function createSlaRule(input: {
-  name: string
-  slaHours: number
-  category?: string
-  platform?: string
-  priority?: number
-  isActive?: boolean
-}): Promise<FeedbackSlaRule> {
+export type CreateSlaRuleInput = {
+  category: string
+  hours: number
+  isCritical?: boolean
+}
+
+export type UpdateSlaRuleInput = Partial<CreateSlaRuleInput>
+
+/** POST /v1/admin/feedback/sla-rules — upsert berdasarkan category. */
+export function createSlaRule(input: CreateSlaRuleInput): Promise<FeedbackSlaRule> {
   return adminHttp.post<FeedbackSlaRule>("/v1/admin/feedback/sla-rules", input)
 }
 
+/** PATCH /v1/admin/feedback/sla-rules/:ruleId — update parsial (BAI-001). */
 export function updateSlaRule(
   ruleId: string,
-  input: Partial<Omit<FeedbackSlaRule, "id">>,
+  input: UpdateSlaRuleInput,
 ): Promise<FeedbackSlaRule> {
   return adminHttp.patch<FeedbackSlaRule>(
     `/v1/admin/feedback/sla-rules/${encodeURIComponent(ruleId)}`,

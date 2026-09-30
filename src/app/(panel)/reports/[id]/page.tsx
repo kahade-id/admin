@@ -102,11 +102,19 @@ export default function ReportDetailPage() {
 
   const handleConfirm = async () => {
     if (!action || submitting) return
+    const noteText = notes.trim()
+    // BAI-003: backend /resolve mewajibkan `resolution` (min 5 char).
+    if (action === "resolve" && noteText.length < 5) {
+      toast.show({
+        title: "Resolusi wajib diisi (minimal 5 karakter)",
+        tone: "danger",
+      })
+      return
+    }
     setSubmitting(true)
     try {
-      const noteText = notes.trim() || undefined
       if (action === "dismiss") {
-        await dismissReport(reportId, noteText)
+        await dismissReport(reportId, noteText || undefined)
         toast.show({ title: "Laporan diabaikan", tone: "success" })
       } else {
         await resolveReport(reportId, noteText)
@@ -215,7 +223,7 @@ export default function ReportDetailPage() {
         </div>
       )}
 
-      {/* Dialog aksi: catatan opsional */}
+      {/* Dialog aksi: catatan opsional (dismiss) / resolusi wajib min 5 char (resolve) */}
       <Dialog
         open={action !== null}
         onClose={closeAction}
@@ -223,13 +231,14 @@ export default function ReportDetailPage() {
         description={
           isDismiss
             ? "Laporan akan ditandai diabaikan dan tidak ditindaklanjuti."
-            : "Laporan akan ditandai selesai ditangani."
+            : "Laporan akan ditandai selesai ditangani. Resolusi wajib diisi."
         }
         footer={
           <div className="flex flex-col gap-2">
             <Button
               variant={isDismiss ? "destructive" : "primary"}
               loading={submitting}
+              disabled={!isDismiss && notes.trim().length < 5}
               onClick={handleConfirm}
             >
               {isDismiss ? "Ya, abaikan" : "Ya, selesaikan"}
@@ -241,12 +250,19 @@ export default function ReportDetailPage() {
         }
       >
         <TextArea
-          label="Catatan (opsional)"
+          label={isDismiss ? "Catatan (opsional)" : "Resolusi (wajib, min. 5 karakter)"}
           rows={3}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          placeholder="Tulis catatan penanganan bila perlu…"
+          placeholder={
+            isDismiss ? "Tulis catatan penanganan bila perlu…" : "Tulis ringkasan penyelesaian laporan…"
+          }
           maxLength={2000}
+          error={
+            !isDismiss && notes.length > 0 && notes.trim().length < 5
+              ? "Minimal 5 karakter"
+              : undefined
+          }
         />
       </Dialog>
     </RoleGate>

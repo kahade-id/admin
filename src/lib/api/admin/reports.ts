@@ -53,10 +53,14 @@ export function dismissReport(reportId: string, notes?: string): Promise<unknown
   )
 }
 
-export function resolveReport(reportId: string, notes?: string): Promise<unknown> {
+export function resolveReport(
+  reportId: string,
+  resolution: string,
+  resolveStatus?: "RESOLVED_ACTION_TAKEN" | "RESOLVED_NO_ACTION",
+): Promise<unknown> {
   return adminHttp.post(
     `/v1/admin/reports/${encodeURIComponent(reportId)}/resolve`,
-    { notes },
+    { resolution, resolveStatus },
     { headers: idempotencyHeaders() },
   )
 }

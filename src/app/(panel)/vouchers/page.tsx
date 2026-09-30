@@ -387,7 +387,7 @@ function VouchersTab() {
           page: targetPage,
           limit: PAGE_SIZE,
           isActive: targetFilter === "all" ? undefined : targetFilter,
-          q: q.trim() || undefined,
+          search: q.trim() || undefined,
         })
         const filtered = applySearchFilter(res.data ?? [], q)
         setRows(filtered)
@@ -974,6 +974,8 @@ export function CampaignsTab() {
   const [confirm, setConfirm] = useState<
     { kind: "activate" | "pause"; item: AdminCampaignItem } | null
   >(null)
+  // BAI-007: backend activate/pause mewajibkan { reason } (min 5 char).
+  const [confirmReason, setConfirmReason] = useState("")
   const [confirming, setConfirming] = useState(false)
   const [duplicateTarget, setDuplicateTarget] = useState<AdminCampaignItem | null>(null)
   const [duplicating, setDuplicating] = useState(false)

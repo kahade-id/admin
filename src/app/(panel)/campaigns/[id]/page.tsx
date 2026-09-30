@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
 import { EmptyState } from "@/components/ui/empty-state"
+import { TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
@@ -124,6 +125,9 @@ function CampaignDetailContent() {
   const [duplicateOpen, setDuplicateOpen] = useState(false)
   const [duplicating, setDuplicating] = useState(false)
   const [toggling, setToggling] = useState(false)
+  // BAI-007: backend activate/pause mewajibkan { reason } (min 5 char).
+  const [toggleOpen, setToggleOpen] = useState<null | "activate" | "pause">(null)
+  const [toggleReason, setToggleReason] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -182,14 +186,19 @@ function CampaignDetailContent() {
   }
 
   async function handleToggleActive() {
-    if (!campaign) return
+    if (!campaign || !toggleOpen) return
+    const reason = toggleReason.trim()
+    if (reason.length < 5) {
+      toast.show({ title: "Alasan wajib diisi (minimal 5 karakter)", tone: "danger" })
+      return
+    }
     setToggling(true)
     try {
-      if (campaign.status === "ACTIVE") {
-        await pauseCampaign(id)
+      if (toggleOpen === "pause") {
+        await pauseCampaign(id, reason)
         toast.show({ title: "Kampanye dijeda.", tone: "success" })
       } else {
-        const res = await activateCampaign(id)
+        const res = await activateCampaign(id, reason)
         const issued = res.voucherIssuance?.issued
         toast.show({
           title: "Kampanye diaktifkan.",
@@ -198,12 +207,19 @@ function CampaignDetailContent() {
           tone: "success",
         })
       }
+      setToggleOpen(null)
+      setToggleReason("")
       void load()
     } catch (e) {
       toast.show({ title: "Gagal mengubah status kampanye", description: userMessage(e), tone: "danger" })
     } finally {
       setToggling(false)
     }
+  }
+
+  function openToggleDialog(kind: "activate" | "pause") {
+    setToggleReason("")
+    setToggleOpen(kind)
   }
 
   if (loading) {
@@ -287,12 +303,12 @@ function CampaignDetailContent() {
             Duplikasi ke draf
           </Button>
           {canActivate ? (
-            <Button size="sm" fullWidth={false} loading={toggling} onClick={handleToggleActive}>
+            <Button size="sm" fullWidth={false} loading={toggling} onClick={() => openToggleDialog("activate")}>
               Aktifkan
             </Button>
           ) : null}
           {canPause ? (
-            <Button variant="secondary" size="sm" fullWidth={false} loading={toggling} onClick={handleToggleActive}>
+            <Button variant="secondary" size="sm" fullWidth={false} loading={toggling} onClick={() => openToggleDialog("pause")}>
               Jeda
             </Button>
           ) : null}
@@ -521,6 +537,47 @@ function CampaignDetailContent() {
         onConfirm={handleDuplicate}
         loading={duplicating}
       />
+
+      {/* BAI-007: alasan wajib (min 5 char) untuk aktifkan/jeda */}
+      <Dialog
+        open={toggleOpen !== null}
+        onClose={() => setToggleOpen(null)}
+        title={toggleOpen === "pause" ? "Jeda kampanye?" : "Aktifkan kampanye?"}
+        description={
+          toggleOpen === "pause"
+            ? `Kampanye "${c.name}" akan dijeda — voucher personal baru tidak diterbitkan.`
+            : `Mengaktifkan "${c.name}" akan menerbitkan voucher personal kepada pengguna yang memenuhi syarat.`
+        }
+        footer={
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="primary"
+              loading={toggling}
+              disabled={toggleReason.trim().length < 5}
+              onClick={handleToggleActive}
+            >
+              {toggleOpen === "pause" ? "Jeda" : "Aktifkan"}
+            </Button>
+            <Button variant="ghost" disabled={toggling} onClick={() => setToggleOpen(null)}>
+              Batal
+            </Button>
+          </div>
+        }
+      >
+        <TextArea
+          label="Alasan (wajib, min. 5 karakter)"
+          rows={3}
+          value={toggleReason}
+          onChange={(e) => setToggleReason(e.target.value)}
+          placeholder="Tulis alasan perubahan status kampanye…"
+          maxLength={1000}
+          error={
+            toggleReason.length > 0 && toggleReason.trim().length < 5
+              ? "Minimal 5 karakter"
+              : undefined
+          }
+        />
+      </Dialog>
     </div>
   )
 }
