@@ -861,6 +861,16 @@ function FinancePageInner() {
               value={formatRupiah(escrow?.totalEscrowBalance)}
               hint={`${formatNumber(escrow?.activeEscrowOrders ?? 0)} order aktif`}
             />
+            {/* MFE-011: escrow DANA-direct (mode tanpa-wallet) — sumber
+                kebenaran escrow saat ini; kartu lama hanya menghitung
+                wallet.escrowBalance sehingga selalu Rp0 tanpa wallet. */}
+            <StatCard
+              label="Escrow DANA aktif"
+              value={formatRupiah(escrow?.danaEscrowBalance ?? 0)}
+              hint={`${formatNumber(escrow?.danaEscrowPayments ?? 0)} pembayaran DANA · ${formatNumber(
+                escrow?.danaDisbursementsPending ?? 0,
+              )} pencairan tertunda`}
+            />
             {/* ADM-211: revenue gabungan (fee + langganan) dengan breakdown — kartu
                 lama hanya menampilkan fee platform sehingga pendapatan mengecil. */}
             <StatCard
