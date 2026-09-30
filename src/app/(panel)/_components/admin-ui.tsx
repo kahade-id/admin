@@ -308,8 +308,8 @@ export function StatusBadge({
 export type StatusTone = "neutral" | "info" | "success" | "warning" | "danger" | "accent"
 
 export const KYC_STATUS_LABEL: Record<string, string> = {
-  PENDING: "Menunggu",
-  APPROVED: "Disetujui",
+  PENDING: "Sedang ditinjau",
+  APPROVED: "Terverifikasi",
   REJECTED: "Ditolak",
   REVOKED: "Dicabut",
 }
@@ -322,8 +322,8 @@ export const KYC_STATUS_TONE: Record<string, StatusTone> = {
 }
 
 export const BUSINESS_STATUS_LABEL: Record<string, string> = {
-  PENDING: "Menunggu",
-  APPROVED: "Disetujui",
+  PENDING: "Sedang ditinjau",
+  APPROVED: "Terverifikasi",
   REJECTED: "Ditolak",
   REVOKED: "Dicabut",
 }
@@ -337,9 +337,9 @@ export const BUSINESS_STATUS_TONE: Record<string, StatusTone> = {
 
 export const DISPUTE_STATUS_LABEL: Record<string, string> = {
   OPEN: "Terbuka",
-  ASSIGNED: "Ditugaskan",
-  UNDER_REVIEW: "Ditinjau",
-  WAITING_RESPONSE: "Menunggu respons",
+  ASSIGNED: "Ditugaskan ke mediator",
+  UNDER_REVIEW: "Ditinjau mediator",
+  WAITING_RESPONSE: "Menunggu tanggapan",
   ESCALATED: "Dieskalasi",
   RESOLVED: "Selesai",
 }
@@ -355,7 +355,8 @@ export const DISPUTE_STATUS_TONE: Record<string, StatusTone> = {
 
 export const TICKET_STATUS_LABEL: Record<string, string> = {
   OPEN: "Terbuka",
-  IN_PROGRESS: "Diproses",
+  IN_PROGRESS: "Ditangani",
+  WAITING_USER: "Menunggu balasan Anda",
   RESOLVED: "Selesai",
   CLOSED: "Ditutup",
 }
@@ -363,6 +364,7 @@ export const TICKET_STATUS_LABEL: Record<string, string> = {
 export const TICKET_STATUS_TONE: Record<string, StatusTone> = {
   OPEN: "warning",
   IN_PROGRESS: "info",
+  WAITING_USER: "warning",
   RESOLVED: "success",
   CLOSED: "neutral",
 }

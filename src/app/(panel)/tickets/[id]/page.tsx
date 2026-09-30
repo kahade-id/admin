@@ -40,7 +40,7 @@ import { TICKET_STATUS_LABEL, TICKET_STATUS_TONE } from "../maps"
 
 const STATUS_OPTIONS = [
   { value: "OPEN", label: "Terbuka" },
-  { value: "IN_PROGRESS", label: "Diproses" },
+  { value: "IN_PROGRESS", label: "Ditangani" },
   { value: "RESOLVED", label: "Selesai" },
   { value: "CLOSED", label: "Ditutup" },
 ]

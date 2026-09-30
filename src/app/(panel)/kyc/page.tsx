@@ -68,8 +68,8 @@ const PAGE_SIZE = 20
 
 const STATUS_OPTIONS = [
   { value: "ALL", label: "Semua" },
-  { value: "PENDING", label: "Menunggu" },
-  { value: "APPROVED", label: "Disetujui" },
+  { value: "PENDING", label: "Sedang ditinjau" },
+  { value: "APPROVED", label: "Terverifikasi" },
   { value: "REJECTED", label: "Ditolak" },
   { value: "REVOKED", label: "Dicabut" },
 ]

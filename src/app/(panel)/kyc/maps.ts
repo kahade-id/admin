@@ -1,8 +1,8 @@
 /** Peta label & tone status KYC — dipakai halaman daftar & detail. */
 
 export const KYC_STATUS_LABEL: Record<string, string> = {
-  PENDING: "Menunggu",
-  APPROVED: "Disetujui",
+  PENDING: "Sedang ditinjau",
+  APPROVED: "Terverifikasi",
   REJECTED: "Ditolak",
   REVOKED: "Dicabut",
 }

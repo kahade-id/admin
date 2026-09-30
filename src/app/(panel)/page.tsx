@@ -41,12 +41,12 @@ import { formatDateTimeWIB, formatIDR, formatNumber, num } from "@/lib/format"
 import { menuForRole } from "@/lib/rbac"
 
 const ORDER_LABEL: Record<string, string> = {
-  WAITING_CONFIRMATION: "Menunggu konfirmasi",
+  WAITING_CONFIRMATION: "Menunggu konfirmasi penjual",
   WAITING_PAYMENT: "Menunggu pembayaran",
-  PROCESSING: "Diproses",
-  IN_DELIVERY: "Dikirim",
+  PROCESSING: "Diproses penjual",
+  IN_DELIVERY: "Dalam pengiriman",
   COMPLETED: "Selesai",
-  DISPUTED: "Disengketakan",
+  DISPUTED: "Sengketa",
   CANCELLED: "Dibatalkan",
 }
 

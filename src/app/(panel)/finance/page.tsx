@@ -116,10 +116,16 @@ const TX_STATUS_FILTERS: Array<{ value: WalletTransactionStatus | ""; label: str
 const TYPE_FILTERS: Array<{ value: WalletTransactionType | ""; label: string }> = [
   { value: "", label: "Semua tipe" },
   { value: "TOP_UP", label: "Top up" },
+  // DSC-012: "Penarikan" (noun) disengaja — judul aksi di mobile adalah
+  // "Tarik Dana" (verb, app/withdraw.tsx). Bukan inkonsistensi.
+  // Glosarium arus uang: "Pencairan" = disbursement DANA ke penjual
+  // (ORDER_RELEASE / DISPUTE_RELEASE) — jangan disebut "Payout";
+  // "Dana dikembalikan" = refund ke pembeli (ORDER_REFUND);
+  // provider pembayaran satu-satunya: "DANA" (bukan Flash).
   { value: "WITHDRAW", label: "Penarikan" },
   { value: "ORDER_LOCK", label: "Escrow dikunci" },
-  { value: "ORDER_RELEASE", label: "Escrow cair" },
-  { value: "ORDER_REFUND", label: "Refund order" },
+  { value: "ORDER_RELEASE", label: "Dana dicairkan ke penjual" },
+  { value: "ORDER_REFUND", label: "Dana order dikembalikan" },
   { value: "FEE_DEDUCT", label: "Fee platform" },
   { value: "DISPUTE_RELEASE", label: "Cair sengketa" },
 ]
@@ -327,12 +333,12 @@ function FinancePageInner() {
             title: "Persetujuan tercatat",
             description:
               res.message ??
-              `Menunggu persetujuan ${(res.requiredApprovals ?? 2) - (res.approvals ?? 1)} admin lain sebelum payout dieksekusi.`,
+              `Menunggu persetujuan ${(res.requiredApprovals ?? 2) - (res.approvals ?? 1)} admin lain sebelum pencairan dieksekusi.`,
             tone: "info",
           })
         } else {
           toast.show({
-            title: res?.status === "ALREADY_EXECUTED" ? "Payout sudah dieksekusi" : "Penarikan disetujui",
+            title: res?.status === "ALREADY_EXECUTED" ? "Pencairan sudah dieksekusi" : "Penarikan disetujui",
             description: formatRupiah(actionTx.amount),
             tone: "success",
           })

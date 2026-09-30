@@ -74,7 +74,7 @@ const REJECT_REASON_OPTIONS = [
 ]
 
 const RESOLUTION_OPTIONS = [
-  { value: "REFUND", label: "Refund (kembalikan dana)" },
+  { value: "REFUND", label: "Dana dikembalikan" },
   { value: "EXCHANGE", label: "Tukar barang" },
   { value: "REPAIR", label: "Perbaikan" },
 ]

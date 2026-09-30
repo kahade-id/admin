@@ -30,7 +30,7 @@ const ADMIN_TOKEN_KEY = "kahade.admin.accessToken"
 
 /** Dilempar saat sesi admin tidak valid / kedaluwarsa dan refresh gagal. */
 export class AdminAuthError extends Error {
-  constructor(message = "Sesi admin berakhir. Silakan login kembali.") {
+  constructor(message = "Sesi Anda telah berakhir. Silakan masuk kembali.") {
     super(message)
     this.name = "AdminAuthError"
   }

@@ -429,7 +429,7 @@ export default function AnalyticsPage() {
                 value={formatNumber(num(overview.orders?.completed))}
               />
               <StatCard
-                label="Disengketakan"
+                label="Sengketa"
                 value={formatNumber(num(overview.orders?.disputed))}
               />
               <StatCard
