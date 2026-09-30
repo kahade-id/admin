@@ -62,8 +62,11 @@ describe("formatNumber & formatIDR", () => {
     expect(formatIDR(0)).toBe("Rp0")
   })
 
-  it("desimal dipotong (uang rupiah tidak berkoma)", () => {
-    expect(formatIDR(150000.99)).toBe("Rp150.000")
+  // DBL-003 (audit integrasi 2026-10-01): formatIDR memakai Math.round
+  // (kanonis lintas repo) — pecahan DIBULATKAN, bukan dipotong.
+  it("formatIDR membulatkan pecahan (Math.round)", () => {
+    expect(formatIDR(150000.99)).toBe("Rp150.001")
+    expect(formatIDR(150000.4)).toBe("Rp150.000")
     expect(formatNumber(150000.99)).toBe("150.000")
   })
 
@@ -82,9 +85,18 @@ describe("formatAge (umur antrean)", () => {
     expect(formatAge(d)).toBe("45 mnt")
   })
 
-  it("1–48 jam → jam", () => {
+  it("1–24 jam → jam", () => {
     const d = new Date(Date.now() - 3 * 3600 * 1000).toISOString()
     expect(formatAge(d)).toBe("3 jam")
+  })
+
+  // DBL-009 (audit integrasi 2026-10-01): bucket kanonis lintas repo —
+  // 24–48 jam → "Kemarin" (selaras frontend formatTimeAgo).
+  it("24–48 jam → 'Kemarin'", () => {
+    const d = new Date(Date.now() - 30 * 3600 * 1000).toISOString()
+    expect(formatAge(d)).toBe("Kemarin")
+    const d2 = new Date(Date.now() - 47 * 3600 * 1000).toISOString()
+    expect(formatAge(d2)).toBe("Kemarin")
   })
 
   it("lebih dari 48 jam → hari", () => {
