@@ -227,7 +227,8 @@ function ModerationTimeline({ userId }: { userId: string }) {
           />
           <Input
             label="Aktor"
-            placeholder="Nama/ID admin"
+            // BAI-067: backend hanya menerima ID admin internal, bukan nama.
+            placeholder="ID admin"
             value={actor}
             onChange={(e) => setActor(e.target.value)}
           />
@@ -273,7 +274,7 @@ function ModerationTimeline({ userId }: { userId: string }) {
                   <span
                     aria-hidden
                     className={
-                      ev.kind === "system"
+                      ev.source === "system"
                         ? "mt-1.5 h-2.5 w-2.5 rounded-full bg-info"
                         : "mt-1.5 h-2.5 w-2.5 rounded-full bg-warning"
                     }
@@ -282,17 +283,18 @@ function ModerationTimeline({ userId }: { userId: string }) {
                 </div>
                 <div className="min-w-0 flex-1 pb-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <KindBadge kind={ev.kind} />
+                    <KindBadge kind={ev.source} />
                     <span className="font-semibold text-text-primary">
-                      {prettyEventType(ev.eventType)}
+                      {ev.title || prettyEventType(ev.type)}
                     </span>
                     <span className="text-caption text-text-tertiary">
                       {formatDateTimeWIB(ev.createdAt)}
                     </span>
                   </div>
-                  {ev.actorName ? (
+                  {ev.actor?.name ? (
                     <p className="mt-0.5 text-caption text-text-secondary">
-                      oleh {ev.actorName}
+                      oleh {ev.actor.name}
+                      {ev.actor.role ? ` (${ev.actor.role})` : ""}
                     </p>
                   ) : null}
                   {ev.description ? (

@@ -63,7 +63,7 @@ export function revokeGoldVerified(userId: string): Promise<{ message: string }>
 }
 
 /**
- * Cabut tier abu manual. SUPER_ADMIN dan KYC_ADMIN.
+ * Cabut tier abu manual. HANYA SUPER_ADMIN (backend @AdminRoles('SUPER_ADMIN')).
  * Syarat otomatis tidak diubah; badge hilang sampai di-restore.
  * 409 bila tier abu sudah di-revoke.
  */

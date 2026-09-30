@@ -30,7 +30,8 @@ import { formatDateTimeWIB } from "@/lib/format"
 import { ErrorBlock, LoadingBlock } from "../../../_components/admin-ui"
 
 const STATUS_LABEL: Record<string, string> = {
-  PENDING: "Menunggu",
+  // BAI-075: PENDING sengaja tidak didaftar — backend menandainya
+  // "dipesan untuk kompatibilitas maju" dan tak pernah menghasilkannya.
   REQUESTED: "Dijadwalkan",
   CANCELLED: "Dibatalkan",
   PURGED: "Dihapus permanen",

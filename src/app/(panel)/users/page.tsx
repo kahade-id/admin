@@ -50,6 +50,10 @@ const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "banned", label: "Diblokir" },
   { value: "kyc_approved", label: "KYC disetujui" },
   { value: "kyc_pending", label: "KYC menunggu" },
+  // BAI-070: segmen KYC lain yang sebelumnya tak terjangkau filter.
+  { value: "kyc_rejected", label: "KYC ditolak" },
+  { value: "kyc_revoked", label: "KYC dicabut" },
+  { value: "kyc_unverified", label: "KYC belum diajukan" },
   { value: "flagged", label: "Perlu review" },
 ]
 

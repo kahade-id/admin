@@ -8,7 +8,8 @@
  *   tampil sebagai link, bukan auto-open).
  * - Setujui: dialog dengan catatan opsional.
  * - Tolak: dialog dengan alasan wajib min 10 karakter.
- * - Cabut persetujuan: ConfirmDialog (hanya bila sudah disetujui).
+ * - Cabut persetujuan: dialog dengan alasan wajib min 10 karakter
+ *   (hanya bila sudah disetujui).
  *
  * Port dari frontend/app/admin/(panel)/kyc/[id].tsx → web desktop.
  */
@@ -19,7 +20,7 @@ import { useParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
+import { Dialog } from "@/components/ui/dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
@@ -107,6 +108,8 @@ export default function KycDetailPage() {
   const [rejectReason, setRejectReason] = useState("")
   const [rejectNotes, setRejectNotes] = useState("")
   const [revokeOpen, setRevokeOpen] = useState(false)
+  // BAI-062: alasan cabut wajib (min 10, max 500 — selaras RevokeKycDto).
+  const [revokeReason, setRevokeReason] = useState("")
   const [acting, setActing] = useState<string | null>(null)
 
   // GAP-E: penugasan reviewer + jeda/lanjut SLA.
@@ -202,10 +205,13 @@ export default function KycDetailPage() {
   }
 
   const handleRevoke = async () => {
+    const reason = revokeReason.trim()
+    if (reason.length < 10) return
     setActing("revoke")
     try {
-      await revokeKyc(kycId)
+      await revokeKyc(kycId, reason)
       setRevokeOpen(false)
+      setRevokeReason("")
       await load("refresh")
       toast.show({ title: "Persetujuan KYC dicabut", tone: "success" })
     } catch (e) {
@@ -353,6 +359,8 @@ export default function KycDetailPage() {
                 <KeyValue label="Nama" value={detail.user?.fullName ?? "—"} />
                 <KeyValue label="Email" value={detail.user?.email ?? "—"} />
                 <KeyValue label="ID Pengguna" value={detail.userId} mono />
+                {/* BAI-072: jenis dokumen (KTP|PASSPORT) dari getKycDetail. */}
+                <KeyValue label="Jenis dokumen" value={detail.documentType ?? "—"} />
                 <KeyValue label="Percobaan ke" value={String(detail.attemptNumber ?? "—")} />
                 <KeyValue label="Diajukan" value={formatDateTimeWIB(detail.createdAt)} />
                 <KeyValue
@@ -406,7 +414,23 @@ export default function KycDetailPage() {
                       Selfie — Buka di tab baru
                     </a>
                   ) : null}
-                  {!docUrls.ktpUrl && !docUrls.selfieUrl ? (
+                  {/* BAI-063: video liveness + jenis dokumen dari document-urls. */}
+                  {docUrls.documentType ? (
+                    <p className="text-caption text-text-secondary">
+                      Jenis dokumen: {docUrls.documentType}
+                    </p>
+                  ) : null}
+                  {docUrls.livenessUrl ? (
+                    <a
+                      href={docUrls.livenessUrl}
+                      target="_blank"
+                      rel="noopener"
+                      className="font-semibold text-info-text hover:underline"
+                    >
+                      Video liveness — Buka di tab baru
+                    </a>
+                  ) : null}
+                  {!docUrls.ktpUrl && !docUrls.selfieUrl && !docUrls.livenessUrl ? (
                     <p className="text-body text-text-secondary">Tidak ada dokumen tersedia.</p>
                   ) : null}
                   {docUrls.partialErrors?.length ? (
@@ -717,17 +741,43 @@ export default function KycDetailPage() {
         </div>
       </Dialog>
 
-      {/* Cabut persetujuan: konfirmasi final */}
-      <ConfirmDialog
+      {/* Cabut persetujuan: alasan wajib min 10 karakter (BAI-062) */}
+      <Dialog
         open={revokeOpen}
         onClose={() => setRevokeOpen(false)}
         title="Cabut persetujuan KYC"
         description="Persetujuan yang sudah diberikan akan dicabut dan pengguna kehilangan akses verifikasi. Tindakan ini tercatat di audit log."
-        confirmLabel="Cabut persetujuan"
-        loading={acting === "revoke"}
-        destructive
-        onConfirm={handleRevoke}
-      />
+        footer={
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="destructive"
+              loading={acting === "revoke"}
+              disabled={revokeReason.trim().length < 10}
+              onClick={handleRevoke}
+            >
+              Cabut persetujuan
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={acting === "revoke"}
+              onClick={() => setRevokeOpen(false)}
+            >
+              Batal
+            </Button>
+          </div>
+        }
+      >
+        <TextArea
+          label="Alasan pencabutan"
+          required
+          rows={4}
+          value={revokeReason}
+          onChange={(e) => setRevokeReason(e.target.value)}
+          placeholder="Minimal 10 karakter…"
+          maxLength={500}
+          hint={`${revokeReason.trim().length} / 10 karakter minimum (maks 500)`}
+        />
+      </Dialog>
 
       {/* GAP-E: tugaskan reviewer */}
       <Dialog

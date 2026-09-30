@@ -18,6 +18,10 @@ export type AdminUserStatusFilter =
   | "banned"
   | "kyc_approved"
   | "kyc_pending"
+  // BAI-070: segmen KYC yang sebelumnya tak terjangkau filter daftar.
+  | "kyc_rejected"
+  | "kyc_revoked"
+  | "kyc_unverified"
   | "flagged"
 
 /** Status KYC mentah dari backend (string bebas — jangan asumsikan enum tertutup). */
@@ -73,6 +77,8 @@ export type AdminUserDetail = {
   kycStatus: KycStatus
   isBanned: boolean
   banReason: string | null
+  /** BAI-074: suspend ringan berbatas waktu (state Redis, auto-unsuspend). */
+  suspended?: boolean
   emailVerified: boolean
   isActive: boolean
   isKahadePlus: boolean | null
@@ -269,6 +275,66 @@ export function unbanUser(userId: string): Promise<BanUserResult> {
   )
 }
 
+/* ----------------- BAI-071: update terbatas profil user ----------------- */
+
+/** Field yang boleh diubah via PATCH /v1/admin/users/:userId (whitelist backend). */
+export type UpdateUserInput = {
+  accountType?: "PERSONAL" | "BUSINESS"
+}
+
+export type UpdateUserResult = {
+  userId: string
+  accountType: "PERSONAL" | "BUSINESS"
+}
+
+/**
+ * BAI-071 — update terbatas data user.
+ * SENSITIF: SUPER_ADMIN saja + audit wajib di backend; pipe global menolak
+ * field di luar whitelist (422). Jalur koreksi operasional untuk BAI-064.
+ */
+export function updateUser(userId: string, input: UpdateUserInput): Promise<UpdateUserResult> {
+  return adminHttp.patch<UpdateUserResult>(
+    `/v1/admin/users/${encodeURIComponent(userId)}`,
+    input,
+  )
+}
+
+/* ----------------- BAI-074: suspend ringan berbatas waktu ----------------- */
+
+export type SuspendUserResult = {
+  userId: string
+  suspended: boolean
+  reason: string
+  durationHours: number
+  suspendedAt: string
+  expiresAt: string
+  sessionsRevoked: number
+}
+
+/**
+ * BAI-074 — suspend ringan: sesi aktif dicabut (kick langsung) + login
+ * diblokir sampai durasi habis (auto-unsuspend via TTL Redis). Alasan wajib
+ * min 10 karakter (ditegakkan DTO backend); durasi 1–720 jam.
+ * SENSITIF: SUPER_ADMIN saja + audit wajib.
+ */
+export function suspendUser(
+  userId: string,
+  input: { reason: string; durationHours: number },
+): Promise<SuspendUserResult> {
+  return adminHttp.post<SuspendUserResult>(
+    `/v1/admin/users/${encodeURIComponent(userId)}/suspend`,
+    input,
+  )
+}
+
+/** BAI-074 — lepas suspend sebelum waktunya (sesi yang dicabut tidak pulih). */
+export function unsuspendUser(userId: string): Promise<{ userId: string; suspended: boolean }> {
+  return adminHttp.post<{ userId: string; suspended: boolean }>(
+    `/v1/admin/users/${encodeURIComponent(userId)}/unsuspend`,
+    {},
+  )
+}
+
 export function forceLogout(
   userId: string,
 ): Promise<{ message: string; revokedCount: number }> {
@@ -371,21 +437,36 @@ export async function exportUsersCsv(
 /** Sumber event moderasi: tindakan otomatis sistem vs tindakan manual admin. */
 export type UserModerationEventKind = "system" | "admin"
 
+/**
+ * BAI-061: bentuk event moderasi SELARAS dengan respons backend
+ * (`AdminUsersService.listModerationEvents`):
+ * `{ id, type, source, title, description, actor: { id, name, role } | null,
+ * createdAt, metadata, internalNote?/internalNoteHidden? }`.
+ */
+export type UserModerationEventActor = {
+  id: string
+  name: string | null
+  role: string | null
+} | null
+
 export type UserModerationEvent = {
   id: string
-  kind: UserModerationEventKind
-  /** Tipe event mentah dari backend (mis. USER_BANNED, AUTO_FLAG_SUSPICIOUS). */
-  eventType: string
-  actorId: string | null
-  /** Nama admin pelaksana; null untuk event sistem. */
-  actorName: string | null
+  /** Jenis event mentah backend (mis. USER_BANNED, KYC_DECISION, AUTO_FLAG). */
+  type: string
+  /** Sumber event: tindakan otomatis sistem vs tindakan manual admin. */
+  source: UserModerationEventKind
+  title: string
   description: string | null
+  /** Admin pelaksana; null untuk event sistem. */
+  actor: UserModerationEventActor
   /**
    * Catatan internal — backend hanya mengembalikannya untuk role berhak;
    * UI menyembunyikannya dari CUSTOMER_SUPPORT sebagai lapis pertahanan
    * tambahan (lihat moderation-tab.tsx).
    */
-  internalNote: string | null
+  internalNote?: string | null
+  internalNoteHidden?: boolean
+  metadata?: Record<string, unknown>
   createdAt: string
 }
 
@@ -393,7 +474,10 @@ export type ListUserModerationEventsQuery = {
   kind?: UserModerationEventKind
   /** ADM-018: filter jenis event sesuai enum backend (ban|unban|kyc_decision|…). */
   event?: string
-  /** Filter aktor (nama/ID admin). */
+  /**
+   * BAI-067: filter aktor — backend HANYA menerima ID admin internal
+   * (bukan nama). Pencarian dengan nama selalu menghasilkan daftar kosong.
+   */
   actor?: string
   /** ISO date (dari). */
   from?: string
@@ -526,8 +610,12 @@ export async function downloadExportFile(downloadUrl: string): Promise<string> {
 
 /* ── GAP-A: status penghapusan akun + legal hold (G067/G071) ─────────── */
 
+/**
+ * BAI-075: `PENDING` DIHAPUS dari union — backend menandai status ini
+ * "dipesan untuk kompatibilitas maju" dan TIDAK ADA jalur kode yang
+ * menghasilkannya. Menampilkannya sebagai opsi valid menyesatkan.
+ */
 export type DeletionRequestStatus =
-  | "PENDING"
   | "REQUESTED"
   | "CANCELLED"
   | "PURGED"
@@ -556,6 +644,11 @@ export type AdminDeletionRequest = {
 } | null
 
 export type AdminDeletionStatus = {
+  /**
+   * BAI-075: PERHATIAN — ini id INTERNAL user (kolom `id`), BUKAN `userId`
+   * publik yang tampil di halaman detail. Jangan bandingkan langsung dengan
+   * `userId` publik tanpa resolve.
+   */
   userId: string
   request: AdminDeletionRequest
   history: DeletionStatusHistoryEntry[]
