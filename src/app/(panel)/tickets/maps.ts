@@ -2,7 +2,8 @@
 
 export const TICKET_STATUS_LABEL: Record<string, string> = {
   OPEN: "Terbuka",
-  IN_PROGRESS: "Diproses",
+  IN_PROGRESS: "Ditangani",
+  WAITING_USER: "Menunggu balasan Anda",
   RESOLVED: "Selesai",
   CLOSED: "Ditutup",
 }
@@ -13,6 +14,7 @@ export const TICKET_STATUS_TONE: Record<
 > = {
   OPEN: "warning",
   IN_PROGRESS: "info",
+  WAITING_USER: "warning",
   RESOLVED: "success",
   CLOSED: "neutral",
 }

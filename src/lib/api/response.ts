@@ -70,5 +70,5 @@ export function unwrapResponse(value: unknown): unknown {
 export function userMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message
   if (err instanceof Error && err.message) return err.message
-  return "Terjadi kesalahan tak terduga."
+  return "Terjadi kesalahan. Coba lagi."
 }

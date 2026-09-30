@@ -78,12 +78,12 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  WAITING_CONFIRMATION: "Menunggu konfirmasi",
+  WAITING_CONFIRMATION: "Menunggu konfirmasi penjual",
   WAITING_PAYMENT: "Menunggu pembayaran",
-  PROCESSING: "Diproses",
-  IN_DELIVERY: "Dikirim",
+  PROCESSING: "Diproses penjual",
+  IN_DELIVERY: "Dalam pengiriman",
   COMPLETED: "Selesai",
-  DISPUTED: "Disengketakan",
+  DISPUTED: "Sengketa",
   CANCELLED: "Dibatalkan",
 }
 
@@ -99,11 +99,11 @@ const STATUS_TONE: Record<string, BadgeTone> = {
 
 const STATUS_FILTERS: Array<{ value: AdminOrderStatus | ""; label: string }> = [
   { value: "", label: "Semua status" },
-  { value: "PROCESSING", label: "Diproses" },
-  { value: "IN_DELIVERY", label: "Dikirim" },
-  { value: "DISPUTED", label: "Disengketakan" },
-  { value: "WAITING_PAYMENT", label: "Menunggu bayar" },
-  { value: "WAITING_CONFIRMATION", label: "Menunggu konfirmasi" },
+  { value: "PROCESSING", label: "Diproses penjual" },
+  { value: "IN_DELIVERY", label: "Dalam pengiriman" },
+  { value: "DISPUTED", label: "Sengketa" },
+  { value: "WAITING_PAYMENT", label: "Menunggu pembayaran" },
+  { value: "WAITING_CONFIRMATION", label: "Menunggu konfirmasi penjual" },
   { value: "COMPLETED", label: "Selesai" },
   { value: "CANCELLED", label: "Dibatalkan" },
 ]
@@ -136,11 +136,11 @@ function escrowStateOf(detail: AdminOrderDetail): {
   )
   switch (String(relevant?.type)) {
     case "ORDER_LOCK":
-      return { label: "Escrow terkunci", tone: "warning" }
+      return { label: "Escrow (rekening bersama) terkunci", tone: "warning" }
     case "ORDER_RELEASE":
-      return { label: "Escrow cair", tone: "success" }
+      return { label: "Dana dicairkan ke penjual", tone: "success" }
     case "ORDER_REFUND":
-      return { label: "Escrow refund", tone: "info" }
+      return { label: "Dana escrow dikembalikan", tone: "info" }
     case "DISPUTE_RELEASE":
       return { label: "Cair via sengketa", tone: "info" }
     default:
