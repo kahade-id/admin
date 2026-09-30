@@ -6,7 +6,8 @@
  *   status escrow (diturunkan dari transaksi ORDER_LOCK / ORDER_RELEASE /
  *   ORDER_REFUND / DISPUTE_RELEASE), timeline dari riwayat status.
  * - Aksi darurat "Paksa batal" / "Paksa selesai": KONFIRMASI GANDA —
- *   Dialog pertama wajib alasan (min 10 karakter) → ConfirmDialog kedua
+ *   Dialog pertama wajib alasan (min 10 karakter) → dialog konfirmasi kedua
+ *   (+ re-auth password, AUT-013)
  *   ("Tindakan ini tidak bisa dibatalkan"). Tombol hanya aktif untuk status
  *   yang valid (batal: WAITING_CONFIRMATION / WAITING_PAYMENT / PROCESSING /
  *   IN_DELIVERY / DISPUTED; selesai: PROCESSING / IN_DELIVERY).
@@ -20,7 +21,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
+import { Dialog } from "@/components/ui/dialog"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
@@ -421,30 +422,40 @@ function OrdersPageContent() {
   const [reason, setReason] = useState("")
   const [reasonError, setReasonError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // AUT-013: re-auth password di dialog konfirmasi kedua — backend menolak
+  // force-cancel/force-complete tanpa password yang benar.
+  const [reauthPassword, setReauthPassword] = useState("")
+  const [reauthError, setReauthError] = useState<string | null>(null)
 
-  /** Langkah 1: validasi alasan → buka ConfirmDialog kedua. */
+  /** Langkah 1: validasi alasan → buka dialog konfirmasi kedua. */
   const proceedToConfirm = () => {
     if (reason.trim().length < 10) {
       setReasonError("Alasan minimal 10 karakter.")
       return
     }
+    setReauthPassword("")
+    setReauthError(null)
     setConfirmOpen(true)
   }
 
-  /** Langkah 2: eksekusi setelah konfirmasi kedua. */
+  /** Langkah 2: eksekusi setelah konfirmasi kedua (+ password re-auth). */
   const executeForceAction = useCallback(async () => {
     if (!detail || !forceAction || submitting) return
+    if (!reauthPassword) {
+      setReauthError("Masukkan kata sandi Anda untuk mengonfirmasi.")
+      return
+    }
     setSubmitting(true)
     try {
       if (forceAction === "cancel") {
-        await forceCancelOrder(detail.orderId, reason.trim())
+        await forceCancelOrder(detail.orderId, reason.trim(), reauthPassword)
         toast.show({
           title: "Order dibatalkan",
           description: detail.orderId,
           tone: "success",
         })
       } else {
-        await forceCompleteOrder(detail.orderId, reason.trim())
+        await forceCompleteOrder(detail.orderId, reason.trim(), reauthPassword)
         toast.show({
           title: "Order diselesaikan",
           description: detail.orderId,
@@ -464,7 +475,7 @@ function OrdersPageContent() {
       setSubmitting(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail, forceAction, submitting, reason, toast, loadOrders, page])
+  }, [detail, forceAction, submitting, reason, reauthPassword, toast, loadOrders, page])
 
   const detailStatus = detail ? String(detail.status) : ""
   const canCancel =
@@ -1025,22 +1036,66 @@ function OrdersPageContent() {
         ) : null}
       </Dialog>
 
-      {/* Konfirmasi kedua — ganda */}
-      <ConfirmDialog
+      {/* Konfirmasi kedua — ganda + re-auth password (AUT-013) */}
+      <Dialog
         open={confirmOpen}
         onClose={() => {
-          if (!submitting) setConfirmOpen(false)
+          if (!submitting) {
+            setConfirmOpen(false)
+            setReauthPassword("")
+            setReauthError(null)
+          }
         }}
         title={confirmTitle}
         description={confirmDescription}
-        confirmLabel={
-          forceAction === "cancel" ? "Ya, batalkan" : "Ya, selesaikan"
+        footer={
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="ghost"
+              fullWidth={false}
+              disabled={submitting}
+              onClick={() => {
+                setConfirmOpen(false)
+                setReauthPassword("")
+                setReauthError(null)
+              }}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              fullWidth={false}
+              loading={submitting}
+              onClick={() => void executeForceAction()}
+            >
+              {forceAction === "cancel" ? "Ya, batalkan" : "Ya, selesaikan"}
+            </Button>
+          </div>
         }
-        cancelLabel="Batal"
-        destructive
-        loading={submitting}
-        onConfirm={() => void executeForceAction()}
-      />
+      >
+        <div className="pt-2">
+          <p className="mb-2 text-caption text-text-secondary">
+            Tindakan ini memengaruhi dana escrow. Masukkan kata sandi Anda
+            sebagai konfirmasi identitas — password tidak disimpan.
+          </p>
+          <Input
+            type="password"
+            value={reauthPassword}
+            onChange={(e) => {
+              setReauthPassword(e.target.value)
+              if (reauthError) setReauthError(null)
+            }}
+            placeholder="Kata sandi Anda"
+            autoComplete="current-password"
+            autoFocus
+          />
+          {reauthError ? (
+            <p role="alert" className="mt-1 text-caption text-danger-text">
+              {reauthError}
+            </p>
+          ) : null}
+        </div>
+      </Dialog>
       {/* H02: dialog kustomisasi kolom */}
       <ColumnCustomizer prefs={cols} />
     </RoleGate>
