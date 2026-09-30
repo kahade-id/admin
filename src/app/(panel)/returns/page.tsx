@@ -41,20 +41,28 @@ import { downloadCsv } from "@/lib/csv"
 import { formatDateTimeWIB, formatIdrSen } from "@/lib/format"
 
 const PAGE_SIZE = 20
-/** SLA respons penjual backend — lihat RETURNS_SLA_HOURS (default 72 jam). */
-const SELLER_SLA_HOURS = 72
 
 const STATUS_OPTIONS = [
   { value: "ALL", label: "Semua status" },
   ...Object.entries(ADMIN_RETURN_STATUS_LABEL).map(([value, label]) => ({ value, label })),
 ]
 
+// BAI-096: filter umur murni numerik — klaim "lewat SLA" dihapus karena SLA
+// dihitung per-baris dari sellerRespondBy backend (bukan konstanta 72 jam di
+// UI; kebijakan bisa berubah tanpa UI ikut berubah).
 const AGE_OPTIONS = [
   { value: "0", label: "Semua umur" },
   { value: "24", label: "> 24 jam" },
   { value: "48", label: "> 48 jam" },
-  { value: SELLER_SLA_HOURS.toString(), label: `> ${SELLER_SLA_HOURS} jam (lewat SLA)` },
+  { value: "72", label: "> 72 jam" },
 ]
+
+/** BAI-096: true bila deadline respons penjual (per-baris, dari backend) sudah lewat. */
+function isPastSellerSla(row: { sellerRespondBy?: string | null; status: unknown }): boolean {
+  if (!row.sellerRespondBy) return false
+  if (!["REQUESTED", "SELLER_REVIEW"].includes(String(row.status))) return false
+  return new Date(String(row.sellerRespondBy)).getTime() < Date.now()
+}
 
 function ageHours(createdAt: string): number {
   const ms = Date.now() - new Date(createdAt).getTime()
@@ -205,7 +213,7 @@ export default function ReturnsListPage() {
         <div className="min-w-0">
           <h1 className="text-h2 font-bold text-text-primary">Retur</h1>
           <p className="mt-1 text-body text-text-secondary">
-            Antrean pengajuan retur/tukar barang. SLA respons penjual {SELLER_SLA_HOURS} jam.
+            Antrean pengajuan retur/tukar barang. Batas respons penjual mengikuti deadline per-pengajuan.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -261,7 +269,7 @@ export default function ReturnsListPage() {
                 header: "Umur",
                 render: (r) => {
                   const h = ageHours(String(r.createdAt))
-                  const slaBreach = h >= SELLER_SLA_HOURS && ["REQUESTED", "SELLER_REVIEW"].includes(String(r.status))
+                  const slaBreach = isPastSellerSla(r)
                   return (
                     <span className={slaBreach ? "font-bold text-text-danger" : ""}>
                       {h} jam{slaBreach ? " (lewat SLA)" : ""}
@@ -285,8 +293,12 @@ export default function ReturnsListPage() {
                 render: (r) => {
                   const s = String(r.status)
                   const terminal = TERMINAL_STATUSES.includes(s)
+                  // BAI-009: POST /v1/admin/returns/:id/action hanya untuk
+                  // SUPER_ADMIN/DISPUTE_ADMIN (backend @AdminRoles) — sembunyikan
+                  // tombol aksi dari CUSTOMER_SUPPORT agar tidak 403.
                   return (
-                    <div className="flex flex-wrap gap-1">
+                    <RoleGate roles={["SUPER_ADMIN", "DISPUTE_ADMIN"]}>
+                      <div className="flex flex-wrap gap-1">
                       {EARLY_STATUSES.includes(s) ? (
                         <>
                           <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("escalate", r)}>
@@ -310,7 +322,8 @@ export default function ReturnsListPage() {
                           Tutup paksa
                         </Button>
                       ) : null}
-                    </div>
+                      </div>
+                    </RoleGate>
                   )
                 },
               },

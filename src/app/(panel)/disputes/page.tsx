@@ -55,12 +55,12 @@ const FETCH_ALL_MAX_PAGES = 50
 /** SLA mediasi sengketa — selaras DISPUTE_SLA_HOURS backend (72 jam). */
 const DISPUTE_SLA_HOURS = 72
 
+// BAI-089: WAITING_RESPONSE dihapus dari filter UI (tidak pernah dipakai backend).
 type Filter =
   | "ALL"
   | "OPEN"
   | "ASSIGNED"
   | "UNDER_REVIEW"
-  | "WAITING_RESPONSE"
   | "ESCALATED"
   | "RESOLVED"
   /** Pseudo-filter: sengketa tanpa assignedAdminId (disaring client-side). */
@@ -72,7 +72,6 @@ const FILTER_OPTIONS = [
   { value: "ASSIGNED", label: "Ditugaskan" },
   { value: "UNASSIGNED", label: "Belum ditugaskan" },
   { value: "UNDER_REVIEW", label: "Ditinjau" },
-  { value: "WAITING_RESPONSE", label: "Menunggu respons" },
   { value: "ESCALATED", label: "Dieskalasi" },
   { value: "RESOLVED", label: "Selesai" },
 ]

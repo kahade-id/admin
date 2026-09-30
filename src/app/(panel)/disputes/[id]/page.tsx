@@ -5,8 +5,9 @@
  *
  * Alur aksi (sesuai mobile):
  * - "Mulai review" → markDisputeUnderReview (hanya ASSIGNED — ADM-108).
- * - "Assign"/"Ambil sengketa ini" → hanya OPEN/WAITING_RESPONSE (ADM-123);
- *   DISPUTE_ADMIN self-assign, SUPER_ADMIN memilih lewat dropdown.
+ * - "Assign"/"Ambil sengketa ini" → OPEN (semua peran); SUPER_ADMIN boleh
+ *   reassign di ASSIGNED/UNDER_REVIEW (BAI-092). DISPUTE_ADMIN self-assign,
+ *   SUPER_ADMIN memilih lewat dropdown.
  * - "Resolve" → Dialog: keputusan FULL_BUYER/FULL_SELLER/SPLIT (Select) +
  *   catatan wajib min 100 karakter + persen SPLIT (1–99, jumlah 100, hanya
  *   saat SPLIT) + pratinjau nominal disbursement read-only sebelum eksekusi
@@ -46,8 +47,13 @@ import {
   previewResolveDispute,
   resolveDispute,
   sendDisputeMessage,
+  listDisputeNotes,
+  addDisputeNote,
+  adminUploadDisputeEvidenceFile,
+  adminSubmitDisputeEvidence,
   type AdminDisputeItem,
   type DisputeDecision,
+  type DisputeInternalNote,
   type DisputeMessage,
   type DisputeOrderChatMessage,
   type ResolvePreviewResult,
@@ -91,33 +97,6 @@ const RESOLVE_REASON_OPTIONS = [
   { value: "POLICY_VIOLATION", label: "Pelanggaran kebijakan" },
   { value: "OTHER", label: "Lainnya (jelaskan di catatan)" },
 ]
-
-/**
- * H12: catatan internal per sengketa — disimpan lokal per admin (backend
- * belum punya API catatan internal sengketa). Jelas berlabel "draf lokal".
- */
-type InternalNote = { id: string; text: string; at: string; author: string }
-
-function internalNotesKey(disputeId: string, adminId: string) {
-  return `kahade.admin.internalNotes.dispute.${adminId}.${disputeId}`
-}
-
-function loadInternalNotes(disputeId: string, adminId: string): InternalNote[] {
-  try {
-    const raw = localStorage.getItem(internalNotesKey(disputeId, adminId))
-    return raw ? (JSON.parse(raw) as InternalNote[]) : []
-  } catch {
-    return []
-  }
-}
-
-function saveInternalNotes(disputeId: string, adminId: string, notes: InternalNote[]) {
-  try {
-    localStorage.setItem(internalNotesKey(disputeId, adminId), JSON.stringify(notes))
-  } catch {
-    /* abaikan */
-  }
-}
 
 /**
  * ADM-126: template pesan mediasi — string statis yang aman, tanpa PII,
@@ -216,16 +195,36 @@ function formatCountdown(ms: number): string {
   return ms < 0 ? `Lewat ${core}` : core
 }
 
-/** Countdown sisa SLA 72 jam sejak sengketa dibuat — live tiap detik. */
-function SlaCountdown({ createdAt, resolved }: { createdAt?: string; resolved: boolean }) {
+/**
+ * BAI-097/100 — countdown sisa SLA sengketa, live tiap detik.
+ * Prioritas deadline: escalationSlaDeadlineAt (bila sengketa dieskalasi) →
+ * slaDeadlineAt → fallback createdAt + 72 jam (selaras DISPUTE_SLA_HOURS
+ * backend). Sebelumnya selalu createdAt + 72 jam sehingga countdown salah
+ * untuk sengketa ESCALATED.
+ */
+function SlaCountdown({
+  createdAt,
+  slaDeadlineAt,
+  escalationSlaDeadlineAt,
+  resolved,
+}: {
+  createdAt?: string
+  slaDeadlineAt?: string | null
+  escalationSlaDeadlineAt?: string | null
+  resolved: boolean
+}) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (resolved) return
     const t = setInterval(() => setNow(Date.now()), 1_000)
     return () => clearInterval(t)
   }, [resolved])
-  if (!createdAt) return <>—</>
-  const deadline = new Date(createdAt).getTime() + DISPUTE_SLA_HOURS * 3_600_000
+  const explicit = escalationSlaDeadlineAt ?? slaDeadlineAt
+  const deadline = explicit
+    ? new Date(explicit).getTime()
+    : createdAt
+      ? new Date(createdAt).getTime() + DISPUTE_SLA_HOURS * 3_600_000
+      : NaN
   if (!Number.isFinite(deadline)) return <>—</>
   const diff = deadline - now
   const breached = diff < 0
@@ -495,6 +494,104 @@ function PartiesAndEvidence({
           />
         </Dialog>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * BAI-094 — uploader bukti "titipan" admin: pilih file → upload (admin-scoped)
+ * → submit sebagai bukti ADMIN. Hanya dirender bila pemanggil mengizinkan
+ * (mediator pemegang kasus / SUPER_ADMIN + status terbuka untuk bukti).
+ */
+function AdminEvidenceUploader({
+  disputeId,
+  onSubmitted,
+}: {
+  disputeId: string
+  onSubmitted: () => void
+}) {
+  const toast = useToast()
+  const [title, setTitle] = useState("")
+  const [description, setDescription] = useState("")
+  const [files, setFiles] = useState<File[]>([])
+  const [busy, setBusy] = useState(false)
+  const [phase, setPhase] = useState<string | null>(null)
+
+  const handleSubmit = async () => {
+    if (files.length === 0 || !title.trim() || !description.trim() || busy) return
+    setBusy(true)
+    try {
+      setPhase("Mengunggah file…")
+      const uploaded = await Promise.all(files.map((f) => adminUploadDisputeEvidenceFile(disputeId, f)))
+      setPhase("Menyimpan bukti…")
+      const res = await adminSubmitDisputeEvidence(disputeId, {
+        title: title.trim(),
+        description: description.trim(),
+        fileUrls: uploaded.map((u) => u.fileKey),
+        fileTypes: files.map((f) => f.type || "application/octet-stream"),
+      })
+      setTitle("")
+      setDescription("")
+      setFiles([])
+      onSubmitted()
+      toast.show({
+        title: `Bukti ditambahkan (${res.summary.filesAttached} file)`,
+        description: res.notificationDelivered
+          ? "Kedua pihak diberi tahu."
+          : "Notifikasi ke pihak GAGAL — kegagalan tercatat di backend.",
+        tone: res.notificationDelivered ? "success" : "info",
+      })
+    } catch (e) {
+      toast.show({ title: "Gagal menambah bukti", description: userMessage(e), tone: "danger" })
+    } finally {
+      setBusy(false)
+      setPhase(null)
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-sm border border-dashed border-border-control p-3">
+      <p className="text-body font-semibold text-text-primary">Tambah bukti (titipan admin)</p>
+      <p className="mt-1 text-caption text-text-secondary">
+        File diunggah atas nama admin dan tercatat sebagai bukti ADMIN. Kedua pihak diberi tahu.
+      </p>
+      <div className="mt-3 flex flex-col gap-2">
+        <Input
+          label="Judul bukti"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="mis. Foto kondisi barang dari penjual"
+          disabled={busy}
+        />
+        <TextArea
+          label="Deskripsi"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={2}
+          placeholder="Jelaskan isi bukti ini…"
+          disabled={busy}
+        />
+        <input
+          type="file"
+          multiple
+          accept="image/jpeg,image/png,image/webp,application/pdf,video/mp4,video/quicktime,video/webm"
+          disabled={busy}
+          onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+          className="text-body text-text-primary"
+        />
+        {files.length > 0 ? (
+          <p className="text-caption text-text-secondary">{files.length} file dipilih</p>
+        ) : null}
+        <Button
+          variant="secondary"
+          fullWidth={false}
+          loading={busy}
+          disabled={files.length === 0 || !title.trim() || !description.trim()}
+          onClick={() => void handleSubmit()}
+        >
+          {phase ?? "Unggah & simpan bukti"}
+        </Button>
+      </div>
     </div>
   )
 }
@@ -851,10 +948,15 @@ export default function DisputeDetailPage() {
     if (!body || sending) return
     setSending(true)
     try {
-      await sendDisputeMessage(disputeId, body)
+      // BAI-098: backend mengembalikan notificationDelivered — tampilkan statusnya.
+      const res = (await sendDisputeMessage(disputeId, body)) as { notificationDelivered?: boolean }
       mediationDraft.clear()
       await loadMessages()
-      toast.show({ title: "Pesan terkirim", tone: "success" })
+      toast.show({
+        title: "Pesan terkirim",
+        description: res?.notificationDelivered === false ? "Notifikasi ke pihak GAGAL — kegagalan tercatat di audit." : undefined,
+        tone: res?.notificationDelivered === false ? "info" : "success",
+      })
     } catch (e) {
       fail("Gagal mengirim pesan", e)
     } finally {
@@ -862,28 +964,47 @@ export default function DisputeDetailPage() {
     }
   }
 
-  // H12: catatan internal — draf lokal per admin (belum ada API backend).
-  const [internalNotes, setInternalNotes] = useState<InternalNote[]>([])
-  useEffect(() => {
-    setInternalNotes(loadInternalNotes(disputeId, profile?.adminId ?? "anon"))
-  }, [disputeId, profile?.adminId])
+  // BAI-095: catatan internal — kolaboratif antar admin via API backend
+  // (GET/POST /v1/admin/disputes/:id/notes). localStorage dihapus.
+  const [internalNotes, setInternalNotes] = useState<DisputeInternalNote[]>([])
+  const [notesLoading, setNotesLoading] = useState(false)
+  const [savingNote, setSavingNote] = useState(false)
 
-  const handleSaveInternalNote = (text: string) => {
-    const note: InternalNote = {
-      id: `${Date.now()}`,
-      text,
-      at: new Date().toISOString(),
-      author: profile?.fullName?.trim() || "Admin",
+  const loadNotes = useCallback(async () => {
+    setNotesLoading(true)
+    try {
+      const notes = await listDisputeNotes(disputeId)
+      setInternalNotes(notes)
+    } catch {
+      // Bukan pemegang kasus / backend lama → biarkan kosong, jangan ganggu halaman.
+      setInternalNotes([])
+    } finally {
+      setNotesLoading(false)
     }
-    const next = [note, ...internalNotes]
-    setInternalNotes(next)
-    saveInternalNotes(disputeId, profile?.adminId ?? "anon", next)
-    internalDraft.clear()
-    toast.show({
-      title: "Catatan internal disimpan",
-      description: "Draf lokal perangkat ini — belum ada API catatan internal backend.",
-      tone: "success",
-    })
+  }, [disputeId])
+
+  useEffect(() => {
+    void loadNotes()
+  }, [loadNotes])
+
+  const handleSaveInternalNote = async (text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed || savingNote) return
+    setSavingNote(true)
+    try {
+      await addDisputeNote(disputeId, trimmed)
+      internalDraft.clear()
+      await loadNotes()
+      toast.show({
+        title: "Catatan internal disimpan",
+        description: "Tersimpan di server — terlihat oleh semua admin.",
+        tone: "success",
+      })
+    } catch (e) {
+      fail("Gagal menyimpan catatan internal", e)
+    } finally {
+      setSavingNote(false)
+    }
   }
 
   const handleUnderReview = async () => {
@@ -1005,7 +1126,7 @@ export default function DisputeDetailPage() {
       // H04: alasan terstruktur digabung ke decisionNotes agar tercatat di audit.
       const reasonLabel =
         RESOLVE_REASON_OPTIONS.find((o) => o.value === resolveReason)?.label ?? resolveReason
-      await resolveDispute(disputeId, {
+      const res = await resolveDispute(disputeId, {
         decision: resolution,
         decisionNotes: `[Alasan: ${reasonLabel}] ${resolveDraft.value.trim()}`,
         ...(isSplit ? { buyerPercent: buyerPct, sellerPercent: sellerPct } : {}),
@@ -1016,7 +1137,46 @@ export default function DisputeDetailPage() {
       setBuyerPercent("")
       setSellerPercent("")
       await load("refresh")
-      toast.show({ title: "Sengketa diselesaikan", tone: "success" })
+      // BAI-046: baca hasil settlement DANA — JANGAN toast sukses buta.
+      // settlement null = eksekusi finansial gagal total; buyerRefunded false
+      // atau sellerDisbursement bermasalah = uang belum bergerak.
+      // (FULL_SELLER → porsi buyer 0, buyerRefunded=false adalah normal.)
+      const settlement = res?.settlement ?? null
+      const buyerExpectsRefund = resolution !== "FULL_SELLER"
+      if (settlement === null) {
+        toast.show({
+          title: "Sengketa diputus, TAPI settlement DANA gagal",
+          description:
+            "Keputusan tercatat, tetapi eksekusi refund/dis disbursement DANA gagal total. Cek log server & halaman Disbursement DANA — uang belum bergerak.",
+          tone: "danger",
+        })
+      } else {
+        const sellerProblem =
+          settlement.sellerDisbursement !== null &&
+          !["SUCCESS", "RELEASED", "SETTLED", "PENDING", "PROCESSING"].includes(
+            String(settlement.sellerDisbursement.status ?? settlement.sellerDisbursement.outcome ?? "").toUpperCase(),
+          )
+        if (buyerExpectsRefund && !settlement.buyerRefunded && !settlement.buyerRefundAlready) {
+          toast.show({
+            title: "Sengketa diputus — refund buyer BELUM berhasil",
+            description:
+              "Keputusan tercatat, tetapi refund DANA ke buyer belum terkonfirmasi. Verifikasi via halaman Disbursement DANA.",
+            tone: "danger",
+          })
+        } else if (sellerProblem) {
+          toast.show({
+            title: "Sengketa diputus — disbursement seller bermasalah",
+            description: `Keputusan tercatat, tetapi disbursement seller: ${settlement.sellerDisbursement?.status ?? settlement.sellerDisbursement?.outcome ?? "tidak diketahui"}. Verifikasi via halaman Disbursement DANA.`,
+            tone: "danger",
+          })
+        } else {
+          // BAI-098: status kirim notifikasi putusan dari backend.
+          const notifNote = (res as { notificationDelivered?: boolean })?.notificationDelivered === false
+            ? " (notifikasi putusan ke pihak GAGAL — tercatat di audit)"
+            : ""
+          toast.show({ title: `Sengketa diselesaikan${notifNote}`, tone: (res as { notificationDelivered?: boolean })?.notificationDelivered === false ? "info" : "success" })
+        }
+      }
     } catch (e) {
       fail("Gagal menyelesaikan sengketa", e)
     } finally {
@@ -1058,16 +1218,20 @@ export default function DisputeDetailPage() {
   }
 
   const status = dispute ? String(dispute.status) : ""
-  // ADM-108: backend `markUnderReview` menerima OPEN dan ASSIGNED, tapi OPEN
-  // tidak pernah muncul di alur nyata (sengketa baru lahir ASSIGNED;
-  // WAITING_RESPONSE unreachable) — gating tunggal: ASSIGNED.
-  // ADM-123: assign hanya relevan saat sengketa masih "muda" (OPEN) atau
-  // menunggu respons (WAITING_RESPONSE).
-  const canAssign = status === "OPEN" || status === "WAITING_RESPONSE"
-  const canReview = status === "ASSIGNED"
+  // BAI-091: komentar lama ("backend markUnderReview menerima OPEN dan
+  // ASSIGNED") SALAH — backend hanya menerima ASSIGNED. Gating canReview =
+  // ASSIGNED di bawah sudah benar.
+  // BAI-089: WAITING_RESPONSE dihapus dari UI (unreachable di backend).
+  // BAI-092: SUPER_ADMIN boleh reassign di ASSIGNED/UNDER_REVIEW (backend
+  // mendukung reassign + OCC guard); DISPUTE_ADMIN hanya self-assign saat OPEN.
+  const isSuperAdmin = role === "SUPER_ADMIN"
+  const canAssign = status === "OPEN" || (isSuperAdmin && (status === "ASSIGNED" || status === "UNDER_REVIEW"))
+  // BAI-084: review/resolve hanya untuk mediator pemegang kasus atau SUPER_ADMIN.
+  const isCaseHolder = dispute ? dispute.assignedAdminId === profile?.id || isSuperAdmin : false
+  const canReview = status === "ASSIGNED" && isCaseHolder
   // DP-007: backend hanya menerima resolve dari UNDER_REVIEW/ESCALATED.
   // ASSIGNED diarahkan lewat "Mulai review" (markDisputeUnderReview).
-  const canResolve = status === "UNDER_REVIEW" || status === "ESCALATED"
+  const canResolve = (status === "UNDER_REVIEW" || status === "ESCALATED") && isCaseHolder
   // ADM-110: sengketa yang sudah punya keputusan → tampilkan kartu putusan,
   // tombol resolve disembunyikan.
   const decision = dispute ? asRecord(dispute.decision) : null
@@ -1238,7 +1402,14 @@ export default function DisputeDetailPage() {
                 {/* Countdown sisa SLA 72 jam — live tiap detik. */}
                 <KeyValue
                   label="Sisa SLA"
-                  value={<SlaCountdown createdAt={dispute.createdAt} resolved={isResolved} />}
+                  value={
+                    <SlaCountdown
+                      createdAt={dispute.createdAt}
+                      slaDeadlineAt={(dispute as { slaDeadlineAt?: string | null }).slaDeadlineAt ?? null}
+                      escalationSlaDeadlineAt={(dispute as { escalationSlaDeadlineAt?: string | null }).escalationSlaDeadlineAt ?? null}
+                      resolved={isResolved}
+                    />
+                  }
                 />
                 {dispute.reason ? <KeyValue label="Alasan" value={dispute.reason} /> : null}
                 {/* A9 (audit 2026-09-26): tampilkan nama admin pelaksana bila tersedia,
@@ -1336,6 +1507,10 @@ export default function DisputeDetailPage() {
                 hasNewEvidence={newEvidence}
                 onOpenEvidence={(id) => checklist.markOpened(id)}
               />
+              {/* BAI-094: bukti titipan admin — hanya pemegang kasus di status terbuka. */}
+              {isCaseHolder && ["OPEN", "ASSIGNED", "UNDER_REVIEW", "ESCALATED"].includes(status) ? (
+                <AdminEvidenceUploader disputeId={disputeId} onSubmitted={() => void load("refresh")} />
+              ) : null}
             </CardBody>
           </Card>
 
@@ -1370,7 +1545,7 @@ export default function DisputeDetailPage() {
                     variant="secondary"
                     fullWidth={false}
                     disabled={!canReview}
-                    title={canReview ? undefined : "Hanya tersedia saat status ASSIGNED"}
+                    title={canReview ? undefined : isCaseHolder ? "Hanya tersedia saat status ASSIGNED" : "Ambil alih (assign) dulu — hanya pemegang kasus yang bisa mereview"}
                     loading={acting === "under-review"}
                     onClick={handleUnderReview}
                   >
@@ -1381,7 +1556,7 @@ export default function DisputeDetailPage() {
                       variant="secondary"
                       fullWidth={false}
                       disabled={!canAssign}
-                      title={canAssign ? undefined : "Assign hanya untuk status OPEN / WAITING_RESPONSE"}
+                      title={canAssign ? undefined : "Assign hanya untuk status OPEN"}
                       loading={acting === "assign"}
                       onClick={selfAssign}
                     >
@@ -1392,7 +1567,7 @@ export default function DisputeDetailPage() {
                       variant="secondary"
                       fullWidth={false}
                       disabled={!canAssign}
-                      title={canAssign ? undefined : "Assign hanya untuk status OPEN / WAITING_RESPONSE"}
+                      title={canAssign ? undefined : isSuperAdmin ? "Reassign tersedia untuk status OPEN/ASSIGNED/UNDER_REVIEW" : "Assign hanya untuk status OPEN"}
                       onClick={openAssign}
                     >
                       Assign
@@ -1440,6 +1615,12 @@ export default function DisputeDetailPage() {
                     ? // DP-007: backend menolak resolve dari ASSIGNED — arahkan lewat "Mulai review".
                       "Tekan “Mulai review” terlebih dahulu — tombol Resolve aktif setelah sengketa under review."
                     : "Resolve tersedia setelah sengketa ditugaskan dan ditandai under review."}
+                </p>
+              ) : null}
+              {/* BAI-084: hint bila bukan pemegang kasus. */}
+              {!isResolved && !isCaseHolder && (status === "ASSIGNED" || status === "UNDER_REVIEW" || status === "ESCALATED") ? (
+                <p className="mt-3 text-caption text-warning-text">
+                  Sengketa ini dipegang mediator lain — ambil alih (assign) dulu untuk mereview atau menyelesaikannya.
                 </p>
               ) : null}
             </CardBody>
@@ -1520,8 +1701,10 @@ export default function DisputeDetailPage() {
                     </Button>
                   ))}
                 </div>
-                {/* H12: catatan internal (draf lokal per admin). */}
-                {internalNotes.length > 0 ? (
+                {/* BAI-095: catatan internal kolaboratif (API backend). */}
+                {notesLoading ? (
+                  <p className="text-caption text-text-secondary">Memuat catatan internal…</p>
+                ) : internalNotes.length > 0 ? (
                   <ul className="flex flex-col gap-2">
                     {internalNotes.map((n) => (
                       <li
@@ -1529,25 +1712,25 @@ export default function DisputeDetailPage() {
                         className="rounded-sm border border-warning/40 bg-warning/5 px-3 py-2"
                       >
                         <p className="text-caption text-text-secondary">
-                          📝 {n.author} · {formatDateTimeWIB(n.at)} · internal (lokal)
+                          📝 {n.admin?.fullName?.trim() || "Admin"} · {formatDateTimeWIB(n.createdAt)} · internal
                         </p>
                         <p className="mt-1 whitespace-pre-wrap text-body text-text-primary">
-                          {n.text}
+                          {n.note}
                         </p>
                       </li>
                     ))}
                   </ul>
                 ) : null}
-                {/* H12: composer terpisah — default catatan internal; pesan ke
+                {/* BAI-095: composer terpisah — default catatan internal; pesan ke
                     pengguna wajib konfirmasi eksplisit. */}
                 <SplitComposer
                   internalValue={internalDraft.value}
                   onInternalChange={internalDraft.setValue}
                   externalValue={mediationDraft.value}
                   onExternalChange={mediationDraft.setValue}
-                  onSendInternal={(text) => handleSaveInternalNote(text)}
+                  onSendInternal={(text) => void handleSaveInternalNote(text)}
                   onSendExternal={(text) => void handleSendMessage(text)}
-                  sending={sending}
+                  sending={sending || savingNote}
                   internalFooter={
                     <div className="mt-1">
                       <DraftStatus status={internalDraft.status} savedAt={internalDraft.savedAt} />

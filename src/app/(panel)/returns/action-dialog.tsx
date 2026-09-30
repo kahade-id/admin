@@ -255,7 +255,9 @@ export function ReturnActionDialog({
         {kind === "escalate" ? (
           <p className="text-body text-text-secondary">
             Retur akan diteruskan ke sengketa. Bila sudah ada sengketa aktif
-            untuk order ini, sengketa tersebut dipakai ulang.
+            untuk order ini, sengketa tersebut dipakai ulang. Bila tidak ada,
+            Anda akan diminta membuat sengketa baru dari retur ini setelah
+            eskalasi.
           </p>
         ) : null}
 

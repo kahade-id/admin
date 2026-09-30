@@ -87,6 +87,19 @@ export type AdminReturnItem = {
     buyerPayAmount?: string | number | null
     [key: string]: unknown
   } | null
+  /**
+   * BAI-049: hasil refund DANA dari `refundDana` (batch map `refundDanaMap`
+   * di adminQueue, single lookup di detail/adminAct — admin only, tidak
+   * diekspos ke buyer/seller).
+   * `status`: REFUNDED / REFUND_FAILED / REFUND_NOT_POSSIBLE / REFUND_NOT_FOUND.
+   */
+  refundDana?: {
+    status: string
+    danaReferenceNo?: string | null
+    partnerRefundNo?: string | null
+    amountSen?: number | string | null
+    updatedAt?: string | null
+  } | null
   [key: string]: unknown
 }
 
@@ -150,11 +163,6 @@ export function adminReturnAction(
   )
 }
 
-/** Eskalasi retur ke sengketa (sengketa yang sudah ada dipakai ulang). */
-export function adminEscalateReturn(returnId: string, note?: string): Promise<AdminReturnItem> {
-  return adminReturnAction(returnId, { action: "ESCALATE", note })
-}
-
 /** Setujui refund — nominal dikonfirmasi di UI (ADM-113) sebelum dikirim. */
 export function adminApproveReturnRefund(
   returnId: string,
@@ -186,4 +194,45 @@ export function adminForceResolveReturn(
 /** Perpanjang deadline respons seller +24 jam (ADM-114; backend cap 3x per case). */
 export function adminExtendSellerDeadline(returnId: string): Promise<AdminReturnItem> {
   return adminReturnAction(returnId, { action: "EXTEND_DEADLINE" })
+}
+
+/** BAI-098: flag status kirim notifikasi dari respons aksi admin. */
+export type AdminActionResult = AdminReturnItem & {
+  needsManualConversion?: boolean
+  notificationDelivered?: boolean
+}
+
+/** Eskalasi retur ke sengketa (sengketa yang sudah ada dipakai ulang). */
+export function adminEscalateReturn(returnId: string, note?: string): Promise<AdminActionResult> {
+  return adminReturnAction(returnId, { action: "ESCALATE", note }) as Promise<AdminActionResult>
+}
+
+/**
+ * BAI-086 — buat sengketa baru dari retur ESCALATED (konversi manual).
+ * Dipakai ketika respons eskalasi mengembalikan `needsManualConversion: true`
+ * (tidak ada sengketa aktif yang bisa ditautkan).
+ */
+export function adminConvertReturnToDispute(
+  returnId: string,
+): Promise<{ disputeId: string; created: boolean; linked: boolean; notificationDelivered: boolean }> {
+  return adminHttp.post(
+    `/v1/admin/returns/${encodeURIComponent(returnId)}/convert-to-dispute`,
+    {},
+    { headers: idempotencyHeaders() },
+  )
+}
+
+/**
+ * BAI-093 — admin menambah catatan pada retur (terlihat dua pihak).
+ * Backend `POST /v1/admin/returns/:id/note` sudah ada (addNote).
+ */
+export function adminAddReturnNote(
+  returnId: string,
+  message: string,
+): Promise<{ ok: boolean } | unknown> {
+  return adminHttp.post(
+    `/v1/admin/returns/${encodeURIComponent(returnId)}/note`,
+    { message },
+    { headers: idempotencyHeaders() },
+  )
 }
