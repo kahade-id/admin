@@ -16,7 +16,8 @@
  *   `metric`: "orders" | "volume" | "rating".
  * - `getUserGrowth`: ARRAY `{ day, newUsers, cumulative }` (hari, WIB).
  */
-import { adminHttp } from "@/lib/api/admin-client"
+import { adminHttp, getAdminAccessToken } from "@/lib/api/admin-client"
+import { API_BASE_URL } from "@/lib/api/config"
 
 export type AnalyticsOverview = {
   users?: { total?: number; new?: number; [key: string]: unknown } | null
@@ -112,4 +113,39 @@ export function getUserGrowth(params?: {
   return adminHttp.get<UserGrowthRow[]>("/v1/admin/analytics/user-growth", {
     query: { startDate: params?.startDate, endDate: params?.endDate },
   })
+}
+
+/**
+ * BAI-126: unduh CSV ringkasan analitik dari backend
+ * (`GET /v1/admin/analytics/export/csv`, lengkap dengan watermark pengekspor
+ * ADM-429). Mengembalikan Blob agar pemanggil bisa memicu unduhan browser.
+ *
+ * `adminHttp` selalu mem-parse JSON, jadi endpoint biner ini memakai `fetch`
+ * langsung dengan token admin yang sama.
+ */
+export async function exportAnalyticsCsv(params?: {
+  startDate?: string
+  endDate?: string
+}): Promise<Blob> {
+  const url = new URL(`${API_BASE_URL}/v1/admin/analytics/export/csv`)
+  if (params?.startDate) url.searchParams.set("startDate", params.startDate)
+  if (params?.endDate) url.searchParams.set("endDate", params.endDate)
+  const token = getAdminAccessToken()
+  const res = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Accept: "text/csv",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: "include",
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as {
+      message?: string
+    } | null
+    throw new Error(
+      err?.message ?? `Gagal mengunduh CSV analitik (${res.status})`,
+    )
+  }
+  return res.blob()
 }

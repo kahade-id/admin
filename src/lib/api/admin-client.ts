@@ -112,6 +112,16 @@ async function refreshAdminToken(): Promise<string | null> {
   return refreshInFlight
 }
 
+/**
+ * BAI-034 (audit integrasi 2026-09-30) — kontrak serialisasi boolean query:
+ * boolean diserialisasi menjadi string "true"/"false" (standar URLSearchParams).
+ * Backend WAJIB mem-parse-nya secara ketat (Transform "true"→true,
+ * "false"→false + @IsBoolean) — JANGAN pakai `@Type(() => Boolean)` di DTO
+ * karena `Boolean("false") === true` sehingga `?flag=false` terfilter SEOLAH
+ * true. DTO yang sudah diperbaiki: ModerationQueueQueryDto.overdueOnly,
+ * QaModerationQueueQueryDto.{reportedOnly,hiddenOnly,spamOnly},
+ * AdminBannerListQueryDto.isActive.
+ */
 function buildUrl(path: string, query?: AdminHttpOptions["query"]): string {
   const url = new URL(`${API_BASE_URL}${path}`)
   if (query) {

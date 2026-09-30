@@ -102,16 +102,20 @@ describe("lifecycle kampanye", () => {
         voucherIssuance: { issued: 120, skipped: 5, errors: 0 },
       }),
     )
-    const res = await activateCampaign("cmp-1")
-    expect(adminHttpMock.post).toHaveBeenCalledWith("/v1/admin/campaigns/cmp-1/activate")
+    const res = await activateCampaign("cmp-1", "Promo siap diluncurkan")
+    expect(adminHttpMock.post).toHaveBeenCalledWith("/v1/admin/campaigns/cmp-1/activate", {
+      reason: "Promo siap diluncurkan",
+    })
     expect(res.status).toBe("ACTIVE")
     expect(res.voucherIssuance?.issued).toBe(120)
   })
 
   it("pause: POST …/pause → status PAUSED", async () => {
     adminHttpMock.post.mockResolvedValue(campaign({ status: "PAUSED" }))
-    const res = await pauseCampaign("cmp-1")
-    expect(adminHttpMock.post).toHaveBeenCalledWith("/v1/admin/campaigns/cmp-1/pause")
+    const res = await pauseCampaign("cmp-1", "Stok promo habis")
+    expect(adminHttpMock.post).toHaveBeenCalledWith("/v1/admin/campaigns/cmp-1/pause", {
+      reason: "Stok promo habis",
+    })
     expect(res.status).toBe("PAUSED")
   })
 
@@ -129,8 +133,8 @@ describe("lifecycle kampanye", () => {
       startsAt: "2026-09-01T00:00:00Z",
       endsAt: "2026-09-30T00:00:00Z",
     })
-    await activateCampaign("cmp-1")
-    await pauseCampaign("cmp-1")
+    await activateCampaign("cmp-1", "Go live")
+    await pauseCampaign("cmp-1", "Jeda sementara")
     await deleteCampaign("cmp-1")
 
     expect(adminHttpMock.post.mock.calls.map((c) => c[0])).toEqual([

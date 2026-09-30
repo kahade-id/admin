@@ -102,6 +102,8 @@ export type ReviewShowcaseReportResult = {
   message: string
   reportId: string
   status: ShowcaseReportStatus
+  /** BAI-036 — jumlah laporan OPEN lain se-item yang ikut diselesaikan otomatis oleh takedown. */
+  relatedReportsResolved?: number
   [key: string]: unknown
 }
 
@@ -141,6 +143,9 @@ export function getShowcaseReportDetail(
  * Moderasi laporan: dismiss / takedown / no_action / under_review.
  * `resolution` = catatan admin (opsional). Takedown hanya bisa bila item
  * masih aktif; status final ditolak backend dengan 400 (bukan 500).
+ *
+ * BAI-036: takedown juga menyelesaikan otomatis laporan OPEN lain untuk item
+ * yang sama — backend mengembalikan `relatedReportsResolved`.
  */
 export function reviewShowcaseReport(
   reportId: string,
@@ -317,7 +322,13 @@ export function getAssignCandidates(): Promise<{ candidates: AssignCandidate[] }
 
 /**
  * ADM-328 — bulk dismiss / under_review (maks 50, confirm wajib, hasil
- * parsial per item). Butuh Idempotency-Key (dikirim otomatis adminHttp).
+ * parsial per item).
+ *
+ * BAI-021 (audit integrasi 2026-09-30) — endpoint ini memakai `@Idempotency()`
+ * di backend, jadi WAJIB mengirim header `Idempotency-Key` (sebelumnya tidak
+ * dikirim → selalu 400 IDEMPOTENCY_KEY_REQUIRED). Komentar lama yang mengklaim
+ * header "dikirim otomatis adminHttp" adalah SALAH — adminHttp tidak pernah
+ * menyetelnya otomatis; setiap pemanggil mengirim eksplisit.
  */
 export type BulkReviewResult = {
   action: "dismiss" | "under_review"
@@ -333,7 +344,12 @@ export function bulkReviewShowcaseReports(input: {
   resolution?: string
   confirm: true
 }): Promise<BulkReviewResult> {
-  return adminHttp.post<BulkReviewResult>("/v1/admin/showcase-reports/bulk-review", input)
+  return adminHttp.post<BulkReviewResult>(
+    "/v1/admin/showcase-reports/bulk-review",
+    input,
+    // BAI-021 — Idempotency-Key wajib (backend @Idempotency()).
+    { headers: idempotencyHeaders() },
+  )
 }
 
 /** G405–G408 — putusan banding (reviewer ≠ moderator awal; APPROVED → restore). */

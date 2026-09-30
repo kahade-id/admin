@@ -25,7 +25,7 @@ import { listReports, type UserReport } from "@/lib/api/admin/reports"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 
-import { REPORT_STATUS_LABEL, REPORT_STATUS_TONE } from "./maps"
+import { REPORT_CATEGORY_LABEL, REPORT_STATUS_LABEL, REPORT_STATUS_TONE } from "./maps"
 
 const PAGE_SIZE = 20
 
@@ -152,11 +152,18 @@ export default function ReportsListPage() {
           <DataTable<UserReport>
             columns={[
               {
-                key: "reason",
+                key: "category",
                 header: "Laporan",
                 render: (r) => (
                   <div>
-                    <p className="font-semibold">{r.reason}</p>
+                    {/* BAI-024 — backend tidak punya field `reason`; kolom
+                        "Alasan" dirender dari category + description. */}
+                    <p className="font-semibold">
+                      {REPORT_CATEGORY_LABEL[r.category] ?? r.category ?? "—"}
+                    </p>
+                    {r.description ? (
+                      <p className="text-caption text-text-secondary">{r.description}</p>
+                    ) : null}
                     <p className="text-caption text-text-secondary">
                       Pelapor {r.reporterId} · {formatDateTimeWIB(r.createdAt)}
                     </p>

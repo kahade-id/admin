@@ -179,9 +179,14 @@ function ProvidersTab() {
             { key: "regions", header: "Wilayah", render: (r) => (
               <span className="text-small">{(r.regionWhitelist ?? []).length > 0 ? `Allowlist: ${(r.regionWhitelist ?? []).join(", ")}` : (r.regionBlacklist ?? []).length > 0 ? `Blocklist: ${(r.regionBlacklist ?? []).join(", ")}` : "Semua"}</span>) },
             { key: "actions", header: "Aksi", render: (r) => (
-              <Button size="sm" variant="secondary" fullWidth={false} onClick={() => toggle(r)}>
-                {r.enabled ? "Matikan" : "Nyalakan"}
-              </Button>) },
+              // BAI-011: PATCH providers/:providerCode SUPER_ADMIN-only
+              // (backend @AdminRoles) — sembunyikan toggle dari
+              // FINANCE_ADMIN/CUSTOMER_SUPPORT agar tidak 403.
+              <RoleGate roles={["SUPER_ADMIN"]}>
+                <Button size="sm" variant="secondary" fullWidth={false} onClick={() => toggle(r)}>
+                  {r.enabled ? "Matikan" : "Nyalakan"}
+                </Button>
+              </RoleGate>) },
           ]}
           rows={providers}
           emptyText="Tidak ada provider."

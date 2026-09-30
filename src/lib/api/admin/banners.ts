@@ -10,7 +10,9 @@
  *   POST   /v1/admin/banners            — buat banner (idempoten)
  *   GET    /v1/admin/banners/:id        — detail
  *   PATCH  /v1/admin/banners/:id        — ubah
- *   DELETE /v1/admin/banners/:id        — hapus (soft-delete)
+ *   DELETE /v1/admin/banners/:id        — hapus PERMANEN (hard-delete di
+ *     backend: `prisma.banner.delete()` — BUKAN soft-delete; tidak bisa
+ *     dipulihkan). BAI-030: komentar lama "soft-delete" adalah SALAH.
  *
  * Jadwal tayang: `startsAt`/`endsAt` ISO-8601 opsional; banner tayang bila
  * `isActive` dan (tidak ada jadwal) atau (now dalam rentang jadwal).
@@ -33,6 +35,11 @@ export interface AdminBannerItem {
   /** Urutan tampil — makin kecil makin dulu. */
   sortOrder: number
   isActive: boolean
+  /**
+   * BAI-031 — slot tampil banner (backend: `position`, default "home_top";
+   * dipakai `getActiveBanners(position)` untuk filter slot publik).
+   */
+  position: string
   /** ISO-8601 — null = tanpa batas. */
   startsAt?: string | null
   endsAt?: string | null
@@ -46,6 +53,8 @@ export interface CreateBannerInput {
   linkUrl?: string
   sortOrder?: number
   isActive?: boolean
+  /** BAI-031 — slot tampil (maks 40 char; kosong = default backend "home_top"). */
+  position?: string
   startsAt?: string
   endsAt?: string
 }
@@ -96,7 +105,7 @@ export function updateBanner(
   )
 }
 
-/** DELETE /v1/admin/banners/:id — hapus banner (soft-delete). */
+/** DELETE /v1/admin/banners/:id — hapus banner PERMANEN (tidak dapat dipulihkan). */
 export function deleteBanner(bannerId: string): Promise<unknown> {
   return adminHttp.delete(`/v1/admin/banners/${encodeURIComponent(bannerId)}`)
 }

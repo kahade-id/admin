@@ -1,7 +1,8 @@
 /** Kahade admin — antrean verifikasi identitas (KYC). */
 import { adminHttp } from "@/lib/api/admin-client"
 
-export type KycStatus = "PENDING" | "APPROVED" | "REJECTED" | "REVOKED"
+/** BAI-065/BAI-069: UNVERIFIED adalah status awal setiap pengajuan baru. */
+export type KycStatus = "UNVERIFIED" | "PENDING" | "APPROVED" | "REJECTED" | "REVOKED"
 
 export type SlaStatus = "OK" | "MENDEKATI" | "BREACHED"
 
@@ -32,7 +33,8 @@ export type KycQueueItem = {
   reviewedAt: string | null
   reviewedBy: string | null
   user: { userId: string; email: string; fullName: string | null }
-  reviewer: { adminId: string; fullName: string } | null
+  /** BAI-068: backend mengirim fullName: null bila nama reviewer tak ditemukan. */
+  reviewer: { adminId: string; fullName: string | null } | null
   /** GAP-E: tampilan SLA live + reviewer yang ditugaskan. */
   sla?: KycSlaView | null
   assignedReviewer?: KycReviewerRef | null
@@ -59,6 +61,8 @@ export type KycReviewerNote = {
 export type KycDetail = KycQueueItem & {
   adminNotes: string | null
   submittedIp: string | null
+  /** BAI-072: jenis dokumen (KTP|PASSPORT). */
+  documentType: string | null
   assignmentHistory?: KycAssignmentHistoryItem[]
   reviewerNotes?: KycReviewerNote[]
 }
@@ -66,6 +70,9 @@ export type KycDetail = KycQueueItem & {
 export type KycDocumentUrls = {
   ktpUrl: string | null
   selfieUrl: string | null
+  /** BAI-063: video liveness + jenis dokumen — sebelumnya di-drop admin. */
+  livenessUrl: string | null
+  documentType: string | null
   partialErrors?: string[]
 }
 
@@ -199,8 +206,22 @@ export function rejectKyc(kycId: string, reason: string, notes?: string): Promis
   return adminHttp.post(`/v1/admin/kyc/${encodeURIComponent(kycId)}/reject`, { reason, notes })
 }
 
+/**
+ * BAI-008: backend RevokeKycDto mewajibkan `reason` (min 10 karakter).
+ * Jangan pernah mengirim `reason: undefined` — gagal cepat di sisi klien
+ * agar tidak menjadi 400 yang membingungkan. Dialog input alasan (min 10)
+ * ditambahkan di halaman detail KYC (domain 4).
+ */
 export function revokeKyc(kycId: string, reason?: string): Promise<unknown> {
-  return adminHttp.post(`/v1/admin/kyc/${encodeURIComponent(kycId)}/revoke`, { reason })
+  const r = (reason ?? "").trim()
+  if (r.length < 10) {
+    return Promise.reject(
+      new Error("Alasan pencabutan KYC wajib diisi (minimal 10 karakter)."),
+    )
+  }
+  return adminHttp.post(`/v1/admin/kyc/${encodeURIComponent(kycId)}/revoke`, {
+    reason: r,
+  })
 }
 
 /**

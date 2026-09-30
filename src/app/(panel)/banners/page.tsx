@@ -65,6 +65,8 @@ function BannerForm({
     initial != null ? String(initial.sortOrder) : "0",
   )
   const [isActive, setIsActive] = useState(initial?.isActive ?? true)
+  // BAI-031 — slot tampil banner (kosong = default backend "home_top").
+  const [position, setPosition] = useState(initial?.position ?? "")
   const [startsAt, setStartsAt] = useState(isoToDay(initial?.startsAt))
   const [endsAt, setEndsAt] = useState(isoToDay(initial?.endsAt))
   const [previewBroken, setPreviewBroken] = useState(false)
@@ -100,6 +102,9 @@ function BannerForm({
     if (linkUrl.trim()) input.linkUrl = linkUrl.trim()
     const order = parseIntInput(sortOrder)
     if (order !== undefined) input.sortOrder = order
+    // BAI-031 — hanya kirim bila diisi; kosong = pakai default backend.
+    const pos = position.trim()
+    if (pos) input.position = pos
     const from = dayToISO(startsAt, false)
     const until = dayToISO(endsAt, true)
     if (startsAt && !from) {
@@ -174,6 +179,15 @@ function BannerForm({
           inputMode="numeric"
           placeholder="0"
           hint="Makin kecil, makin dulu tampil."
+        />
+        {/* BAI-031 — slot tampil banner (backend: getActiveBanners(position)). */}
+        <Input
+          label="Posisi slot"
+          value={position}
+          onChange={(e) => setPosition(e.target.value)}
+          placeholder="cth. home_top"
+          hint="Slot tampil di aplikasi. Kosongkan untuk default (home_top)."
+          maxLength={40}
         />
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -488,13 +502,13 @@ function BannersPageContent() {
       <ConfirmDialog
         open={deleting != null}
         onClose={() => setDeleting(null)}
-        title="Hapus banner?"
+        title="Hapus banner permanen?"
         description={
           deleting
-            ? `Banner “${deleting.title}” akan dihapus dan tidak lagi tampil di aplikasi.`
+            ? `Banner “${deleting.title}” akan dihapus PERMANEN dari database dan tidak dapat dipulihkan. Riwayat banner ikut hilang.`
             : undefined
         }
-        confirmLabel="Hapus"
+        confirmLabel="Ya, hapus permanen"
         onConfirm={handleDelete}
         loading={deletingNow}
         destructive

@@ -28,14 +28,17 @@ import { useToast } from "@/components/ui/toast"
 // ADM-408: lapis UI kedua — tolak role non-SUPER_ADMIN dengan pesan jelas
 // (backend sudah SUPER_ADMIN-only; ini konsistensi tampilan).
 import { RoleGate } from "@/components/admin/role-gate"
-// H05: step-up re-auth sebelum aksi kritis (parsial — enforcement server
-// per aksi belum ada; backend tetap menegakkan RBAC yang ada).
+// H05/BAI-115: step-up re-auth sebelum aksi kritis (parsial — enforcement
+// server per-aksi belum ada, tercatat sebagai backlog di reauth-gate.tsx;
+// backend tetap menegakkan RBAC yang ada). Copy UI tidak mengklaim
+// verifikasi per-aksi: yang dibuka adalah jendela konfirmasi 10 menit.
 import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 import { formatDateTimeWIB } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import {
   listOpsSettings,
   updateOpsSetting,
+  deleteOpsSetting,
   testOpsSetting,
   getOpsSettingHistory,
   getMaintenanceStatus,
@@ -57,6 +60,11 @@ export default function OpsSettingsPage() {
   const [maintenanceSaving, setMaintenanceSaving] = useState(false)
   const [maintenanceDraft, setMaintenanceDraft] = useState(false)
   const [maintenanceMessage, setMaintenanceMessage] = useState("")
+  // BAI-105: lacak apakah field pesan disentuh — "disentuh + kosong" = reset
+  // ke default, "tidak disentuh" = pertahankan pesan lama (tidak dikirim).
+  const [messageTouched, setMessageTouched] = useState(false)
+  // BAI-118: versi MAINTENANCE_MODE saat dimuat (optimistic locking).
+  const [maintenanceVersion, setMaintenanceVersion] = useState(0)
 
   // H05: re-auth gate untuk simpan setting & maintenance.
   const reauth = useReauthGate()
@@ -73,6 +81,16 @@ export default function OpsSettingsPage() {
   const [history, setHistory] = useState<OpsSettingAuditItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
 
+  // BAI-118: konflik optimistic locking — admin lain mengubah setting yang
+  // sama setelah halaman dimuat. Dialog meminta muat ulang sebelum mengulang.
+  const [conflict, setConflict] = useState<{ key: string; detail: string } | null>(null)
+  // BAI-104: key yang sedang di-reset ke default.
+  const [resettingKey, setResettingKey] = useState<string | null>(null)
+
+  /** true bila error adalah 409 konflik versi (BAI-118). */
+  const isConflictError = (e: unknown) =>
+    typeof e === "object" && e !== null && (e as { status?: number }).status === 409
+
   const load = useCallback(async () => {
     setLoading(true)
     setMaintenanceLoading(true)
@@ -88,6 +106,8 @@ export default function OpsSettingsPage() {
       setMaintenance(m)
       setMaintenanceDraft(m.enabled)
       setMaintenanceMessage(m.message ?? "")
+      setMessageTouched(false)
+      setMaintenanceVersion(m.version ?? 0)
     } catch (e) {
       toast.show({ title: "Gagal memuat status maintenance", description: userMessage(e), tone: "danger" })
     } finally {
@@ -99,9 +119,14 @@ export default function OpsSettingsPage() {
     void load()
   }, [load])
 
+  /** BAI-110: kunci boolean yang dialog ubahnya memakai select true/false. */
+  const isBooleanKey = (key: string) => key === "WALLET_ENABLED" || key === "MAINTENANCE_MODE"
+
   const openEdit = (s: OpsSettingView) => {
     setEditing(s)
-    setNewValue("")
+    // BAI-110: kunci boolean memakai select eksplisit — inisialisasi dari
+    // nilai efektif saat ini, bukan string kosong.
+    setNewValue(isBooleanKey(s.key) ? (s.displayValue === "true" ? "true" : "false") : "")
     setTestResult(null)
   }
 
@@ -138,25 +163,60 @@ export default function OpsSettingsPage() {
     }
     setSaving(true)
     try {
-      const updated = await updateOpsSetting(editing.key, newValue.trim())
+      // BAI-118: kirim versi yang ditampilkan saat dialog dibuka.
+      const updated = await updateOpsSetting(editing.key, newValue.trim(), editing.version)
       setSettings((prev) => prev.map((s) => (s.key === updated.key ? updated : s)))
       toast.show({ title: updated.label, description: "Diperbarui. Berlaku maks ~60 detik tanpa restart.", tone: "success" })
       setEditing(null)
     } catch (e) {
-      toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
+      // BAI-118: 409 → dialog konflik, bukan error generik.
+      if (isConflictError(e)) {
+        setEditing(null)
+        setConflict({ key: editing.key, detail: userMessage(e) })
+      } else {
+        toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
+      }
     } finally {
       setSaving(false)
+    }
+  }
+
+  /** BAI-104: kembalikan setting ke default/.env (hapus override panel). */
+  const doResetSetting = async (s: OpsSettingView) => {
+    setResettingKey(s.key)
+    try {
+      const updated = await deleteOpsSetting(s.key)
+      setSettings((prev) => prev.map((x) => (x.key === updated.key ? updated : x)))
+      toast.show({ title: s.label, description: "Override panel dihapus — kembali ke default.", tone: "success" })
+    } catch (e) {
+      toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
+    } finally {
+      setResettingKey(null)
     }
   }
 
   const doSaveMaintenance = async () => {
     setMaintenanceSaving(true)
     try {
-      const msg = maintenanceMessage.trim()
-      const updated = await updateMaintenance(maintenanceDraft, msg ? msg : undefined)
+      // BAI-105: kirim pesan HANYA bila field disentuh. String kosong eksplisit
+      // = reset ke pesan default; tidak disentuh = pertahankan (tidak dikirim).
+      const updated = await updateMaintenance(
+        maintenanceDraft,
+        messageTouched ? maintenanceMessage.trim() : undefined,
+        maintenanceVersion,
+      )
       setMaintenance(updated)
       setMaintenanceDraft(updated.enabled)
       setMaintenanceMessage(updated.message ?? "")
+      setMessageTouched(false)
+      setMaintenanceVersion(updated.version ?? 0)
+      // BAI-106: refresh daftar setting agar kartu MAINTENANCE_MODE /
+      // MAINTENANCE_MESSAGE menampilkan nilai/badge/source terbaru.
+      try {
+        setSettings(await listOpsSettings())
+      } catch (e) {
+        toast.show({ title: "Peringatan", description: `Status maintenance tersimpan, tetapi daftar setting gagal dimuat ulang: ${userMessage(e)}`, tone: "info" })
+      }
       toast.show({
         title: updated.enabled ? "Mode maintenance AKTIF" : "Mode maintenance nonaktif",
         description: updated.enabled
@@ -165,7 +225,12 @@ export default function OpsSettingsPage() {
         tone: updated.enabled ? "danger" : "success",
       })
     } catch (e) {
-      toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
+      // BAI-118: 409 → dialog konflik.
+      if (isConflictError(e)) {
+        setConflict({ key: "MAINTENANCE_MODE", detail: userMessage(e) })
+      } else {
+        toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
+      }
     } finally {
       setMaintenanceSaving(false)
     }
@@ -179,6 +244,29 @@ export default function OpsSettingsPage() {
       toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
     } finally {
       setHistoryLoading(false)
+    }
+  }
+
+  /** BAI-118: muat ulang data terbaru setelah konflik, lalu buka lagi dialog
+   *  ubah untuk setting yang sama (bila dari daftar generik). */
+  const reloadAfterConflict = async () => {
+    const key = conflict?.key
+    setConflict(null)
+    try {
+      const [list, m] = await Promise.all([listOpsSettings(), getMaintenanceStatus()])
+      setSettings(list)
+      setMaintenance(m)
+      setMaintenanceDraft(m.enabled)
+      setMaintenanceMessage(m.message ?? "")
+      setMessageTouched(false)
+      setMaintenanceVersion(m.version ?? 0)
+      if (key && key !== "MAINTENANCE_MODE") {
+        const s = list.find((x) => x.key === key)
+        if (s) openEdit(s)
+      }
+      toast.show({ title: "Dimuat ulang", description: "Data terbaru sudah dimuat. Silakan ulangi perubahan Anda.", tone: "success" })
+    } catch (e) {
+      toast.show({ title: "Gagal", description: userMessage(e), tone: "danger" })
     }
   }
 
@@ -196,9 +284,11 @@ export default function OpsSettingsPage() {
       <div>
         <h1 className="text-xl font-semibold">Pengaturan Operasional</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Token integrasi & konfigurasi operasional — ganti tanpa SSH/restart server.
+          Token integrasi & konfigurasi operasional. Nilai yang diubah di halaman ini
+          berlaku untuk request berikutnya (maks ~60 detik) <strong>tanpa restart</strong>.
           Secret tersimpan terenkripsi dan tidak pernah ditampilkan utuh.
-          Boot secret (database, JWT, kunci enkripsi) <strong>tidak dikelola di sini</strong>.
+          Yang <strong>tidak dikelola di sini</strong> (tetap perlu SSH + edit .env + restart):
+          kredensial DANA, Midtrans, Twilio, SMTP, dan boot secret (database, JWT, kunci enkripsi).
         </p>
       </div>
 
@@ -223,6 +313,13 @@ export default function OpsSettingsPage() {
           Saat aktif, aplikasi mobile & semua request non-admin menerima 503
           (coba lagi nanti). Splash screen membaca status via{" "}
           <code className="font-mono text-xs">GET /v1/public/maintenance</code> tanpa auth.
+          {/* BAI-114: kapan maintenance terakhir diubah (dari baris DB). */}
+          {maintenance?.updatedAt && (
+            <span className="block mt-1 text-xs">
+              Terakhir diubah {formatDateTimeWIB(maintenance.updatedAt)}
+              {maintenance.updatedBy ? ` oleh ${maintenance.updatedBy}` : ""}
+            </span>
+          )}
         </p>
         {!maintenanceLoading && maintenance && (
           <div className="space-y-3">
@@ -245,11 +342,17 @@ export default function OpsSettingsPage() {
               </button>
               <span className="text-sm">{maintenanceDraft ? "Aktif" : "Nonaktif"}</span>
             </div>
+            {/* BAI-105: label "kosong = default" kini akurat — field yang dikosongkan
+                lalu disimpan MENGHAPUS pesan kustom (kembali ke default).
+                Field yang tidak disentuh mempertahankan pesan lama. */}
             <Field label="Pesan untuk user (maks 500 karakter, kosong = default)">
               <Input
                 type="text"
                 value={maintenanceMessage}
-                onChange={(e) => setMaintenanceMessage(e.target.value)}
+                onChange={(e) => {
+                  setMaintenanceMessage(e.target.value)
+                  setMessageTouched(true)
+                }}
                 placeholder="cth: Aplikasi sedang upgrade. Kembali dalam ±30 menit."
                 maxLength={500}
                 autoComplete="off"
@@ -266,6 +369,11 @@ export default function OpsSettingsPage() {
               >
                 {maintenanceSaving ? "Menyimpan…" : "Simpan mode maintenance"}
               </Button>
+              {/* BAI-115: jujur soal jendela konfirmasi — bukan verifikasi per aksi. */}
+              <p className="mt-1 text-xs text-muted-foreground">
+                Verifikasi identitas membuka jendela konfirmasi 10 menit untuk aksi kritis
+                di halaman ini (bukan verifikasi per aksi).
+              </p>
             </div>
           </div>
         )}
@@ -283,15 +391,28 @@ export default function OpsSettingsPage() {
                   <div className="text-xs text-muted-foreground font-mono">{s.key}</div>
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  <Badge variant={s.configured ? "soft" : "outline"}>
-                    {s.configured ? "Terkonfigurasi" : "Belum diset"}
-                  </Badge>
+                  {/* BAI-117: bedakan "belum diset" dari "gagal didekripsi". */}
+                  {s.status === "decrypt_failed" ? (
+                    <Badge variant="soft" tone="danger">
+                      Gagal didekripsi
+                    </Badge>
+                  ) : (
+                    <Badge variant={s.configured ? "soft" : "outline"}>
+                      {s.configured ? "Terkonfigurasi" : "Belum diset"}
+                    </Badge>
+                  )}
                   {s.source && (
                     <Badge variant="soft">{s.source === "db" ? "Panel" : ".env"}</Badge>
                   )}
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">{s.description}</p>
+              {s.status === "decrypt_failed" && (
+                <p className="text-xs text-red-600">
+                  Baris database ada tetapi gagal didekripsi (mis. kunci enkripsi berubah) —
+                  set ulang nilainya untuk memperbaiki.
+                </p>
+              )}
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Nilai saat ini:</span>
                 <code className="font-mono bg-muted px-2 py-0.5 rounded">
@@ -311,6 +432,22 @@ export default function OpsSettingsPage() {
                 <Button size="sm" variant="secondary" onClick={() => void openHistory(s)}>
                   Riwayat
                 </Button>
+                {/* BAI-104: hapus override panel → kembali ke default/.env. */}
+                {s.source === "db" && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={resettingKey === s.key}
+                    onClick={() =>
+                      reauth.require(
+                        () => void doResetSetting(s),
+                        `Kembalikan ${s.key} ke default`,
+                      )
+                    }
+                  >
+                    {resettingKey === s.key ? "Menghapus…" : "Kembalikan ke default"}
+                  </Button>
+                )}
               </div>
             </Card>
           ))}
@@ -328,30 +465,59 @@ export default function OpsSettingsPage() {
             <Button variant="secondary" onClick={() => setEditing(null)}>
               Batal
             </Button>
-            {/* H05: ubah setting operasional wajib re-auth. */}
+            {/* H05/BAI-115: ubah setting operasional wajib re-auth (jendela
+                konfirmasi 10 menit — bukan verifikasi per aksi; enforcement
+                server per-aksi masih backlog). */}
             <Button
               onClick={() => reauth.require(() => void doSave(), `Ubah setting ${editing?.key ?? ""}`)}
               disabled={saving || !newValue.trim()}
             >
-              {saving ? "Menyimpan…" : "Verifikasi & simpan"}
+              {saving ? "Menyimpan…" : "Simpan"}
             </Button>
           </>
         }
       >
         {editing && (
           <div className="space-y-4">
-            <Field label="Nilai baru">
-              <Input
-                type={editing.isSecret ? "password" : "text"}
-                value={newValue}
-                onChange={(e) => {
-                  setNewValue(e.target.value)
-                  setTestResult(null)
-                }}
-                placeholder={editing.isSecret ? "Token baru (tidak ditampilkan)" : "Nilai baru"}
-                autoComplete="off"
-              />
-            </Field>
+            {isBooleanKey(editing.key) ? (
+              // BAI-110: select eksplisit — tidak ada lagi free-text yang
+              // diam-diam berarti nonaktif ("1"/"ya"/"on" tanpa peringatan).
+              <Field
+                label="Nilai baru"
+                hint='Hanya "true" (persis) yang mengaktifkan; nilai lain = nonaktif (fail-closed).'
+              >
+                <select
+                  value={newValue}
+                  onChange={(e) => setNewValue(e.target.value)}
+                  className="w-full rounded-sm border border-border-control bg-surface px-4 min-h-12 text-body text-text-primary outline-none focus:border-focus"
+                  aria-label="Nilai baru"
+                >
+                  <option value="true">true — Aktif</option>
+                  <option value="false">false — Nonaktif (default)</option>
+                </select>
+              </Field>
+            ) : (
+              <Field
+                label="Nilai baru"
+                // BAI-112: aturan validasi/normalisasi terlihat SEBELUM submit.
+                hint={
+                  editing.key === "FONNTE_API_URL"
+                    ? "URL divalidasi anti-SSRF saat disimpan (wajib HTTPS, tanpa kredensial, bukan IP privat) dan dinormalisasi — nilai tersimpan bisa berbeda dari yang diketik."
+                    : undefined
+                }
+              >
+                <Input
+                  type={editing.isSecret ? "password" : "text"}
+                  value={newValue}
+                  onChange={(e) => {
+                    setNewValue(e.target.value)
+                    setTestResult(null)
+                  }}
+                  placeholder={editing.isSecret ? "Token baru (tidak ditampilkan)" : "Nilai baru"}
+                  autoComplete="off"
+                />
+              </Field>
+            )}
             {editing.isSecret && (
               <p className="text-xs text-muted-foreground">
                 Nilai saat ini: <code className="font-mono">{editing.displayValue ?? "—"}</code>.
@@ -414,6 +580,29 @@ export default function OpsSettingsPage() {
               </div>
             ))}
           </div>
+        )}
+      </Dialog>
+      {/* BAI-118: dialog konflik optimistic locking. */}
+      <Dialog
+        open={!!conflict}
+        onClose={() => setConflict(null)}
+        title="Setting berubah saat Anda mengedit"
+        description="Admin lain mengubah setting ini setelah halaman dimuat. Perubahan Anda TIDAK disimpan (last-write-wins dicegah). Muat ulang untuk melihat nilai terbaru."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConflict(null)}>
+              Tutup
+            </Button>
+            <Button onClick={() => void reloadAfterConflict()}>
+              Muat ulang & edit lagi
+            </Button>
+          </>
+        }
+      >
+        {conflict && (
+          <p className="text-sm text-muted-foreground">
+            <code className="font-mono text-xs">{conflict.key}</code>: {conflict.detail}
+          </p>
         )}
       </Dialog>
       {/* H05: dialog verifikasi ulang untuk aksi kritis. */}
