@@ -85,7 +85,35 @@ export type AdminOrderDetail = AdminOrderItem & {
     createdAt?: string
     [key: string]: unknown
   }>
+  /**
+   * MFE-012/MFE-013: jejak finansial DANA-direct per order — diekspos backend
+   * di `GET /v1/admin/orders/:id` (field `danaPayments`). Mode tanpa-wallet:
+   * tidak ada `walletTransactions` escrow; DANA-direct adalah sumber kebenaran.
+   */
+  danaPayments?: AdminDanaPayment[]
   dispute?: { id?: string; status?: string; [key: string]: unknown } | null
+}
+
+/**
+ * MFE-012/MFE-013: snapshot charge DANA-direct untuk satu order (IDR).
+ * Cerminan `danaPayments` dari `AdminOrdersService.getOrderDetail` backend.
+ */
+export type AdminDanaPayment = {
+  id: string
+  partnerReferenceNo: string
+  payKind: string
+  purpose: string
+  status: string
+  amount: number
+  providerFee: number
+  grossAmount: number
+  refundedAmount: number
+  refundReference: string | null
+  danaPartnerReferenceNo: string | null
+  danaReferenceNo: string | null
+  paidAt: string | null
+  failedAt: string | null
+  createdAt: string
 }
 
 export type ForceActionResult = {

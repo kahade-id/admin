@@ -123,11 +123,34 @@ const CANCELLABLE: AdminOrderStatus[] = [
 /** Status order yang boleh diselesaikan paksa (DISPUTED wajib lewat alur sengketa). */
 const COMPLETABLE: AdminOrderStatus[] = ["PROCESSING", "IN_DELIVERY"]
 
-/** Status escrow diturunkan dari transaksi wallet order (yang terbaru relevan). */
+/**
+ * Status escrow diturunkan dari transaksi wallet order (yang terbaru relevan)
+ * ATAU — di mode tanpa-wallet (DANA-direct) — dari `detail.danaPayments`.
+ * MFE-012: tanpa wallet, `walletTransactions` tidak memuat escrow sama
+ * sekali, sehingga badge lama selalu "Tanpa escrow" walau dana nyata
+ * tertahan di DANA. DANA-direct kini sumber kebenaran pertama.
+ */
 function escrowStateOf(detail: AdminOrderDetail): {
   label: string
   tone: BadgeTone
 } {
+  // DANA-direct dulu (mode tanpa-wallet): charge SUCCESS = escrow terkunci;
+  // REFUNDED = dana kembali; FAILED/EXPIRED/CANCELLED = charge mati.
+  const dana = (detail.danaPayments ?? [])[0]
+  if (dana) {
+    switch (dana.status) {
+      case "SUCCESS":
+        return { label: "Escrow DANA terkunci", tone: "warning" }
+      case "REFUNDED":
+        return { label: "Escrow DANA refund", tone: "info" }
+      case "PENDING":
+        return { label: "Bayar DANA pending", tone: "neutral" }
+      case "PROCESSING":
+        return { label: "Bayar DANA diproses", tone: "neutral" }
+      default:
+        return { label: "Bayar DANA gagal", tone: "danger" }
+    }
+  }
   const txs = detail.walletTransactions ?? []
   const relevant = txs.find((t) =>
     ["ORDER_LOCK", "ORDER_RELEASE", "ORDER_REFUND", "DISPUTE_RELEASE"].includes(
@@ -799,6 +822,53 @@ function OrdersPageContent() {
                     <KeyValue label="Catatan resi" value={String(detail.trackingNotes)} />
                   ) : null}
                 </dl>
+              </div>
+            ) : null}
+
+            {/* MFE-013: jejak finansial DANA-direct — lifecycle charge per
+                order (payKind, partnerReferenceNo, providerFee, grossAmount,
+                refundedAmount, status). Di mode tanpa-wallet ini adalah sumber
+                kebenaran pembayaran (bukan walletTransactions). */}
+            {(detail.danaPayments ?? []).length > 0 ? (
+              <div>
+                <p className="mb-2 text-label font-semibold text-text-secondary">
+                  Pembayaran DANA
+                </p>
+                <div className="space-y-3">
+                  {(detail.danaPayments ?? []).map((p) => (
+                    <dl key={p.id}>
+                      <KeyValue label="Metode" value={p.payKind} />
+                      <KeyValue label="Status" value={p.status} />
+                      <KeyValue
+                        label="Referensi partner"
+                        value={p.danaPartnerReferenceNo ?? p.partnerReferenceNo}
+                      />
+                      {p.danaReferenceNo ? (
+                        <KeyValue label="Referensi DANA" value={p.danaReferenceNo} />
+                      ) : null}
+                      <KeyValue label="Escrow" value={formatRupiah(p.amount)} />
+                      <KeyValue label="Fee provider" value={formatRupiah(p.providerFee)} />
+                      <KeyValue label="Total tagihan" value={formatRupiah(p.grossAmount)} />
+                      {p.refundedAmount > 0 ? (
+                        <>
+                          <KeyValue
+                            label="Dana dikembalikan"
+                            value={formatRupiah(p.refundedAmount)}
+                          />
+                          {p.refundReference ? (
+                            <KeyValue label="Referensi refund" value={p.refundReference} />
+                          ) : null}
+                        </>
+                      ) : null}
+                      {p.paidAt ? (
+                        <KeyValue label="Dibayar" value={formatDateTimeWIB(p.paidAt)} />
+                      ) : null}
+                      {p.failedAt ? (
+                        <KeyValue label="Gagal/kedaluwarsa" value={formatDateTimeWIB(p.failedAt)} />
+                      ) : null}
+                    </dl>
+                  ))}
+                </div>
               </div>
             ) : null}
 

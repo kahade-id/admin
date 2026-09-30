@@ -75,6 +75,9 @@ export const MENU: MenuItem[] = [
   { label: "Moderasi Q&A", href: "/qa-moderation", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Badge & Verifikasi", href: "/badges", roles: ["SUPER_ADMIN"] },
   { label: "Keuangan & Escrow", href: "/finance", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
+  // MFE-015: antrean disbursement escrow DANA (read-only) — role sama dengan
+  // backend @AdminRoles('FINANCE_ADMIN','SUPER_ADMIN') di controller finance.
+  { label: "Disbursement", href: "/disbursements", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Pesanan", href: "/orders", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
   { label: "Voucher", href: "/vouchers", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   // GO-PUBLIK (2026-09-28): role provisoris batch 43 diselaraskan dengan

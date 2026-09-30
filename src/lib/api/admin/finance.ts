@@ -73,6 +73,13 @@ export type EscrowSummary = {
   totalEscrowBalance: number
   walletsWithEscrow: number
   activeEscrowOrders: number
+  /**
+   * MFE-011: agregat escrow DANA-direct (mode tanpa-wallet) — sumber
+   * kebenaran escrow saat ini, bukan wallet.escrowBalance.
+   */
+  danaEscrowBalance?: number
+  danaEscrowPayments?: number
+  danaDisbursementsPending?: number
 }
 
 export type RevenueBreakdown = {
