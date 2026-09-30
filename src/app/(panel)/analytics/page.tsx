@@ -26,6 +26,7 @@ import {
   getOrderStats,
   getTopUsers,
   getUserGrowth,
+  exportAnalyticsCsv,
   type AnalyticsOverview,
   type OrderStatRow,
   type OrderStatsGroupBy,
@@ -34,7 +35,13 @@ import {
   type UserGrowthRow,
 } from "@/lib/api/admin/analytics"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatNumber, num } from "@/lib/format"
+import {
+  addDaysToDateString,
+  endOfMonthDateString,
+  formatDateWIB,
+  formatNumber,
+  num,
+} from "@/lib/format"
 
 const PAGE_SIZE = 20
 
@@ -91,6 +98,34 @@ function formatRangeLabel(range: {
   return `${fmt(range.startDate)} – ${fmt(range.endDate)}`
 }
 
+/** Ambil "YYYY-MM-DD" dari string tanggal backend (BAI-129: date-only, atau ISO lama). */
+function toDateOnly(value: string): string {
+  const m = value.match(/^(\d{4}-\d{2}-\d{2})/)
+  return m ? m[1] : value
+}
+
+/**
+ * BAI-135: label kolom "Periode" — bucket mingguan/bulanan tampil sebagai
+ * RENTANG tanggal, bukan satu tanggal (sebelumnya baris agregat terlihat
+ * identik dengan baris harian → potensi salah baca).
+ * Backend mengirim `period` = awal bucket (Senin untuk minggu — `date_trunc`
+ * Postgres, tanggal 1 untuk bulan) sebagai "YYYY-MM-DD" WIB (BAI-129).
+ */
+function formatPeriodLabel(
+  period: string | undefined,
+  groupBy: OrderStatsGroupBy,
+): string {
+  if (!period) return "—"
+  const start = toDateOnly(period)
+  if (groupBy === "day" || !/^\d{4}-\d{2}-\d{2}$/.test(start))
+    return formatDateWIB(start)
+  const end =
+    groupBy === "week"
+      ? addDaysToDateString(start, 6)
+      : endOfMonthDateString(start)
+  return `${formatDateWIB(start)} – ${formatDateWIB(end)}`
+}
+
 /** Validasi input kustom. Mengembalikan pesan error, atau null bila valid. */
 function validateCustomRange(start: string, end: string): string | null {
   if (!start || !end) return "Isi tanggal mulai dan tanggal akhir."
@@ -106,10 +141,30 @@ function validateCustomRange(start: string, end: string): string | null {
   return null
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: string
+  /** Penjelasan definisi metrik (BAI-124/134) — tampil sebagai hint kecil. */
+  hint?: string
+}) {
   return (
     <Card>
-      <p className="text-caption text-text-secondary">{label}</p>
+      <p className="text-caption text-text-secondary">
+        {label}
+        {hint ? (
+          <span
+            className="ml-1 cursor-help text-text-tertiary underline decoration-dotted underline-offset-2"
+            title={hint}
+            aria-label={hint}
+          >
+            ?
+          </span>
+        ) : null}
+      </p>
       <p className="mt-1 truncate text-h3 font-semibold text-text-primary">
         {value}
       </p>
@@ -128,6 +183,7 @@ export default function AnalyticsPage() {
 
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [rangeDays, setRangeDays] = useState("30")
@@ -246,6 +302,39 @@ export default function AnalyticsPage() {
     // Kembali ke preset: pemuatan dipicu oleh useEffect.
   }
 
+  /**
+   * BAI-126: unduh CSV ringkasan analitik (endpoint backend
+   * `GET /v1/admin/analytics/export/csv` sudah ada sejak batch 19.4 tapi
+   * belum ada tombol di UI). Memakai rentang tanggal yang sedang aktif.
+   */
+  const handleExportCsv = async () => {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const blob = await exportAnalyticsCsv({
+        startDate: activeRange.startDate,
+        endDate: activeRange.endDate,
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `analitik-${activeRange.startDate}_${activeRange.endDate}.csv`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      toast.show({ title: "CSV analitik diunduh", tone: "success" })
+    } catch (e) {
+      toast.show({
+        title: "Gagal mengunduh CSV",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   // API mengembalikan array tanpa paginasi — paginasi di sisi klien.
   const statsTotalPages = useMemo(
     () => Math.max(1, Math.ceil(orderStats.length / PAGE_SIZE)),
@@ -278,15 +367,28 @@ export default function AnalyticsPage() {
               Ringkasan platform — baca-saja, tanpa aksi perubahan data.
             </p>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            fullWidth={false}
-            loading={refreshing}
-            onClick={() => load("refresh", activeRange)}
-          >
-            Muat ulang
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {/* BAI-126: ekspor CSV ringkasan analitik (backend
+                GET /v1/admin/analytics/export/csv + watermark ADM-429). */}
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              loading={exporting}
+              onClick={handleExportCsv}
+            >
+              Export CSV
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              fullWidth={false}
+              loading={refreshing}
+              onClick={() => load("refresh", activeRange)}
+            >
+              Muat ulang
+            </Button>
+          </div>
         </div>
         <Card>
           <div className="flex flex-wrap items-end gap-3">
@@ -416,9 +518,12 @@ export default function AnalyticsPage() {
                 label="Pengguna baru"
                 value={formatNumber(num(overview.users?.new))}
               />
+              {/* BAI-124: label jujur — backend menghitung pengguna unik yang
+                  bertransaksi dalam rentang, bukan DAU/MAU. */}
               <StatCard
-                label="Pengguna aktif"
+                label="Pengguna bertransaksi (rentang)"
                 value={formatNumber(num(overview.activeUsers))}
+                hint="Pengguna unik yang menjadi pembeli atau penjual order dalam rentang tanggal aktif — bukan DAU/MAU. Nilainya berubah mengikuti rentang yang dipilih."
               />
               <StatCard
                 label="Total order"
@@ -436,9 +541,13 @@ export default function AnalyticsPage() {
                 label="Dibatalkan"
                 value={formatNumber(num(overview.orders?.cancelled))}
               />
+              {/* BAI-134: dokumentasikan rumus yang dipakai backend —
+                  disputed ÷ (completed + disputed), order dibatalkan tidak
+                  masuk denominator (berbeda dari konvensi disputed/total). */}
               <StatCard
                 label="Dispute rate"
                 value={`${num(overview.orders?.disputeRate).toFixed(1)}%`}
+                hint="Rumus: disengketakan ÷ (selesai + disengketakan) × 100%. Order yang dibatalkan tidak masuk perhitungan — angka tampil lebih tinggi dibanding definisi disputed/total order."
               />
               <StatCard
                 label="GMV"
@@ -475,7 +584,10 @@ export default function AnalyticsPage() {
                     header: "Periode",
                     render: (r) => (
                       <span className="whitespace-nowrap">
-                        {r.period ? formatDateTimeWIB(r.period) : "—"}
+                        {/* BAI-129: backend kirim date-only WIB — render tanggal
+                            saja (bukan "07.00 WIB"). BAI-135: bucket
+                            minggu/bulan tampil sebagai rentang tanggal. */}
+                        {formatPeriodLabel(r.period, groupBy)}
                       </span>
                     ),
                   },
@@ -615,7 +727,9 @@ export default function AnalyticsPage() {
                     header: "Tanggal",
                     render: (r) => (
                       <span className="whitespace-nowrap">
-                        {r.day ? formatDateTimeWIB(r.day) : "—"}
+                        {/* BAI-129: backend kirim date-only WIB — render tanggal
+                            saja, bukan timestamp dengan jam menyesatkan. */}
+                        {r.day ? formatDateWIB(r.day) : "—"}
                       </span>
                     ),
                   },

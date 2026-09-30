@@ -62,8 +62,17 @@ export type RecentActivityItem = {
   [key: string]: unknown
 }
 
-export function getDashboardSummary(): Promise<DashboardSummary> {
-  return adminHttp.get<DashboardSummary>("/v1/admin/dashboard/summary")
+/**
+ * BAI-125: ringkasan dashboard di-cache 5 menit di backend. Kirim
+ * `{ refresh: true }` agar tombol "Muat ulang" menghitung ulang dari DB
+ * (bypass cache), bukan menampilkan snapshot basi.
+ */
+export function getDashboardSummary(opts?: {
+  refresh?: boolean
+}): Promise<DashboardSummary> {
+  return adminHttp.get<DashboardSummary>("/v1/admin/dashboard/summary", {
+    query: opts?.refresh ? { refresh: "true" } : undefined,
+  })
 }
 
 /** Param GET /v1/admin/dashboard/charts (ChartQueryDto backend). */
