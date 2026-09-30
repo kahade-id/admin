@@ -29,6 +29,10 @@ export type SubscriptionStatus =
   | "EXPIRED"
   | "PENDING"
   | "SUSPENDED"
+  // ESI-007 (audit integrasi 2026-09-30): `PAUSED` anggota resmi enum backend
+  // `SubscriptionStatus` — jeda sementara dengan auto-resume via scheduler;
+  // sebelumnya tak dikenal admin sehingga tampil mentah tanpa label/tone.
+  | "PAUSED"
 
 export type SubscriptionPlan = "MONTHLY" | "YEARLY"
 

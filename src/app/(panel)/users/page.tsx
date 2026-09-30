@@ -78,6 +78,10 @@ function KycBadge({ status }: { status: KycStatus }) {
   if (upper === "APPROVED") return <Badge tone="success">Terverifikasi</Badge>
   if (upper === "PENDING") return <Badge tone="warning">Menunggu</Badge>
   if (upper === "REJECTED") return <Badge tone="danger">Ditolak</Badge>
+  // ESI-020 (audit integrasi 2026-09-30): `UNVERIFIED` (status default
+  // mayoritas user) & `REVOKED` sebelumnya tampil sebagai enum mentah.
+  if (upper === "UNVERIFIED") return <Badge tone="neutral">Belum diverifikasi</Badge>
+  if (upper === "REVOKED") return <Badge tone="danger">Dicabut</Badge>
   return <Badge tone="neutral">{status}</Badge>
 }
 

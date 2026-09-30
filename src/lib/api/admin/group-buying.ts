@@ -9,23 +9,35 @@
  * Bila backend nanti menyediakan endpoint aksi, sengaja TIDAK dipanggil
  * dari modul ini sampai ada keputusan eksplisit.
  *
- * KONTRAK ASUMSI (belum diverifikasi ke backend): cabang backend
- * `mega/be-commerce` belum tersedia di remote saat modul ini dibuat
- * (2026-09-28). Path endpoint berikut adalah asumsi berdasarkan konvensi
- * `/v1/admin/*` yang sudah ada — sesuaikan dengan kontrak final backend
- * bila berbeda:
+ * KONTRAK: kosakata status SELARAS dengan enum backend `PatunganStatus`
+ * (ESI-013, audit integrasi 2026-09-30 — sebelumnya asumsi salah:
+ * OPEN/FUNDED/FAILED/DISBURSED/CANCELLED). Path endpoint berikut masih
+ * asumsi (cabang backend `mega/be-commerce` belum tersedia di remote saat
+ * modul ini dibuat, 2026-09-28) berdasarkan konvensi `/v1/admin/*` yang
+ * sudah ada — sesuaikan dengan kontrak final backend bila berbeda:
  *   GET /v1/admin/group-buying        — daftar (query: page, limit, status, q)
  *   GET /v1/admin/group-buying/:id    — detail (progres + daftar peserta)
  */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
 
+/**
+ * Status patungan — selaras enum backend `PatunganStatus`
+ * (OPEN|TARGET_REACHED|CONTEST|RELEASED|FAILED|REFUNDED).
+ *
+ * ESI-013 (audit integrasi 2026-09-30): kosakata lama admin
+ * (OPEN/FUNDED/FAILED/DISBURSED/CANCELLED) tidak cocok dengan backend —
+ * `DISBURSED` tak pernah dikirim backend; `TARGET_REACHED`/`CONTEST`/
+ * `RELEASED`/`REFUNDED` hilang. `string` dipertahankan sebagai fallback
+ * toleransi nilai baru.
+ */
 export type GroupBuyStatus =
   | "OPEN"
-  | "FUNDED"
+  | "TARGET_REACHED"
+  | "CONTEST"
+  | "RELEASED"
   | "FAILED"
-  | "DISBURSED"
-  | "CANCELLED"
+  | "REFUNDED"
   | string
 
 export interface GroupBuyItem {

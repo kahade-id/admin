@@ -82,6 +82,7 @@ const STATUS_LABEL: Record<string, string> = {
   EXPIRED: "Kedaluwarsa",
   PENDING: "Menunggu",
   SUSPENDED: "Ditangguhkan",
+  PAUSED: "Dijeda sementara", // ESI-007: nilai resmi backend (auto-resume via scheduler)
 }
 
 const STATUS_TONE: Record<string, BadgeTone> = {
@@ -91,6 +92,7 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   EXPIRED: "neutral",
   PENDING: "warning",
   SUSPENDED: "danger",
+  PAUSED: "warning", // ESI-007: bukan "Dibatalkan" — langganan akan auto-resume
 }
 
 const PLAN_LABEL: Record<string, string> = {
