@@ -83,6 +83,12 @@ export function formatNumber(n: unknown): string {
  * memotong fraksi sen secara diam-diam. Kini: bilangan bulat tetap tanpa
  * desimal; pecahan ditampilkan 2 desimal (Rp123,45).
  * Non-finite → "—".
+ *
+ * DBL-003 (audit integrasi 2026-10-01) sempat mengusulkan pecahan Rupiah
+ * DIBULATKAN ke rupiah terdekat (Math.round) sebagai kebijakan kanonis
+ * lintas repo — MERGE 2026-10-01: koordinator MEMUTUSKAN kontrak audit yang
+ * benar dipertahankan, yaitu pecahan sen TAMPIL 2 desimal (BAI-052), BUKAN
+ * Math.round yang menghilangkan fraksi sen (Rp150.000,99 → Rp150.001).
  */
 export function formatIDR(n: unknown): string {
   if (typeof n !== "number" || !Number.isFinite(n)) return "—"
@@ -107,12 +113,20 @@ export function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0
 }
 
-/** Umur tiket: "45 mnt", "3 jam", "2 hari" — input kosong/invalid → "—". */
+/**
+ * Umur tiket: "45 mnt", "3 jam", "Kemarin", "2 hari" — input kosong/invalid → "—".
+ *
+ * DBL-009 (audit integrasi 2026-10-01): BUCKET WAKTU KANONIS LINTAS REPO —
+ * <24 jam → "X jam", 24–48 jam → "Kemarin", selebihnya "X hari" (selaras
+ * frontend `formatTimeAgo`). Dulu jam dipakai sampai 48 ("30 jam"), sehingga
+ * umur yang sama dibaca "Kemarin" di aplikasi tapi "30 jam" di panel admin.
+ */
 export function formatAge(d: Date | number | string | null | undefined): string {
   const h = ageHours(d)
   if (h == null) return "—"
   if (h < 1) return `${Math.max(0, Math.floor(h * 60))} mnt`
-  if (h < 48) return `${Math.floor(h)} jam`
+  if (h < 24) return `${Math.floor(h)} jam`
+  if (h < 48) return "Kemarin"
   return `${Math.floor(h / 24)} hari`
 }
 

@@ -6,7 +6,8 @@
  *   status escrow (diturunkan dari transaksi ORDER_LOCK / ORDER_RELEASE /
  *   ORDER_REFUND / DISPUTE_RELEASE), timeline dari riwayat status.
  * - Aksi darurat "Paksa batal" / "Paksa selesai": KONFIRMASI GANDA —
- *   Dialog pertama wajib alasan (min 10 karakter) → ConfirmDialog kedua
+ *   Dialog pertama wajib alasan (min 10 karakter) → dialog konfirmasi kedua
+ *   (+ re-auth password, AUT-013)
  *   ("Tindakan ini tidak bisa dibatalkan"). Tombol hanya aktif untuk status
  *   yang valid (batal: WAITING_CONFIRMATION / WAITING_PAYMENT / PROCESSING /
  *   IN_DELIVERY / DISPUTED; selesai: PROCESSING / IN_DELIVERY).
@@ -20,7 +21,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
+import { Dialog } from "@/components/ui/dialog"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
@@ -78,12 +79,12 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  WAITING_CONFIRMATION: "Menunggu konfirmasi",
+  WAITING_CONFIRMATION: "Menunggu konfirmasi penjual",
   WAITING_PAYMENT: "Menunggu pembayaran",
-  PROCESSING: "Diproses",
-  IN_DELIVERY: "Dikirim",
+  PROCESSING: "Diproses penjual",
+  IN_DELIVERY: "Dalam pengiriman",
   COMPLETED: "Selesai",
-  DISPUTED: "Disengketakan",
+  DISPUTED: "Sengketa",
   CANCELLED: "Dibatalkan",
 }
 
@@ -99,11 +100,11 @@ const STATUS_TONE: Record<string, BadgeTone> = {
 
 const STATUS_FILTERS: Array<{ value: AdminOrderStatus | ""; label: string }> = [
   { value: "", label: "Semua status" },
-  { value: "PROCESSING", label: "Diproses" },
-  { value: "IN_DELIVERY", label: "Dikirim" },
-  { value: "DISPUTED", label: "Disengketakan" },
-  { value: "WAITING_PAYMENT", label: "Menunggu bayar" },
-  { value: "WAITING_CONFIRMATION", label: "Menunggu konfirmasi" },
+  { value: "PROCESSING", label: "Diproses penjual" },
+  { value: "IN_DELIVERY", label: "Dalam pengiriman" },
+  { value: "DISPUTED", label: "Sengketa" },
+  { value: "WAITING_PAYMENT", label: "Menunggu pembayaran" },
+  { value: "WAITING_CONFIRMATION", label: "Menunggu konfirmasi penjual" },
   { value: "COMPLETED", label: "Selesai" },
   { value: "CANCELLED", label: "Dibatalkan" },
 ]
@@ -123,11 +124,34 @@ const CANCELLABLE: AdminOrderStatus[] = [
 /** Status order yang boleh diselesaikan paksa (DISPUTED wajib lewat alur sengketa). */
 const COMPLETABLE: AdminOrderStatus[] = ["PROCESSING", "IN_DELIVERY"]
 
-/** Status escrow diturunkan dari transaksi wallet order (yang terbaru relevan). */
+/**
+ * Status escrow diturunkan dari transaksi wallet order (yang terbaru relevan)
+ * ATAU — di mode tanpa-wallet (DANA-direct) — dari `detail.danaPayments`.
+ * MFE-012: tanpa wallet, `walletTransactions` tidak memuat escrow sama
+ * sekali, sehingga badge lama selalu "Tanpa escrow" walau dana nyata
+ * tertahan di DANA. DANA-direct kini sumber kebenaran pertama.
+ */
 function escrowStateOf(detail: AdminOrderDetail): {
   label: string
   tone: BadgeTone
 } {
+  // DANA-direct dulu (mode tanpa-wallet): charge SUCCESS = escrow terkunci;
+  // REFUNDED = dana kembali; FAILED/EXPIRED/CANCELLED = charge mati.
+  const dana = (detail.danaPayments ?? [])[0]
+  if (dana) {
+    switch (dana.status) {
+      case "SUCCESS":
+        return { label: "Escrow DANA terkunci", tone: "warning" }
+      case "REFUNDED":
+        return { label: "Escrow DANA refund", tone: "info" }
+      case "PENDING":
+        return { label: "Bayar DANA pending", tone: "neutral" }
+      case "PROCESSING":
+        return { label: "Bayar DANA diproses", tone: "neutral" }
+      default:
+        return { label: "Bayar DANA gagal", tone: "danger" }
+    }
+  }
   const txs = detail.walletTransactions ?? []
   const relevant = txs.find((t) =>
     ["ORDER_LOCK", "ORDER_RELEASE", "ORDER_REFUND", "DISPUTE_RELEASE"].includes(
@@ -136,11 +160,11 @@ function escrowStateOf(detail: AdminOrderDetail): {
   )
   switch (String(relevant?.type)) {
     case "ORDER_LOCK":
-      return { label: "Escrow terkunci", tone: "warning" }
+      return { label: "Escrow (rekening bersama) terkunci", tone: "warning" }
     case "ORDER_RELEASE":
-      return { label: "Escrow cair", tone: "success" }
+      return { label: "Dana dicairkan ke penjual", tone: "success" }
     case "ORDER_REFUND":
-      return { label: "Escrow refund", tone: "info" }
+      return { label: "Dana escrow dikembalikan", tone: "info" }
     case "DISPUTE_RELEASE":
       return { label: "Cair via sengketa", tone: "info" }
     default:
@@ -421,30 +445,40 @@ function OrdersPageContent() {
   const [reason, setReason] = useState("")
   const [reasonError, setReasonError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // AUT-013: re-auth password di dialog konfirmasi kedua — backend menolak
+  // force-cancel/force-complete tanpa password yang benar.
+  const [reauthPassword, setReauthPassword] = useState("")
+  const [reauthError, setReauthError] = useState<string | null>(null)
 
-  /** Langkah 1: validasi alasan → buka ConfirmDialog kedua. */
+  /** Langkah 1: validasi alasan → buka dialog konfirmasi kedua. */
   const proceedToConfirm = () => {
     if (reason.trim().length < 10) {
       setReasonError("Alasan minimal 10 karakter.")
       return
     }
+    setReauthPassword("")
+    setReauthError(null)
     setConfirmOpen(true)
   }
 
-  /** Langkah 2: eksekusi setelah konfirmasi kedua. */
+  /** Langkah 2: eksekusi setelah konfirmasi kedua (+ password re-auth). */
   const executeForceAction = useCallback(async () => {
     if (!detail || !forceAction || submitting) return
+    if (!reauthPassword) {
+      setReauthError("Masukkan kata sandi Anda untuk mengonfirmasi.")
+      return
+    }
     setSubmitting(true)
     try {
       if (forceAction === "cancel") {
-        await forceCancelOrder(detail.orderId, reason.trim())
+        await forceCancelOrder(detail.orderId, reason.trim(), reauthPassword)
         toast.show({
           title: "Order dibatalkan",
           description: detail.orderId,
           tone: "success",
         })
       } else {
-        await forceCompleteOrder(detail.orderId, reason.trim())
+        await forceCompleteOrder(detail.orderId, reason.trim(), reauthPassword)
         toast.show({
           title: "Order diselesaikan",
           description: detail.orderId,
@@ -464,7 +498,7 @@ function OrdersPageContent() {
       setSubmitting(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail, forceAction, submitting, reason, toast, loadOrders, page])
+  }, [detail, forceAction, submitting, reason, reauthPassword, toast, loadOrders, page])
 
   const detailStatus = detail ? String(detail.status) : ""
   const canCancel =
@@ -802,6 +836,53 @@ function OrdersPageContent() {
               </div>
             ) : null}
 
+            {/* MFE-013: jejak finansial DANA-direct — lifecycle charge per
+                order (payKind, partnerReferenceNo, providerFee, grossAmount,
+                refundedAmount, status). Di mode tanpa-wallet ini adalah sumber
+                kebenaran pembayaran (bukan walletTransactions). */}
+            {(detail.danaPayments ?? []).length > 0 ? (
+              <div>
+                <p className="mb-2 text-label font-semibold text-text-secondary">
+                  Pembayaran DANA
+                </p>
+                <div className="space-y-3">
+                  {(detail.danaPayments ?? []).map((p) => (
+                    <dl key={p.id}>
+                      <KeyValue label="Metode" value={p.payKind} />
+                      <KeyValue label="Status" value={p.status} />
+                      <KeyValue
+                        label="Referensi partner"
+                        value={p.danaPartnerReferenceNo ?? p.partnerReferenceNo}
+                      />
+                      {p.danaReferenceNo ? (
+                        <KeyValue label="Referensi DANA" value={p.danaReferenceNo} />
+                      ) : null}
+                      <KeyValue label="Escrow" value={formatRupiah(p.amount)} />
+                      <KeyValue label="Fee provider" value={formatRupiah(p.providerFee)} />
+                      <KeyValue label="Total tagihan" value={formatRupiah(p.grossAmount)} />
+                      {p.refundedAmount > 0 ? (
+                        <>
+                          <KeyValue
+                            label="Dana dikembalikan"
+                            value={formatRupiah(p.refundedAmount)}
+                          />
+                          {p.refundReference ? (
+                            <KeyValue label="Referensi refund" value={p.refundReference} />
+                          ) : null}
+                        </>
+                      ) : null}
+                      {p.paidAt ? (
+                        <KeyValue label="Dibayar" value={formatDateTimeWIB(p.paidAt)} />
+                      ) : null}
+                      {p.failedAt ? (
+                        <KeyValue label="Gagal/kedaluwarsa" value={formatDateTimeWIB(p.failedAt)} />
+                      ) : null}
+                    </dl>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {/* Lokasi presisi pembeli (fraud checking) — dari backend terdekripsi fail-closed. */}
             <div>
               <p className="mb-2 text-label font-semibold text-text-secondary">
@@ -1025,22 +1106,66 @@ function OrdersPageContent() {
         ) : null}
       </Dialog>
 
-      {/* Konfirmasi kedua — ganda */}
-      <ConfirmDialog
+      {/* Konfirmasi kedua — ganda + re-auth password (AUT-013) */}
+      <Dialog
         open={confirmOpen}
         onClose={() => {
-          if (!submitting) setConfirmOpen(false)
+          if (!submitting) {
+            setConfirmOpen(false)
+            setReauthPassword("")
+            setReauthError(null)
+          }
         }}
         title={confirmTitle}
         description={confirmDescription}
-        confirmLabel={
-          forceAction === "cancel" ? "Ya, batalkan" : "Ya, selesaikan"
+        footer={
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="ghost"
+              fullWidth={false}
+              disabled={submitting}
+              onClick={() => {
+                setConfirmOpen(false)
+                setReauthPassword("")
+                setReauthError(null)
+              }}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              fullWidth={false}
+              loading={submitting}
+              onClick={() => void executeForceAction()}
+            >
+              {forceAction === "cancel" ? "Ya, batalkan" : "Ya, selesaikan"}
+            </Button>
+          </div>
         }
-        cancelLabel="Batal"
-        destructive
-        loading={submitting}
-        onConfirm={() => void executeForceAction()}
-      />
+      >
+        <div className="pt-2">
+          <p className="mb-2 text-caption text-text-secondary">
+            Tindakan ini memengaruhi dana escrow. Masukkan kata sandi Anda
+            sebagai konfirmasi identitas — password tidak disimpan.
+          </p>
+          <Input
+            type="password"
+            value={reauthPassword}
+            onChange={(e) => {
+              setReauthPassword(e.target.value)
+              if (reauthError) setReauthError(null)
+            }}
+            placeholder="Kata sandi Anda"
+            autoComplete="current-password"
+            autoFocus
+          />
+          {reauthError ? (
+            <p role="alert" className="mt-1 text-caption text-danger-text">
+              {reauthError}
+            </p>
+          ) : null}
+        </div>
+      </Dialog>
       {/* H02: dialog kustomisasi kolom */}
       <ColumnCustomizer prefs={cols} />
     </RoleGate>

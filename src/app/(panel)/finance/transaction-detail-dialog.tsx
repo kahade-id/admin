@@ -42,6 +42,14 @@ function formatRupiah(n: unknown): string {
   return `Rp${formatNumber(n)}`
 }
 
+/** Label Indonesia untuk status transaksi — jangan tampilkan enum mentah (DSC-015). */
+const TX_STATUS_LABEL: Record<string, string> = {
+  PENDING: "Menunggu",
+  PROCESSING: "Diproses",
+  SUCCESS: "Berhasil",
+  FAILED: "Gagal",
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -108,7 +116,7 @@ export function TransactionDetailDialog({
             <Field label="Tipe">{String(detail.type)}</Field>
             <Field label="Status">
               <Badge tone={String(detail.status) === "SUCCESS" ? "success" : String(detail.status) === "FAILED" ? "danger" : "warning"}>
-                {String(detail.status)}
+                {TX_STATUS_LABEL[String(detail.status)] ?? String(detail.status)}
               </Badge>
             </Field>
             <Field label="Pemilik wallet">

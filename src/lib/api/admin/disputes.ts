@@ -21,7 +21,22 @@ const idempotencyHeaders = (): Record<string, string> => ({
   "Idempotency-Key": newIdempotencyKey(),
 })
 
-export type DisputeStatus = string
+/**
+ * Status sengketa — selaras enum backend `DisputeStatus`
+ * (OPEN|ASSIGNED|UNDER_REVIEW|WAITING_RESPONSE|RESOLVED|ESCALATED).
+ *
+ * ESI-019 (audit integrasi 2026-09-30): sebelumnya `string` polos —
+ * typo status tak tertangkap tsc dan drift enum backend tak terdeteksi.
+ * `string` tetap ditoleransi sebagai fallback untuk nilai baru backend.
+ */
+export type DisputeStatus =
+  | "OPEN"
+  | "ASSIGNED"
+  | "UNDER_REVIEW"
+  | "WAITING_RESPONSE"
+  | "RESOLVED"
+  | "ESCALATED"
+  | (string & {})
 
 export type AdminDisputeItem = {
   id: string

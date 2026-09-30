@@ -68,10 +68,11 @@ const PAGE_SIZE = 20
 
 const STATUS_OPTIONS = [
   { value: "ALL", label: "Semua" },
-  // BAI-065: UNVERIFIED = status awal pengajuan — bisa difilter eksplisit.
+  // BAI-065: UNVERIFIED = status awal pengajuan — bisa difilter eksplisit
+  // (nilai enum backend KycStatus yang valid; jangan dibuang).
   { value: "UNVERIFIED", label: "Belum verifikasi" },
-  { value: "PENDING", label: "Menunggu" },
-  { value: "APPROVED", label: "Disetujui" },
+  { value: "PENDING", label: "Sedang ditinjau" },
+  { value: "APPROVED", label: "Terverifikasi" },
   { value: "REJECTED", label: "Ditolak" },
   { value: "REVOKED", label: "Dicabut" },
 ]

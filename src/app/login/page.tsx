@@ -27,10 +27,15 @@ import {
   adminVerify2fa,
   adminMfaSetup,
   adminMfaEnable,
+  adminFirstPasswordChange,
   type AdminLoginResult,
 } from "@/lib/api/admin/auth"
+import {
+  AdminCaptchaSlider,
+  type AdminCaptchaSolution,
+} from "@/components/security/admin-captcha-slider"
 
-type Phase = "credentials" | "mfa" | "mfa-setup"
+type Phase = "credentials" | "mfa" | "mfa-setup" | "password-change"
 
 function LoginForm() {
   const router = useRouter()
@@ -49,6 +54,13 @@ function LoginForm() {
   // ADM-426: hitung mundur setelah 429 (rate limit / lockout sementara).
   const [cooldownLeft, setCooldownLeft] = useState(0)
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  // AUT-003: slider captcha — muncul bila backend menjawab 401 CAPTCHA_REQUIRED.
+  const [captcha, setCaptcha] = useState<AdminCaptchaSolution | null>(null)
+  const [captchaResetKey, setCaptchaResetKey] = useState(0)
+  const [captchaRequired, setCaptchaRequired] = useState(false)
+  // AUT-011: password baru untuk akun yang wajib ganti (akun baru / direset).
+  const [newPassword, setNewPassword] = useState("")
+  const [newPassword2, setNewPassword2] = useState("")
 
   useEffect(() => {
     return () => {
@@ -74,6 +86,25 @@ function LoginForm() {
   function handleAuthError(err: unknown) {
     const status = (err as { status?: number } | null)?.status
     const retryAfter = (err as { retryAfter?: number } | null)?.retryAfter
+    const code = (err as { code?: string } | null)?.code
+    // AUT-003: backend meminta slider captcha (3+ login gagal dari IP ini).
+    // Muat tantangan baru — tantangan lama dihapus backend setelah verifikasi
+    // pertama, jadi tidak bisa dipakai ulang.
+    if (
+      code === "CAPTCHA_REQUIRED" ||
+      code === "CAPTCHA_FAILED" ||
+      code === "CAPTCHA_EXPIRED"
+    ) {
+      setCaptchaRequired(true)
+      setCaptcha(null)
+      setCaptchaResetKey((k) => k + 1)
+      setError(
+        code === "CAPTCHA_REQUIRED"
+          ? "Verifikasi keamanan diperlukan. Geser kenop sampai sejajar garis, lalu coba masuk lagi."
+          : "Verifikasi gagal atau kedaluwarsa. Selesaikan tantangan baru di bawah, lalu coba lagi.",
+      )
+      return
+    }
     if (status === 429) {
       // ADM-426: banner countdown khusus — bukan error field biasa.
       const seconds = retryAfter && retryAfter > 0 ? Math.ceil(retryAfter) : 60
@@ -112,6 +143,34 @@ function LoginForm() {
       return
     }
 
+    if (phase === "password-change") {
+      // AUT-011: akun baru / password direset — wajib ganti password dulu.
+      // Endpoint first-password-change TIDAK menerbitkan sesi; setelah sukses
+      // pengguna login ulang dengan password baru.
+      if (newPassword.length < 12) {
+        setError("Kata sandi baru minimal 12 karakter.")
+        return
+      }
+      if (newPassword !== newPassword2) {
+        setError("Konfirmasi kata sandi tidak cocok.")
+        return
+      }
+      setLoading(true)
+      try {
+        await adminFirstPasswordChange(tempToken!, newPassword)
+        toast.show({ title: "Kata sandi diganti. Silakan masuk dengan kata sandi baru.", tone: "success" })
+        setNewPassword("")
+        setNewPassword2("")
+        setTempToken(null)
+        setPhase("credentials")
+      } catch (err) {
+        handleAuthError(err)
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     if (phase === "mfa-setup") {
       // Langkah 2b (03-#8): selesaikan enroll MFA.
       if (totp.trim().length < 6) {
@@ -138,8 +197,23 @@ function LoginForm() {
     }
     setLoading(true)
     try {
-      const res: AdminLoginResult = await adminLogin(email.trim(), password)
-      if ("requiresMfa" in res && res.requiresMfa) {
+      // AUT-003: sertakan jawaban captcha bila backend mewajibkannya.
+      const res: AdminLoginResult = await adminLogin(
+        email.trim(),
+        password,
+        undefined,
+        captchaRequired && captcha
+          ? { captchaId: captcha.challengeId, captchaAnswer: captcha.answerX }
+          : undefined,
+      )
+      // AUT-003: captcha lolos / tidak diminta lagi — sembunyikan slider.
+      setCaptchaRequired(false)
+      if ("requiresPasswordChange" in res && res.requiresPasswordChange) {
+        // AUT-011: akun wajib ganti password — belum ada sesi.
+        setTempToken(res.tempToken)
+        setPhase("password-change")
+        toast.show({ title: "Anda wajib mengganti kata sandi terlebih dahulu", tone: "info" })
+      } else if ("requiresMfa" in res && res.requiresMfa) {
         setTempToken(res.tempToken)
         setPhase("mfa")
         toast.show({ title: "Masukkan kode authenticator", tone: "info" })
@@ -168,6 +242,10 @@ function LoginForm() {
     setError(null)
     setMfaSecret(null)
     setMfaOtpauthUrl(null)
+    setNewPassword("")
+    setNewPassword2("")
+    setCaptcha(null)
+    setCaptchaRequired(false)
     setPhase("credentials")
   }
 
@@ -181,7 +259,9 @@ function LoginForm() {
               ? "Verifikasi dua langkah"
               : phase === "mfa-setup"
                 ? "Aktifkan autentikasi dua langkah"
-                : "Masuk ke panel admin"}
+                : phase === "password-change"
+                  ? "Ganti kata sandi"
+                  : "Masuk ke panel admin"}
           </p>
         </CardHeader>
         <CardBody>
@@ -198,6 +278,33 @@ function LoginForm() {
                   autoFocus
                 />
               </Field>
+            ) : phase === "password-change" ? (
+              <>
+                <p className="text-body text-text-secondary">
+                  Akun Anda wajib mengganti kata sandi (akun baru atau kata
+                  sandi direset admin). Minimal 12 karakter dengan huruf besar,
+                  huruf kecil, angka, dan simbol.
+                </p>
+                <Field label="Kata sandi baru" error={error ?? undefined}>
+                  <Input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                    placeholder="Minimal 12 karakter"
+                    autoFocus
+                  />
+                </Field>
+                <Field label="Ulangi kata sandi baru">
+                  <Input
+                    type="password"
+                    value={newPassword2}
+                    onChange={(e) => setNewPassword2(e.target.value)}
+                    autoComplete="new-password"
+                    placeholder="Ulangi kata sandi baru"
+                  />
+                </Field>
+              </>
             ) : phase === "mfa-setup" ? (
               <>
                 <p className="text-body text-text-secondary">
@@ -250,6 +357,14 @@ function LoginForm() {
                 </Field>
               </>
             )}
+            {/* AUT-003: slider captcha — hanya bila backend mewajibkan. */}
+            {phase === "credentials" && captchaRequired ? (
+              <AdminCaptchaSlider
+                resetKey={captchaResetKey}
+                disabled={loading}
+                onSolve={setCaptcha}
+              />
+            ) : null}
             {/* ADM-426: banner lockout/rate-limit dengan countdown dari Retry-After. */}
             {cooldownLeft > 0 ? (
               <p
@@ -260,7 +375,13 @@ function LoginForm() {
               </p>
             ) : null}
             <Button type="submit" loading={loading} disabled={cooldownLeft > 0}>
-              {phase === "credentials" ? "Masuk" : phase === "mfa-setup" ? "Aktifkan MFA" : "Verifikasi"}
+              {phase === "credentials"
+                ? "Masuk"
+                : phase === "mfa-setup"
+                  ? "Aktifkan MFA"
+                  : phase === "password-change"
+                    ? "Ganti kata sandi"
+                    : "Verifikasi"}
             </Button>
             {phase !== "credentials" ? (
               <Button type="button" variant="ghost" onClick={resetToCredentials}>

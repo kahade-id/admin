@@ -30,7 +30,7 @@ const ADMIN_TOKEN_KEY = "kahade.admin.accessToken"
 
 /** Dilempar saat sesi admin tidak valid / kedaluwarsa dan refresh gagal. */
 export class AdminAuthError extends Error {
-  constructor(message = "Sesi admin berakhir. Silakan login kembali.") {
+  constructor(message = "Sesi Anda telah berakhir. Silakan masuk kembali.") {
     super(message)
     this.name = "AdminAuthError"
   }
@@ -168,6 +168,7 @@ async function request<T>(
 
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as {
+      code?: string
       message?: string
       error?: string
       errors?: { retryAfter?: number }
@@ -175,10 +176,14 @@ async function request<T>(
     } | null
     const apiErr = new Error(err?.message ?? err?.error ?? `Admin API ${res.status}`) as Error & {
       status?: number
+      // AUT-003: kode error backend (mis. CAPTCHA_REQUIRED) agar UI bisa
+      // bereaksi spesifik — sebelumnya code dibuang dan UI buta.
+      code?: string
       // ADM-426: durasi tunggu (detik) dari header Retry-After / body 429.
       retryAfter?: number
     }
     apiErr.status = res.status
+    if (err?.code) apiErr.code = err.code
     const headerRetryAfter = Number(res.headers.get("Retry-After"))
     const bodyRetryAfter = Number(err?.retryAfter ?? err?.errors?.retryAfter)
     const retryAfter = Number.isFinite(headerRetryAfter) && headerRetryAfter > 0

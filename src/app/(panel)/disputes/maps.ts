@@ -2,8 +2,9 @@
 
 export const DISPUTE_STATUS_LABEL: Record<string, string> = {
   OPEN: "Terbuka",
-  ASSIGNED: "Ditugaskan",
-  UNDER_REVIEW: "Ditinjau",
+  ASSIGNED: "Ditugaskan ke mediator",
+  UNDER_REVIEW: "Ditinjau mediator",
+  WAITING_RESPONSE: "Menunggu tanggapan",
   ESCALATED: "Dieskalasi",
   RESOLVED: "Selesai",
 }
@@ -15,6 +16,7 @@ export const DISPUTE_STATUS_TONE: Record<
   OPEN: "warning",
   ASSIGNED: "info",
   UNDER_REVIEW: "info",
+  WAITING_RESPONSE: "warning",
   ESCALATED: "danger",
   RESOLVED: "success",
 }

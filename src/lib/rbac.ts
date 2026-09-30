@@ -19,10 +19,14 @@
  * - admin-campaigns.controller.ts:26  → SUPER_ADMIN
  * - admin-insurance-claims.controller.ts:18 → SUPER_ADMIN, FINANCE_ADMIN, CUSTOMER_SUPPORT
  * - admin-support.controller.ts:19    → SUPER_ADMIN, CUSTOMER_SUPPORT
- * - admin-feedback.controller.ts       → (worker lain; kontrak asumsi di
- *   src/lib/api/admin/feedback.ts) SUPER_ADMIN, CUSTOMER_SUPPORT
- * - admin-milestones.controller.ts     → (worker lain; kontrak asumsi di
- *   src/lib/api/admin/milestones.ts) SUPER_ADMIN, FINANCE_ADMIN
+ * - admin-feedback.controller.ts       → TERVERIFIKASI di kode backend
+ *   (@AdminRoles('SUPER_ADMIN','CUSTOMER_SUPPORT'), class-level) —
+ *   sebelumnya tertulis "kontrak asumsi", kini cocok (audit AUT-012,
+ *   2026-10-01).
+ * - admin-milestones.controller.ts     → TERVERIFIKASI di kode backend
+ *   (@AdminRoles('SUPER_ADMIN','FINANCE_ADMIN'), class-level) —
+ *   sebelumnya tertulis "kontrak asumsi", kini cocok (audit AUT-012,
+ *   2026-10-01).
  * - admin-qa-moderation.controller.ts  → SUPER_ADMIN, CUSTOMER_SUPPORT
  *   (hapus permanen & ekspor agregat: SUPER_ADMIN-only, method-level)
  * - admin-partner.controller.ts        → SUPER_ADMIN (semua endpoint CRUD/kunci)
@@ -78,6 +82,9 @@ export const MENU: MenuItem[] = [
   // BAI-043: antrean lifecycle EscrowDisbursement DANA (satu-satunya permukaan
   // admin untuk aliran uang aktual era tanpa-wallet).
   { label: "Disbursement DANA", href: "/finance/disbursements", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
+  // MFE-015: antrean disbursement escrow DANA (read-only) — role sama dengan
+  // backend @AdminRoles('FINANCE_ADMIN','SUPER_ADMIN') di controller finance.
+  { label: "Disbursement", href: "/disbursements", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Pesanan", href: "/orders", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
   { label: "Voucher", href: "/vouchers", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   // GO-PUBLIK (2026-09-28): role provisoris batch 43 diselaraskan dengan

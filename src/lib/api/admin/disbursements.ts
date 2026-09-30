@@ -1,8 +1,18 @@
 /**
- * Kahade admin — antrean lifecycle EscrowDisbursement DANA (BAI-043/044/045/050).
+ * Kahade admin — klien antrean lifecycle EscrowDisbursement DANA.
  *
  * Endpoint: `/v1/admin/finance/disbursements/*`
  * (lihat `backend/src/modules/admin/finance/admin-disbursement.controller.ts`).
+ *
+ * Gabungan merge 2026-10-01:
+ * - Basis be-admin (BAI-043/044/045/050): endpoint & bentuk respons selaras
+ *   backend (sumber kebenaran). Endpoint fe-admin `/v1/admin/disbursements`
+ *   SALAH (404 di backend) — jangan dipakai.
+ * - Plus fe-admin (MFE-015): label scope/status + tone badge, dan alias tipe
+ *   `AdminDisbursement`/`AdminDisbursementStatus` untuk halaman
+ *   `/disbursements` (read-only). Kueri `q` dipetakan ke `search` backend;
+ *   `sortBy`/`sortOrder` diabaikan (backend selalu `updatedAt` desc —
+ *   jangan kirim parameter fiktif, pelajaran BAI-061).
  *
  * Ini satu-satunya permukaan admin untuk aliran uang aktual era tanpa-wallet:
  * escrow order, milestone, cashback, referral, dispute release, legacy payout.
@@ -20,6 +30,7 @@
 import { adminHttp } from "@/lib/api/admin-client"
 import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import type { BadgeTone } from "@/components/ui/badge"
 
 export type DisbursementStatus =
   | "PENDING"
@@ -29,6 +40,9 @@ export type DisbursementStatus =
   | "FAILED"
   | "CANCELLED"
   | "NEEDS_REVIEW"
+
+/** Alias untuk halaman `/disbursements` (gaya penamaan fe-admin). */
+export type AdminDisbursementStatus = DisbursementStatus
 
 export type DisbursementScope =
   | "ORDER_ESCROW"
@@ -78,6 +92,25 @@ export type DisbursementListItem = {
   updatedAt: string
 }
 
+/**
+ * Bentuk tampilan untuk halaman `/disbursements` (MFE-015): bentuk
+ * `DisbursementListItem` backend (sumber kebenaran) + field turunan.
+ * `heldReason`/`lastError` hanya dikirim endpoint detail — di daftar selalu
+ * null (kolom "Keterangan" menampilkan "—" dengan jujur).
+ */
+export type AdminDisbursement = DisbursementListItem & {
+  /** Rupiah — alias `amountIdr` agar konsisten dengan halaman lain. */
+  amount: number
+  seller: {
+    userId: string
+    username: string | null
+    fullName: string | null
+    email: string | null
+  } | null
+  heldReason: string | null
+  lastError: string | null
+}
+
 export type DisbursementDetail = DisbursementListItem & {
   scopeRefId: string | null
   bankAccount: {
@@ -101,33 +134,64 @@ export type DisbursementQuery = {
   search?: string
 }
 
-export type DisbursementRecheckResult = {
-  id: string
-  idempotencyKey: string
-  /** Status mentah dari DANA Transfer-to-Bank Status API (null bila query gagal). */
-  providerStatus: string | null
-  /** CONFIRMED | FAILED | STILL_PROCESSING | QUERY_FAILED */
-  outcome: string
-  status: DisbursementStatus
+/**
+ * Kueri daftar disbursement gabungan: bentuk backend (`search`) + alias
+ * fe-admin (`q`). Hanya parameter yang didukung backend yang dikirim.
+ */
+export type ListDisbursementsQuery = {
+  page?: number
+  limit?: number
+  status?: DisbursementStatus | ""
+  scope?: DisbursementScope | string
+  /** Pencarian backend: idempotencyKey, danaReferenceNo, danaPartnerReferenceNo, sellerId, orderId publik. */
+  search?: string
+  /** Alias `search` — dipetakan ke `search` (`search` eksplisit menang). */
+  q?: string
+  /** Diabaikan: backend selalu mengurutkan `updatedAt` desc. */
+  sortBy?: "createdAt" | "updatedAt" | "amountSen"
+  /** Diabaikan: backend selalu mengurutkan `updatedAt` desc. */
+  sortOrder?: "asc" | "desc"
 }
 
-export type DisbursementReviewDecision = "RETRY" | "CANCEL" | "FORCE_SUCCESS"
-
-export type DisbursementReviewResult = {
-  id: string
-  idempotencyKey: string
-  status: DisbursementStatus
-  decision: DisbursementReviewDecision
+/** Turunkan bentuk tampilan `/disbursements` dari item backend (tanpa field fiktif). */
+function toAdminDisbursement(item: DisbursementListItem): AdminDisbursement {
+  return {
+    ...item,
+    amount: item.amountIdr,
+    seller: {
+      userId: item.sellerId,
+      username: null,
+      fullName: item.sellerName,
+      email: null,
+    },
+    heldReason: null,
+    lastError: null,
+  }
 }
 
-/** Daftar disbursement (read-only) dengan filter status & scope. */
+/**
+ * Daftar disbursement (read-only) dengan filter status & scope.
+ * Endpoint backend: `GET /v1/admin/finance/disbursements`.
+ */
 export function listDisbursements(
-  query: DisbursementQuery = {},
-): Promise<Paginated<DisbursementListItem>> {
-  return adminHttp.get<Paginated<DisbursementListItem>>(
-    "/v1/admin/finance/disbursements",
-    { query },
-  )
+  query: ListDisbursementsQuery = {},
+): Promise<Paginated<AdminDisbursement>> {
+  // BAI-061: hanya teruskan parameter yang didukung backend.
+  const params: Record<string, string | number> = {}
+  if (query.page) params.page = query.page
+  if (query.limit) params.limit = query.limit
+  if (query.status) params.status = query.status
+  if (query.scope) params.scope = query.scope
+  const search = (query.search ?? query.q)?.trim()
+  if (search) params.search = search
+  return adminHttp
+    .get<Paginated<DisbursementListItem>>("/v1/admin/finance/disbursements", {
+      query: params,
+    })
+    .then((res) => ({
+      ...res,
+      data: (res.data ?? []).map(toAdminDisbursement),
+    }))
 }
 
 /** Detail satu disbursement (tercatat di audit trail backend). */
@@ -184,4 +248,65 @@ export function requeueDisbursement(
     {},
     { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
   )
+}
+
+export type DisbursementRecheckResult = {
+  id: string
+  idempotencyKey: string
+  /** Status mentah dari DANA Transfer-to-Bank Status API (null bila query gagal). */
+  providerStatus: string | null
+  /** CONFIRMED | FAILED | STILL_PROCESSING | QUERY_FAILED */
+  outcome: string
+  status: DisbursementStatus
+}
+
+export type DisbursementReviewDecision = "RETRY" | "CANCEL" | "FORCE_SUCCESS"
+
+export type DisbursementReviewResult = {
+  id: string
+  idempotencyKey: string
+  status: DisbursementStatus
+  decision: DisbursementReviewDecision
+}
+
+/** Label ringkas scope (tanpa jargon enum backend) — MFE-015. */
+export function disbursementScopeLabel(scope: string): string {
+  switch (scope) {
+    case "ORDER_ESCROW":
+      return "Escrow order"
+    case "MILESTONE":
+      return "Milestone"
+    case "DISPUTE_RELEASE":
+      return "Lepas sengketa"
+    case "CASHBACK":
+      return "Cashback"
+    case "REFERRAL":
+      return "Referral"
+    case "LEGACY_WALLET_PAYOUT":
+      return "Payout lama"
+    default:
+      return scope
+  }
+}
+
+/** Label Indonesia untuk status disbursement — MFE-015. */
+export const DISBURSEMENT_STATUS_LABEL: Record<DisbursementStatus, string> = {
+  PENDING: "Menunggu",
+  HELD_NO_BANK: "Tertahan — tanpa rekening",
+  PROCESSING: "Diproses",
+  SUCCESS: "Berhasil",
+  FAILED: "Gagal",
+  CANCELLED: "Dibatalkan",
+  NEEDS_REVIEW: "Perlu review",
+}
+
+/** Tone badge untuk status disbursement — MFE-015. */
+export const DISBURSEMENT_STATUS_TONE: Record<DisbursementStatus, BadgeTone> = {
+  PENDING: "neutral",
+  HELD_NO_BANK: "warning",
+  PROCESSING: "info",
+  SUCCESS: "success",
+  FAILED: "danger",
+  CANCELLED: "neutral",
+  NEEDS_REVIEW: "warning",
 }

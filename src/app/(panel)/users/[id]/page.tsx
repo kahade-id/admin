@@ -145,7 +145,8 @@ function walletLockReasonLabel(
 function KycBadge({ status }: { status: KycStatus }) {
   if (!status) return <Badge tone="neutral">—</Badge>
   const upper = status.toUpperCase()
-  // BAI-065/BAI-069: UNVERIFIED & REVOKED kini punya label eksplisit.
+  // BAI-065/BAI-069 + ESI-020: UNVERIFIED & REVOKED punya label eksplisit —
+  // jangan tampilkan enum mentah. Tone selaras KYC_STATUS_TONE (kyc/maps.ts).
   if (upper === "APPROVED") return <Badge tone="success">Terverifikasi</Badge>
   if (upper === "PENDING") return <Badge tone="warning">Menunggu</Badge>
   if (upper === "UNVERIFIED") return <Badge tone="neutral">Belum verifikasi</Badge>

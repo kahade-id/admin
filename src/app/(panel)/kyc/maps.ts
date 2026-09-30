@@ -2,8 +2,8 @@
 
 export const KYC_STATUS_LABEL: Record<string, string> = {
   UNVERIFIED: "Belum verifikasi",
-  PENDING: "Menunggu",
-  APPROVED: "Disetujui",
+  PENDING: "Sedang ditinjau",
+  APPROVED: "Terverifikasi",
   REJECTED: "Ditolak",
   REVOKED: "Dicabut",
 }

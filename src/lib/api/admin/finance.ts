@@ -79,6 +79,13 @@ export type EscrowSummary = {
   activeEscrowOrders: number
   /** BAI-047: sumber angka — ORDER_BASED (dana dipegang DANA, era tanpa-wallet) | WALLET_BASED. */
   source?: "WALLET_BASED" | "ORDER_BASED"
+  /**
+   * MFE-011: agregat escrow DANA-direct (mode tanpa-wallet) — sumber
+   * kebenaran escrow saat ini, bukan wallet.escrowBalance.
+   */
+  danaEscrowBalance?: number
+  danaEscrowPayments?: number
+  danaDisbursementsPending?: number
 }
 
 export type RevenueBreakdown = {

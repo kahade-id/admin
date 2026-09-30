@@ -85,7 +85,35 @@ export type AdminOrderDetail = AdminOrderItem & {
     createdAt?: string
     [key: string]: unknown
   }>
+  /**
+   * MFE-012/MFE-013: jejak finansial DANA-direct per order — diekspos backend
+   * di `GET /v1/admin/orders/:id` (field `danaPayments`). Mode tanpa-wallet:
+   * tidak ada `walletTransactions` escrow; DANA-direct adalah sumber kebenaran.
+   */
+  danaPayments?: AdminDanaPayment[]
   dispute?: { id?: string; status?: string; [key: string]: unknown } | null
+}
+
+/**
+ * MFE-012/MFE-013: snapshot charge DANA-direct untuk satu order (IDR).
+ * Cerminan `danaPayments` dari `AdminOrdersService.getOrderDetail` backend.
+ */
+export type AdminDanaPayment = {
+  id: string
+  partnerReferenceNo: string
+  payKind: string
+  purpose: string
+  status: string
+  amount: number
+  providerFee: number
+  grossAmount: number
+  refundedAmount: number
+  refundReference: string | null
+  danaPartnerReferenceNo: string | null
+  danaReferenceNo: string | null
+  paidAt: string | null
+  failedAt: string | null
+  createdAt: string
 }
 
 export type ForceActionResult = {
@@ -136,13 +164,19 @@ export function getAdminOrderDetail(orderId: string): Promise<AdminOrderDetail> 
  * Paksa batal order (intervensi escrow, termasuk refund). `reason` wajib
  * (min 10 karakter).
  */
+/**
+ * AUT-013: force-cancel WAJIB menyertakan password admin (reauth) — backend
+ * memverifikasi password terhadap hash dan mengaudit kegagalan. Tanpa ini,
+ * sesi admin yang dibiarkan terbuka bisa membatalkan escrow tanpa hambatan.
+ */
 export function forceCancelOrder(
   orderId: string,
   reason: string,
+  password: string,
 ): Promise<ForceActionResult> {
   return adminHttp.post<ForceActionResult>(
     `/v1/admin/orders/${encodeURIComponent(orderId)}/force-cancel`,
-    { reason },
+    { reason, password },
     { headers: { "Idempotency-Key": newIdempotencyKey() } },
   )
 }
@@ -151,13 +185,19 @@ export function forceCancelOrder(
  * Paksa selesaikan order — escrow dicairkan ke penjual (intervensi escrow).
  * Hanya untuk order PROCESSING / IN_DELIVERY. `reason` wajib (min 10 karakter).
  */
+/**
+ * AUT-013: force-complete WAJIB menyertakan password admin (reauth) — backend
+ * memverifikasi password terhadap hash dan mengaudit kegagalan. Tanpa ini,
+ * sesi admin yang dibiarkan terbuka bisa mencairkan escrow tanpa hambatan.
+ */
 export function forceCompleteOrder(
   orderId: string,
   reason: string,
+  password: string,
 ): Promise<ForceActionResult> {
   return adminHttp.post<ForceActionResult>(
     `/v1/admin/orders/${encodeURIComponent(orderId)}/force-complete`,
-    { reason },
+    { reason, password },
     { headers: { "Idempotency-Key": newIdempotencyKey() } },
   )
 }

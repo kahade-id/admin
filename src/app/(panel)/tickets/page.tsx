@@ -65,7 +65,7 @@ const QUEUE_TABS: { value: QueueTab; label: string; hint: string }[] = [
 const FILTER_OPTIONS = [
   { value: "ALL", label: "Semua" },
   { value: "OPEN", label: "Terbuka" },
-  { value: "IN_PROGRESS", label: "Diproses" },
+  { value: "IN_PROGRESS", label: "Ditangani" },
   { value: "RESOLVED", label: "Selesai" },
   { value: "CLOSED", label: "Ditutup" },
 ]

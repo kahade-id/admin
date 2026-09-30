@@ -81,7 +81,7 @@ type Resolution = DisputeDecision
 const RESOLUTION_OPTIONS = [
   { value: "FULL_BUYER", label: "Menangkan pembeli" },
   { value: "FULL_SELLER", label: "Menangkan penjual" },
-  { value: "SPLIT", label: "Bagi dua (split)" },
+  { value: "SPLIT", label: "Dana dibagi kedua pihak" },
 ]
 
 /**
