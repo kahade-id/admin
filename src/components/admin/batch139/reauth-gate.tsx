@@ -15,6 +15,11 @@
  * sisi server butuh endpoint/API khusus (belum ada); backend tetap menjadi
  * penegak otorisasi via RBAC yang sudah ada.
  *
+ * BAI-115 / BACKLOG: bukti re-auth per-aksi yang diverifikasi server (mis.
+ * token step-up berumur pendek yang wajib dilampirkan tiap request kritis).
+ * Sampai itu ada, copy UI TIDAK BOLEH mengklaim "setiap aksi diverifikasi
+ * ulang" — yang benar: verifikasi membuka jendela konfirmasi 10 menit.
+ *
  * Pemakaian:
  *   const reauth = useReauthGate()
  *   <Button onClick={() => reauth.require(() => doCriticalAction(), "Ubah limit payout")}>

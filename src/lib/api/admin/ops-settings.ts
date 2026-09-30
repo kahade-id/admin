@@ -18,6 +18,9 @@ export type OpsSettingView = {
   displayValue: string | null
   configured: boolean
   source: "db" | "env" | null
+  /** BAI-117: "ok" | "not_set" | "decrypt_failed" — bedakan "belum diset"
+   *  dari "baris DB ada tapi gagal didekripsi". */
+  status: "ok" | "not_set" | "decrypt_failed"
   updatedAt: string | null
   updatedBy: string | null
   version: number
@@ -38,8 +41,24 @@ export async function listOpsSettings(): Promise<OpsSettingView[]> {
   return (res as { settings: OpsSettingView[] }).settings
 }
 
-export async function updateOpsSetting(key: string, value: string): Promise<OpsSettingView> {
-  const res = await adminHttp.put(`/v1/admin/ops-settings/${encodeURIComponent(key)}`, { value })
+export async function updateOpsSetting(
+  key: string,
+  value: string,
+  expectedVersion?: number,
+): Promise<OpsSettingView> {
+  const res = await adminHttp.put(`/v1/admin/ops-settings/${encodeURIComponent(key)}`, {
+    value,
+    ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+  })
+  return (res as { setting: OpsSettingView }).setting
+}
+
+/**
+ * BAI-104: hapus override panel — nilai kembali ke default/.env.
+ * Diaudit sebagai DELETE di backend (SUPER_ADMIN).
+ */
+export async function deleteOpsSetting(key: string): Promise<OpsSettingView> {
+  const res = await adminHttp.delete(`/v1/admin/ops-settings/${encodeURIComponent(key)}`)
   return (res as { setting: OpsSettingView }).setting
 }
 
@@ -67,7 +86,11 @@ export async function getOpsSettingHistory(key: string): Promise<OpsSettingAudit
 export type MaintenanceStatus = {
   enabled: boolean
   message: string | null
-  updatedAt?: string
+  /** BAI-114: waktu/perubahan nyata dari baris DB (null bila belum pernah diset). */
+  updatedAt: string | null
+  updatedBy: string | null
+  /** BAI-118: versi MAINTENANCE_MODE untuk optimistic locking. */
+  version: number
 }
 
 export async function getMaintenanceStatus(): Promise<MaintenanceStatus> {
@@ -77,9 +100,11 @@ export async function getMaintenanceStatus(): Promise<MaintenanceStatus> {
 export async function updateMaintenance(
   enabled: boolean,
   message?: string,
+  expectedVersion?: number,
 ): Promise<MaintenanceStatus> {
   return adminHttp.put("/v1/admin/maintenance", {
     enabled,
     ...(message !== undefined ? { message } : {}),
+    ...(expectedVersion !== undefined ? { expectedVersion } : {}),
   }) as Promise<MaintenanceStatus>
 }
