@@ -40,8 +40,9 @@ type AuthContextValue = {
   role: AdminRole | null
   /** Muat ulang profil (mis. setelah login). */
   refresh: () => Promise<void>
-  /** Logout: panggil backend lalu bersihkan token lokal. */
-  logout: () => Promise<void>
+  /** Logout: panggil backend (retry 3x) lalu bersihkan token lokal.
+   * Mengembalikan serverLogoutOk — false bila sesi server mungkin masih hidup. */
+  logout: () => Promise<{ serverLogoutOk: boolean }>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -69,8 +70,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
-    await adminLogout()
+    const result = await adminLogout()
     setState({ status: "guest" })
+    return result
   }, [])
 
   useEffect(() => {
