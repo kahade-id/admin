@@ -136,11 +136,17 @@ describe("aksi moderasi tunggal", () => {
     })
   })
 
-  it("revoke: POST …/revoke dengan reason opsional", async () => {
-    await revokeKyc("k-1")
+  it("revoke: POST …/revoke dengan reason wajib (min 10)", async () => {
+    await revokeKyc("k-1", "Dokumen terbukti palsu")
     expect(adminHttpMock.post).toHaveBeenCalledWith("/v1/admin/kyc/k-1/revoke", {
-      reason: undefined,
+      reason: "Dokumen terbukti palsu",
     })
+  })
+
+  it("revoke: gagal cepat bila reason kosong/<10 (BAI-008)", async () => {
+    await expect(revokeKyc("k-1")).rejects.toThrow("minimal 10 karakter")
+    await expect(revokeKyc("k-1", "pendek")).rejects.toThrow("minimal 10 karakter")
+    expect(adminHttpMock.post).not.toHaveBeenCalled()
   })
 
   it("document-urls: butuh password admin (re-autentikasi)", async () => {

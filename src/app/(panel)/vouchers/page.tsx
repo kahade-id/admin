@@ -1084,11 +1084,17 @@ export function CampaignsTab() {
 
   async function handleConfirm() {
     if (!confirm) return
+    // BAI-007: backend activate/pause mewajibkan { reason } (min 5 char).
+    const reason = confirmReason.trim()
+    if (reason.length < 5) {
+      toast.show({ title: "Alasan wajib diisi (minimal 5 karakter)", tone: "danger" })
+      return
+    }
     const id = campaignKey(confirm.item)
     setConfirming(true)
     try {
       if (confirm.kind === "activate") {
-        const res = await activateCampaign(id)
+        const res = await activateCampaign(id, reason)
         const issued = res.voucherIssuance?.issued
         toast.show({
           title: "Kampanye diaktifkan.",
@@ -1097,10 +1103,11 @@ export function CampaignsTab() {
           tone: "success",
         })
       } else {
-        await pauseCampaign(id)
+        await pauseCampaign(id, reason)
         toast.show({ title: "Kampanye dijeda.", tone: "success" })
       }
       setConfirm(null)
+      setConfirmReason("")
       void load(page, filters)
     } catch (e) {
       toast.show({
@@ -1232,7 +1239,10 @@ export function CampaignsTab() {
                         <Button
                           size="sm"
                           fullWidth={false}
-                          onClick={() => setConfirm({ kind: "activate", item: r })}
+                          onClick={() => {
+                            setConfirmReason("")
+                            setConfirm({ kind: "activate", item: r })
+                          }}
                         >
                           Aktifkan
                         </Button>
@@ -1242,7 +1252,10 @@ export function CampaignsTab() {
                           variant="secondary"
                           size="sm"
                           fullWidth={false}
-                          onClick={() => setConfirm({ kind: "pause", item: r })}
+                          onClick={() => {
+                            setConfirmReason("")
+                            setConfirm({ kind: "pause", item: r })
+                          }}
                         >
                           Jeda
                         </Button>
@@ -1281,7 +1294,8 @@ export function CampaignsTab() {
         />
       </Dialog>
 
-      <ConfirmDialog
+      {/* BAI-007: alasan wajib (min 5 char) untuk aktifkan/jeda kampanye */}
+      <Dialog
         open={confirm != null}
         onClose={() => setConfirm(null)}
         title={confirm?.kind === "activate" ? "Aktifkan kampanye?" : "Jeda kampanye?"}
@@ -1292,10 +1306,36 @@ export function CampaignsTab() {
               : `Kampanye "${confirm.item.name}" akan dijeda — voucher personal baru tidak diterbitkan.`
             : undefined
         }
-        confirmLabel={confirm?.kind === "activate" ? "Aktifkan" : "Jeda"}
-        onConfirm={handleConfirm}
-        loading={confirming}
-      />
+        footer={
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="primary"
+              loading={confirming}
+              disabled={confirmReason.trim().length < 5}
+              onClick={handleConfirm}
+            >
+              {confirm?.kind === "activate" ? "Aktifkan" : "Jeda"}
+            </Button>
+            <Button variant="ghost" disabled={confirming} onClick={() => setConfirm(null)}>
+              Batal
+            </Button>
+          </div>
+        }
+      >
+        <TextArea
+          label="Alasan (wajib, min. 5 karakter)"
+          rows={3}
+          value={confirmReason}
+          onChange={(e) => setConfirmReason(e.target.value)}
+          placeholder="Tulis alasan perubahan status kampanye…"
+          maxLength={1000}
+          error={
+            confirmReason.length > 0 && confirmReason.trim().length < 5
+              ? "Minimal 5 karakter"
+              : undefined
+          }
+        />
+      </Dialog>
 
       <ConfirmDialog
         open={duplicateTarget != null}
