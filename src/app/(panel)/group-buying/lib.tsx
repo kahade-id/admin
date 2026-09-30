@@ -11,12 +11,17 @@ import type {
   GroupBuyStatus,
 } from "@/lib/api/admin/group-buying"
 
+/**
+ * ESI-013 (audit integrasi 2026-09-30): selaras enum backend `PatunganStatus`
+ * (OPEN|TARGET_REACHED|CONTEST|RELEASED|FAILED|REFUNDED).
+ */
 export const GROUP_BUY_STATUSES: { value: GroupBuyStatus; label: string }[] = [
   { value: "OPEN", label: "Buka (pengumpulan dana)" },
-  { value: "FUNDED", label: "Target tercapai" },
+  { value: "TARGET_REACHED", label: "Target tercapai" },
+  { value: "CONTEST", label: "Masa sanggah" },
+  { value: "RELEASED", label: "Cair ke host" },
   { value: "FAILED", label: "Gagal (auto-refund)" },
-  { value: "DISBURSED", label: "Cair ke host" },
-  { value: "CANCELLED", label: "Dibatalkan" },
+  { value: "REFUNDED", label: "Dana dikembalikan" },
 ]
 
 export function groupBuyStatusLabel(s: GroupBuyStatus): string {
@@ -27,13 +32,15 @@ export function groupBuyStatusTone(
   s: GroupBuyStatus,
 ): "success" | "warning" | "danger" | "neutral" | "info" {
   switch (s) {
-    case "FUNDED":
-    case "DISBURSED":
+    case "TARGET_REACHED":
+    case "RELEASED":
       return "success"
     case "OPEN":
       return "info"
+    case "CONTEST":
+      return "warning"
     case "FAILED":
-    case "CANCELLED":
+    case "REFUNDED":
       return "danger"
     default:
       return "neutral"
