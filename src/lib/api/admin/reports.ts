@@ -22,13 +22,45 @@ const idempotencyHeaders = (): Record<string, string> => ({
 
 export type ReportStatus = "PENDING" | "DISMISSED" | "RESOLVED" | string
 
+export type ReportUser = {
+  id?: string
+  userId?: string
+  username?: string | null
+  fullName?: string | null
+  avatarUrl?: string | null
+  isBanned?: boolean | null
+  [key: string]: unknown
+}
+
 export type UserReport = {
   id: string
   reporterId: string
-  reportedUserId?: string
-  reason: string
+  /**
+   * BAI-123/BAI-025: backend mengirim `targetId` + relasi `target`
+   * (tidak ada kolom `reportedUserId`) — UI sebelumnya membaca field yang
+   * tidak pernah ada sehingga "ID Terlapor" tidak pernah tampil.
+   */
+  targetId?: string
+  target?: ReportUser | null
+  reporter?: ReportUser | null
+  /**
+   * BAI-024: backend (model UserReport) tidak punya field `reason`; yang ada
+   * `category` (enum ReportCategory) + `description`. Kolom "Alasan" di UI
+   * dirender dari keduanya.
+   */
+  category: string
   description?: string
+  /** BAI-035 — URL bukti yang dilampirkan pelapor. */
+  evidenceUrls?: string[]
+  /** BAI-035 — order / pesan terkait (bila laporan berasal dari transaksi/chat). */
+  relatedOrderId?: string | null
+  relatedMessageId?: string | null
   status: ReportStatus
+  /** BAI-035 — catatan penanganan (diisi saat resolve / dismiss). */
+  resolution?: string | null
+  /** BAI-035 — admin peninjau + waktu peninjauan. */
+  reviewedBy?: string | null
+  reviewedAt?: string | null
   createdAt: string
   [key: string]: unknown
 }

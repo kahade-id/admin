@@ -20,6 +20,7 @@ import { TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
+import { Select } from "@/components/admin/select"
 import {
   dismissReport,
   getReportDetail,
@@ -30,6 +31,7 @@ import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 
 import {
+  REPORT_CATEGORY_LABEL,
   REPORT_FINAL_STATUSES,
   REPORT_STATUS_LABEL,
   REPORT_STATUS_TONE,
@@ -67,6 +69,12 @@ export default function ReportDetailPage() {
   const [action, setAction] = useState<Action | null>(null)
   const [notes, setNotes] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  // BAI-032 — pilihan status resolusi: backend mendukung RESOLVED_NO_ACTION
+  // selain default RESOLVED_ACTION_TAKEN; sebelumnya UI selalu tercatat
+  // "ditindak" sehingga metrik resolusi bias.
+  const [resolveStatus, setResolveStatus] = useState<"RESOLVED_ACTION_TAKEN" | "RESOLVED_NO_ACTION">(
+    "RESOLVED_ACTION_TAKEN",
+  )
 
   const load = useCallback(
     async (mode: "initial" | "refresh" = "initial") => {
@@ -92,12 +100,14 @@ export default function ReportDetailPage() {
   const openAction = (a: Action) => {
     setAction(a)
     setNotes("")
+    setResolveStatus("RESOLVED_ACTION_TAKEN")
   }
 
   const closeAction = () => {
     if (submitting) return
     setAction(null)
     setNotes("")
+    setResolveStatus("RESOLVED_ACTION_TAKEN")
   }
 
   const handleConfirm = async () => {
@@ -117,11 +127,19 @@ export default function ReportDetailPage() {
         await dismissReport(reportId, noteText || undefined)
         toast.show({ title: "Laporan diabaikan", tone: "success" })
       } else {
-        await resolveReport(reportId, noteText)
-        toast.show({ title: "Laporan diselesaikan", tone: "success" })
+        await resolveReport(reportId, noteText, resolveStatus)
+        toast.show({
+          title: "Laporan diselesaikan",
+          description:
+            resolveStatus === "RESOLVED_NO_ACTION"
+              ? "Status: selesai tanpa tindakan."
+              : "Status: selesai, ditindaklanjuti.",
+          tone: "success",
+        })
       }
       setAction(null)
       setNotes("")
+      setResolveStatus("RESOLVED_ACTION_TAKEN")
       await load("refresh")
     } catch (e) {
       toast.show({
@@ -187,15 +205,91 @@ export default function ReportDetailPage() {
               }
             />
             <CardBody>
-              <p className="text-h3 font-semibold text-text-primary">{report.reason}</p>
+              {/* BAI-024 — "Alasan" = category (label) + description; backend
+                  tidak punya field `reason`. */}
+              <p className="text-h3 font-semibold text-text-primary">
+                {REPORT_CATEGORY_LABEL[report.category] ?? report.category ?? "—"}
+              </p>
               {report.description ? (
                 <p className="mt-2 text-body text-text-primary">{report.description}</p>
               ) : null}
               <dl className="mt-4">
                 <KeyValue label="ID Laporan" value={report.id} mono />
+                {/* BAI-035 — tampilkan identitas pelapor dari objek `reporter`,
+                    bukan ID mentah saja. */}
+                <KeyValue
+                  label="Pelapor"
+                  value={
+                    report.reporter?.fullName ||
+                    report.reporter?.username ||
+                    report.reporter?.userId ||
+                    report.reporterId
+                  }
+                />
                 <KeyValue label="ID Pelapor" value={report.reporterId} mono />
-                {report.reportedUserId ? (
-                  <KeyValue label="ID Terlapor" value={report.reportedUserId} mono />
+                {/* BAI-123/BAI-025: baca `target`/`targetId` dari backend
+                    (bukan `reportedUserId` yang tidak pernah dikirim). */}
+                {report.target ? (
+                  <KeyValue
+                    label="Terlapor"
+                    value={
+                      report.target.fullName ||
+                      report.target.username ||
+                      report.target.userId ||
+                      report.target.id ||
+                      "—"
+                    }
+                  />
+                ) : null}
+                {report.targetId ? (
+                  <KeyValue label="ID Terlapor" value={report.targetId} mono />
+                ) : null}
+                {/* BAI-035 — konteks tambahan dari backend yang sebelumnya
+                    tidak dirender: status banned terlapor, bukti, keterkaitan
+                    order, hasil penanganan + siapa/waktu mereview. */}
+                {report.target?.isBanned != null ? (
+                  <KeyValue
+                    label="Status akun terlapor"
+                    value={report.target.isBanned ? "Diblokir" : "Aktif"}
+                  />
+                ) : null}
+                {report.relatedOrderId ? (
+                  <KeyValue label="Order terkait" value={report.relatedOrderId} mono />
+                ) : null}
+                {report.relatedMessageId ? (
+                  <KeyValue label="Pesan terkait" value={report.relatedMessageId} mono />
+                ) : null}
+                {report.evidenceUrls && report.evidenceUrls.length > 0 ? (
+                  <KeyValue
+                    label="Bukti"
+                    value={
+                      <span className="flex flex-col items-end gap-1">
+                        {report.evidenceUrls.map((u) => (
+                          <a
+                            key={u}
+                            href={u}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="break-all text-accent underline"
+                          >
+                            {u}
+                          </a>
+                        ))}
+                      </span>
+                    }
+                  />
+                ) : null}
+                {report.resolution ? (
+                  <KeyValue label="Hasil penanganan" value={report.resolution} />
+                ) : null}
+                {report.reviewedBy ? (
+                  <KeyValue label="Ditinjau oleh" value={report.reviewedBy} mono />
+                ) : null}
+                {report.reviewedAt ? (
+                  <KeyValue
+                    label="Waktu tinjau"
+                    value={formatDateTimeWIB(report.reviewedAt)}
+                  />
                 ) : null}
                 <KeyValue label="Dibuat" value={formatDateTimeWIB(report.createdAt)} />
               </dl>
@@ -249,6 +343,20 @@ export default function ReportDetailPage() {
           </div>
         }
       >
+        {!isDismiss ? (
+          <Select
+            label="Hasil penyelesaian"
+            value={resolveStatus}
+            onChange={(e) =>
+              setResolveStatus(e.target.value as "RESOLVED_ACTION_TAKEN" | "RESOLVED_NO_ACTION")
+            }
+            options={[
+              { value: "RESOLVED_ACTION_TAKEN", label: "Selesai — ditindaklanjuti" },
+              { value: "RESOLVED_NO_ACTION", label: "Selesai — tanpa tindakan" },
+            ]}
+            hint="BAI-032: pilih “tanpa tindakan” bila laporan valid tapi tidak perlu tindakan."
+          />
+        ) : null}
         <TextArea
           label={isDismiss ? "Catatan (opsional)" : "Resolusi (wajib, min. 5 karakter)"}
           rows={3}

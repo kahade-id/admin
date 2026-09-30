@@ -444,6 +444,9 @@ export default function RatingsPage() {
             }}
             error={reasonError ?? undefined}
             placeholder="Contoh: komentar mengandung kata kasar…"
+            // BAI-033 — backend RatingActionDto @MaxLength(500); batasi di
+            // client agar admin tidak dapat 400 generik setelah mengetik panjang.
+            maxLength={500}
           />
         </div>
       </Dialog>

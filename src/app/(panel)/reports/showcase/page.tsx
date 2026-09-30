@@ -1046,6 +1046,9 @@ function PendingAppealsSection() {
               onChange={(e) => setNote(e.target.value)}
               placeholder="Alasan mempertahankan / membalikkan keputusan…"
               rows={3}
+              // BAI-037 — backend DecideAppealDto @MaxLength(2000); batasi di
+              // client agar putusan panjang tidak gagal 400 setelah ditulis.
+              maxLength={2000}
             />
             <div className="flex gap-2">
               <Button variant="primary" fullWidth={false} loading={busy} onClick={submitDecision}>
