@@ -121,11 +121,12 @@ export function TransactionDetailDialog({
           <div>
             <h4 className="mb-2 text-body font-semibold text-text-primary">Referensi eksternal</h4>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-              <Field label="Midtrans order ID">{ext?.midtransOrderId ?? "—"}</Field>
-              <Field label="Flash transaction ID">{ext?.flashTransactionId ?? "—"}</Field>
-              <Field label="Iris payout ID">{ext?.irisPayoutId ?? "—"}</Field>
-              <Field label="Iris ref">{ext?.irisRef ?? "—"}</Field>
-              <Field label="VA">{ext?.vaBank && ext?.vaNumber ? `${ext.vaBank} ${ext.vaNumber}` : "—"}</Field>
+              {/* BAI-053: provider lama (Midtrans/Flash/Iris) hanya referensi historis — era DANA. */}
+              <Field label="Midtrans order ID (legacy)">{ext?.midtransOrderId ?? "—"}</Field>
+              <Field label="Flash transaction ID (legacy)">{ext?.flashTransactionId ?? "—"}</Field>
+              <Field label="Iris payout ID (legacy)">{ext?.irisPayoutId ?? "—"}</Field>
+              <Field label="Iris ref (legacy)">{ext?.irisRef ?? "—"}</Field>
+              <Field label="VA (legacy)">{ext?.vaBank && ext?.vaNumber ? `${ext.vaBank} ${ext.vaNumber}` : "—"}</Field>
             </div>
           </div>
 

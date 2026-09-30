@@ -75,6 +75,9 @@ export const MENU: MenuItem[] = [
   { label: "Moderasi Q&A", href: "/qa-moderation", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Badge & Verifikasi", href: "/badges", roles: ["SUPER_ADMIN"] },
   { label: "Keuangan & Escrow", href: "/finance", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
+  // BAI-043: antrean lifecycle EscrowDisbursement DANA (satu-satunya permukaan
+  // admin untuk aliran uang aktual era tanpa-wallet).
+  { label: "Disbursement DANA", href: "/finance/disbursements", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Pesanan", href: "/orders", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
   { label: "Voucher", href: "/vouchers", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   // GO-PUBLIK (2026-09-28): role provisoris batch 43 diselaraskan dengan
