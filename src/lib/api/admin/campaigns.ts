@@ -110,9 +110,12 @@ export function listCampaigns(params?: {
   status?: AdminCampaignStatus
   /** Filter pembuat (diteruskan ke backend bila didukung). */
   createdBy?: string
-  /** Rentang tanggal mulai kampanye, "YYYY-MM-DD" (diteruskan ke backend bila didukung). */
-  startsFrom?: string
-  startsTo?: string
+  /** Rentang tanggal mulai kampanye, "YYYY-MM-DD".
+   *  BAD-014: backend membaca @Query('from')/@Query('to') — param asing
+   *  diabaikan diam-diam sehingga filter tak berfungsi bila salah nama. */
+  from?: string
+  /** Rentang tanggal mulai kampanye, "YYYY-MM-DD". */
+  to?: string
 }): Promise<Paginated<AdminCampaignItem>> {
   return adminHttp.get<Paginated<AdminCampaignItem>>("/v1/admin/campaigns", {
     query: params,
