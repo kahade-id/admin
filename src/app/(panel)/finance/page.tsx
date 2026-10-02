@@ -30,12 +30,14 @@ import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
+import { useAuth } from "@/lib/auth-context"
 
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
-// H05: step-up re-auth sebelum approve/tolak penarikan (parsial —
-// enforcement server per aksi belum ada).
+// SEC-503: step-up server-side per aksi sebelum approve/tolak penarikan —
+// tiap aksi meminta kata sandi baru; server menerbitkan token sekali pakai
+// via header X-Step-Up-Token (fail-closed, tanpa jendela waktu client-side).
 import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 // H01: filter transaksi di URL. H02: preferensi kolom per admin.
 import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
@@ -132,6 +134,17 @@ const TYPE_FILTERS: Array<{ value: WalletTransactionType | ""; label: string }> 
   { value: "ORDER_REFUND", label: "Dana order dikembalikan" },
   { value: "FEE_DEDUCT", label: "Fee platform" },
   { value: "DISPUTE_RELEASE", label: "Cair sengketa" },
+  // BAD-019: sinkron dengan backend enum WalletTransactionType (16 nilai) —
+  // sebelumnya 9 tipe hilang dari filter termasuk MILESTONE_RELEASE.
+  { value: "REFERRAL_REWARD", label: "Reward referral" },
+  { value: "SUBSCRIPTION_PAYMENT", label: "Pembayaran langganan" },
+  { value: "ADMIN_CREDIT", label: "Kredit admin" },
+  { value: "ADMIN_DEBIT", label: "Debit admin" },
+  { value: "TRANSFER_SENT", label: "Transfer terkirim" },
+  { value: "TRANSFER_RECEIVED", label: "Transfer diterima" },
+  { value: "CAMPAIGN_CASHBACK", label: "Cashback kampanye" },
+  { value: "TOPUP_BONUS", label: "Bonus top-up" },
+  { value: "MILESTONE_RELEASE", label: "Cair milestone" },
 ]
 
 /** "YYYY-MM-DD" lokal dari Date. */
@@ -217,6 +230,10 @@ export default function FinancePage() {
 
 function FinancePageInner() {
   const toast = useToast()
+  const { role } = useAuth()
+  // BAD-018: tab "Jejak Audit" & "Rekonsiliasi" backend-nya SUPER_ADMIN-only
+  // (403 untuk FINANCE_ADMIN) — sembunyikan dari role lain agar tidak ada
+  // tombol yang selalu gagal.
 
   // Tab: ringkasan+antrean+transaksi vs jejak audit vs rekonsiliasi E3.
   const [activeTab, setActiveTab] = useState<"overview" | "audit" | "rekonsiliasi">("overview")
@@ -706,10 +723,13 @@ function FinancePageInner() {
                 {
                   key: "user",
                   header: "Pengguna",
-                  render: (r) =>
-                    r.wallet?.user?.fullName ??
-                    r.wallet?.user?.email ??
-                    "—",
+                  // SEC-505: identitas di-mask (nama/email tidak tampil mentah).
+                  render: (r) => {
+                    const u = r.wallet?.user
+                    if (u?.fullName) return maskName(u.fullName)
+                    if (u?.email) return maskEmail(u.email)
+                    return "—"
+                  },
                 },
                 {
                   key: "description",
@@ -794,15 +814,18 @@ function FinancePageInner() {
         </Button>
       </div>
 
-      {/* Tab navigasi */}
+      {/* Tab navigasi — BAD-018: "Jejak Audit" & "Rekonsiliasi" hanya untuk
+          SUPER_ADMIN (backend menolak 403 untuk FINANCE_ADMIN). */}
       <div className="mb-6 flex gap-2" role="tablist" aria-label="Navigasi keuangan">
         {(
           [
-            { id: "overview", label: "Ringkasan & Transaksi" },
-            { id: "audit", label: "Jejak Audit" },
-            { id: "rekonsiliasi", label: "Rekonsiliasi" },
+            { id: "overview", label: "Ringkasan & Transaksi", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
+            { id: "audit", label: "Jejak Audit", roles: ["SUPER_ADMIN"] },
+            { id: "rekonsiliasi", label: "Rekonsiliasi", roles: ["SUPER_ADMIN"] },
           ] as const
-        ).map((tab) => (
+        )
+          .filter((tab) => (tab.roles as readonly string[]).includes(role ?? ""))
+          .map((tab) => (
           <Button
             key={tab.id}
             variant={activeTab === tab.id ? "primary" : "secondary"}
@@ -1019,9 +1042,9 @@ function FinancePageInner() {
                 fullWidth={false}
                 loading={csvLoading}
                 onClick={() => void handleCsvExport()}
-                title="Unduh export CSV ledger untuk rentang tanggal terpilih"
+                title="Unduh export CSV ledger untuk rentang tanggal terpilih. Catatan: filter tipe/status/pencarian TIDAK ikut — selalu seluruh transaksi pada rentang."
               >
-                Unduh CSV
+                Unduh CSV (semua)
               </Button>
             }
           />

@@ -22,6 +22,8 @@ export const TX_META: Record<string, TxMeta> = {
   TRANSFER_RECEIVED: { label: "Transfer masuk", sign: "+" },
   CAMPAIGN_CASHBACK: { label: "Cashback", sign: "+" },
   TOPUP_BONUS: { label: "Bonus top up", sign: "+" },
+  // BAD-019: sinkron dengan backend enum WalletTransactionType.
+  MILESTONE_RELEASE: { label: "Cair milestone", sign: "+" },
 }
 
 /** Label Indonesia untuk tipe transaksi; fallback ke raw enum bila tak dikenal. */
