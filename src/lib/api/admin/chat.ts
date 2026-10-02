@@ -1,6 +1,7 @@
 /** Kahade admin — moderasi chat (Trust & Safety). */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { stepUpHeaders } from "@/lib/api/admin/step-up"
 
 /**
  * UUID v4 untuk `Idempotency-Key`. Backend mewajibkan header ini pada
@@ -19,6 +20,17 @@ function newIdempotencyKey(): string {
 const idempotencyHeaders = (): Record<string, string> => ({
   "Idempotency-Key": newIdempotencyKey(),
 })
+
+/**
+ * true bila error adalah 404 dari backend. Dipakai pola defensif: tim
+ * backend paralel membangun endpoint baru — 404 berarti endpoint belum
+ * ada di rilis yang sedang jalan, bukan kesalahan data.
+ */
+function isNotFoundError(e: unknown): boolean {
+  return (
+    typeof e === "object" && e !== null && (e as { status?: number }).status === 404
+  )
+}
 
 export type ModerationEvent = {
   id: string
@@ -142,4 +154,82 @@ export function listUserModerationEvents(userId: string): Promise<ModerationEven
   return adminHttp.get<ModerationEvent[]>(
     `/v1/admin/chat/users/${encodeURIComponent(userId)}/moderation-events`,
   )
+}
+
+// ---------------------------------------------------------------------------
+// FAL-003 (audit integrasi 2026-10-03): moderasi polling chat.
+// Admin sebelumnya buta terhadap polling — kini bisa melihat hasil
+// (opsi + jumlah suara + total) dan menutup polling.
+//
+// Kontrak backend (asumsi — tim backend membangun paralel; SELALU defensif):
+// - GET  /v1/admin/chat/polls/:pollId
+//   → { id, question, options: [{ id, text, voteCount }], totalVotes, isClosed, closedAt? }
+// - POST /v1/admin/chat/polls/:pollId/close  { reason }
+//   → poll setelah ditutup. Wajib header `X-Step-Up-Token` (aksi
+//   step-up `chat.poll.close`) + `Idempotency-Key`.
+//
+// 404 → Error dengan pesan jelas ("membutuhkan backend terbaru"), bukan crash.
+// ---------------------------------------------------------------------------
+
+export type ChatPollOption = {
+  id: string
+  text: string
+  voteCount: number
+}
+
+export type ChatPoll = {
+  id: string
+  question: string
+  options: ChatPollOption[]
+  totalVotes: number
+  isClosed: boolean
+  closedAt?: string | null
+  [key: string]: unknown
+}
+
+export async function getChatPoll(pollId: string): Promise<ChatPoll> {
+  try {
+    const res = await adminHttp.get<ChatPoll>(
+      `/v1/admin/chat/polls/${encodeURIComponent(pollId)}`,
+    )
+    return {
+      ...res,
+      options: Array.isArray(res?.options) ? res.options : [],
+      totalVotes: typeof res?.totalVotes === "number" ? res.totalVotes : 0,
+    }
+  } catch (e) {
+    if (isNotFoundError(e)) {
+      throw new Error(
+        "Hasil polling belum tersedia — membutuhkan backend terbaru (GET /v1/admin/chat/polls/:pollId).",
+      )
+    }
+    throw e
+  }
+}
+
+/**
+ * Tutup polling. `reason` wajib (dicatat di audit). `stepUpToken` dari
+ * step-up gate (aksi `chat.poll.close`) — jangan panggil tanpa token.
+ */
+export async function closeChatPoll(
+  pollId: string,
+  reason: string,
+  stepUpToken: string,
+): Promise<ChatPoll> {
+  try {
+    return await adminHttp.post<ChatPoll>(
+      `/v1/admin/chat/polls/${encodeURIComponent(pollId)}/close`,
+      { reason },
+      {
+        headers: { ...idempotencyHeaders(), ...stepUpHeaders(stepUpToken) },
+      },
+    )
+  } catch (e) {
+    if (isNotFoundError(e)) {
+      throw new Error(
+        "Tutup polling belum tersedia — membutuhkan backend terbaru (POST /v1/admin/chat/polls/:pollId/close).",
+      )
+    }
+    throw e
+  }
 }
