@@ -18,6 +18,7 @@
 
 import { API_BASE_URL } from "@/lib/api/config"
 import { unwrapResponse } from "@/lib/api/response"
+import { errorCopyForCode } from "@/lib/api/error-catalog"
 
 const ADMIN_TOKEN_KEY = "kahade.admin.accessToken"
 
@@ -174,7 +175,12 @@ async function request<T>(
       errors?: { retryAfter?: number }
       retryAfter?: number
     } | null
-    const apiErr = new Error(err?.message ?? err?.error ?? `Admin API ${res.status}`) as Error & {
+    // SYS-A-001: kode kritis dipetakan ke copy spesifik (jangan mentah).
+    // `code` mentah tetap dipertahankan untuk branching UI.
+    const specificCopy = errorCopyForCode(err?.code)
+    const apiErr = new Error(
+      specificCopy ?? err?.message ?? err?.error ?? `Admin API ${res.status}`,
+    ) as Error & {
       status?: number
       // AUT-003: kode error backend (mis. CAPTCHA_REQUIRED) agar UI bisa
       // bereaksi spesifik — sebelumnya code dibuang dan UI buta.

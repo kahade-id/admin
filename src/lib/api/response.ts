@@ -6,6 +6,7 @@
  * sebagai `ApiError`; envelope murni `{data, message?}` tanpa `success`
  * ikut di-unwrap.
  */
+import { errorCopyForCode } from "@/lib/api/error-catalog"
 
 /** Error API dengan info yang cukup untuk ditampilkan ke admin. */
 export class ApiError extends Error {
@@ -68,7 +69,12 @@ export function unwrapResponse(value: unknown): unknown {
 
 /** Ambil pesan yang layak tampil dari error tak dikenal. */
 export function userMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message
+  if (err instanceof ApiError) {
+    // SYS-A-001: kode backend kritis → copy spesifik (jangan mentah).
+    const specific = errorCopyForCode(err.backendCode ?? err.code)
+    if (specific) return specific
+    return err.message
+  }
   if (err instanceof Error && err.message) return err.message
   return "Terjadi kesalahan tak terduga."
 }
