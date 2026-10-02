@@ -114,9 +114,11 @@ export type AdminTransactionUser = {
 export type AdminTransactionItem = {
   id: string
   txId: string
-  type: WalletTransactionType | string
-  status: WalletTransactionStatus | string
-  withdrawStatus?: WithdrawStatus | string | null
+  // SYS-A-002: TANPA `| string` — union di atas sudah sinkron dengan enum
+  // Prisma backend; escape hatch menyembunyikan drift nilai dari compiler.
+  type: WalletTransactionType
+  status: WalletTransactionStatus
+  withdrawStatus?: WithdrawStatus | null
   amount: number
   balanceBefore?: number
   balanceAfter?: number
@@ -168,7 +170,7 @@ export type AdminTransactionDetail = AdminTransactionItem & {
 }
 
 export type PendingWithdrawal = AdminTransactionItem & {
-  withdrawStatus: WithdrawStatus | string
+  withdrawStatus: WithdrawStatus
   wallet: { userId?: string; user?: AdminTransactionUser | null }
   /** ADM-205: kuorum dual approval untuk baris ini. */
   approvalInfo?: {
