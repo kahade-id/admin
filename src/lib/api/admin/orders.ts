@@ -14,6 +14,7 @@
  */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
 
 export type AdminOrderStatus =
   | "WAITING_CONFIRMATION"
@@ -121,9 +122,25 @@ export type ForceActionResult = {
   status: string
 }
 
+export type ForceActionOpts = {
+  /**
+   * SEC-504: kunci idempotency dibuat SEKALI per sesi dialog di pemanggil
+   * (useMemo saat dialog dibuka) — retry memakai kunci yang sama.
+   * Bila tidak diberi, dibuatkan (fallback).
+   */
+  idempotencyKey?: string
+  /** Token verifikasi ulang server (header X-Step-Up-Token), bila ada. */
+  stepUpToken?: string
+}
+
 /**
- * UUID v4 sederhana untuk `Idempotency-Key` (lihat finance.ts — kunci
- * per panggilan agar double-tap tidak mengeksekusi dua kali).
+ * UUID v4 sederhana untuk `Idempotency-Key`.
+ *
+ * SEC-504: kunci dibuat SEKALI per sesi dialog di pemanggil (bukan per
+ * panggilan — retry harus memakai kunci yang sama).
+ *
+ * CATATAN: tidak diekspor dari barrel agar tak bentrok dengan
+ * `@/lib/api/admin/finance` (sumber kanonis `newIdempotencyKey`).
  */
 function newIdempotencyKey(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -173,11 +190,18 @@ export function forceCancelOrder(
   orderId: string,
   reason: string,
   password: string,
+  opts?: ForceActionOpts,
 ): Promise<ForceActionResult> {
+  const headers: Record<string, string> = {
+    "Idempotency-Key": opts?.idempotencyKey ?? newIdempotencyKey(),
+  }
+  if (opts?.stepUpToken) {
+    headers[STEP_UP_HEADER] = opts.stepUpToken
+  }
   return adminHttp.post<ForceActionResult>(
     `/v1/admin/orders/${encodeURIComponent(orderId)}/force-cancel`,
     { reason, password },
-    { headers: { "Idempotency-Key": newIdempotencyKey() } },
+    { headers },
   )
 }
 
@@ -194,10 +218,17 @@ export function forceCompleteOrder(
   orderId: string,
   reason: string,
   password: string,
+  opts?: ForceActionOpts,
 ): Promise<ForceActionResult> {
+  const headers: Record<string, string> = {
+    "Idempotency-Key": opts?.idempotencyKey ?? newIdempotencyKey(),
+  }
+  if (opts?.stepUpToken) {
+    headers[STEP_UP_HEADER] = opts.stepUpToken
+  }
   return adminHttp.post<ForceActionResult>(
     `/v1/admin/orders/${encodeURIComponent(orderId)}/force-complete`,
     { reason, password },
-    { headers: { "Idempotency-Key": newIdempotencyKey() } },
+    { headers },
   )
 }

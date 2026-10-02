@@ -26,6 +26,7 @@ import {
 } from "@/lib/api/admin/users"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
+import { RoleGate } from "@/components/admin/role-gate"
 
 import { ErrorBlock, LoadingBlock } from "../../../_components/admin-ui"
 
@@ -159,8 +160,11 @@ export function DeletionTab({ userId }: { userId: string }) {
                 ) : null}
               </dl>
 
+              {/* BAD-010: legal hold hanya SUPER_ADMIN (backend SUPER_ADMIN-only)
+                  — sembunyikan seluruh UI hold dari role lain. */}
               {request.status === "REQUESTED" ? (
-                confirming === "hold" ? (
+                <RoleGate roles={["SUPER_ADMIN"]}>
+                {confirming === "hold" ? (
                   <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
                     <TextArea
                       label="Alasan legal hold (wajib, dicatat di audit)"
@@ -183,11 +187,13 @@ export function DeletionTab({ userId }: { userId: string }) {
                   <Button size="sm" variant="secondary" fullWidth={false} onClick={() => setConfirming("hold")}>
                     Tahan penghapusan (legal hold)
                   </Button>
-                )
+                )}
+                </RoleGate>
               ) : null}
 
               {request.status === "ON_HOLD" ? (
-                confirming === "release" ? (
+                <RoleGate roles={["SUPER_ADMIN"]}>
+                {confirming === "release" ? (
                   <div className="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
                     <p className="text-body">
                       Lepas legal hold? Permintaan kembali aktif dengan jadwal purge yang sama.
@@ -205,7 +211,8 @@ export function DeletionTab({ userId }: { userId: string }) {
                   <Button size="sm" variant="secondary" fullWidth={false} onClick={() => setConfirming("release")}>
                     Lepas legal hold
                   </Button>
-                )
+                )}
+                </RoleGate>
               ) : null}
             </div>
           )}

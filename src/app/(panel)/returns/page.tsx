@@ -23,6 +23,7 @@ import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
+import { useAuth } from "@/lib/auth-context"
 import { Input } from "@/components/ui/input"
 import {
   listAdminReturns,
@@ -36,6 +37,12 @@ import {
   type AdminReturnStatus,
 } from "@/lib/api/admin/returns"
 import { ReturnActionDialog, type ReturnActionKind, type ReturnActionConfirmInput } from "./action-dialog"
+// BAD-002: konstanta status retur — satu sumber kebenaran (lihat status-constants.ts).
+import {
+  APPROVABLE_STATUSES,
+  EARLY_STATUSES,
+  FORCEABLE_STATUSES,
+} from "./status-constants"
 import { userMessage } from "@/lib/api/response"
 import { downloadCsv } from "@/lib/csv"
 import { formatDateTimeWIB, formatIdrSen } from "@/lib/format"
@@ -69,19 +76,6 @@ function ageHours(createdAt: string): number {
   return Math.max(0, Math.floor(ms / 3_600_000))
 }
 
-/** Status yang masih bisa dieskalasi / ditolak / diperpanjang deadline-nya. */
-const EARLY_STATUSES = ["REQUESTED", "SELLER_REVIEW"]
-/** Status yang refund-nya bisa disetujui admin. */
-const APPROVABLE_STATUSES = ["APPROVED", "RECEIVED"]
-/** Status terminal — tidak ada aksi tersisa. */
-const TERMINAL_STATUSES = [
-  "RESOLVED_REFUND",
-  "RESOLVED_EXCHANGE",
-  "RESOLVED_REPAIR",
-  "CANCELLED",
-  "EXPIRED",
-]
-
 function senOf(v: unknown): number | null {
   if (v == null) return null
   const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN
@@ -90,6 +84,12 @@ function senOf(v: unknown): number | null {
 
 export default function ReturnsListPage() {
   const toast = useToast()
+  const { role } = useAuth()
+  // BAD-023: cermin halaman detail — Eskalasi/Tolak boleh untuk semua role
+  // pengakses halaman (backend mengizinkan CUSTOMER_SUPPORT); hanya aksi
+  // uang (extend deadline, approve, tutup paksa) yang butuh
+  // SUPER_ADMIN/DISPUTE_ADMIN.
+  const canMoneyAction = role === "SUPER_ADMIN" || role === "DISPUTE_ADMIN"
   const [statusFilter, setStatusFilter] = useState("ALL")
   const [ageFilter, setAgeFilter] = useState("0")
   const [searchInput, setSearchInput] = useState("")
@@ -292,13 +292,12 @@ export default function ReturnsListPage() {
                 header: "Aksi",
                 render: (r) => {
                   const s = String(r.status)
-                  const terminal = TERMINAL_STATUSES.includes(s)
-                  // BAI-009: POST /v1/admin/returns/:id/action hanya untuk
-                  // SUPER_ADMIN/DISPUTE_ADMIN (backend @AdminRoles) — sembunyikan
-                  // tombol aksi dari CUSTOMER_SUPPORT agar tidak 403.
+                  // BAD-023: cermin halaman detail (returns/[id]/page.tsx) —
+                  // Eskalasi/Tolak tampil untuk semua role pengakses halaman
+                  // (backend mengizinkan CUSTOMER_SUPPORT); hanya aksi uang
+                  // yang di-gate ke SUPER_ADMIN/DISPUTE_ADMIN.
                   return (
-                    <RoleGate roles={["SUPER_ADMIN", "DISPUTE_ADMIN"]}>
-                      <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap gap-1">
                       {EARLY_STATUSES.includes(s) ? (
                         <>
                           <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("escalate", r)}>
@@ -307,23 +306,26 @@ export default function ReturnsListPage() {
                           <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("reject", r)}>
                             Tolak
                           </Button>
-                          <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("extend", r)}>
-                            +24 jam
-                          </Button>
+                          {canMoneyAction ? (
+                            <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("extend", r)}>
+                              +24 jam
+                            </Button>
+                          ) : null}
                         </>
                       ) : null}
-                      {APPROVABLE_STATUSES.includes(s) ? (
+                      {canMoneyAction && APPROVABLE_STATUSES.includes(s) ? (
                         <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("approve", r)}>
                           Setujui refund
                         </Button>
                       ) : null}
-                      {!terminal ? (
+                      {/* BAD-003: "Tutup paksa" hanya di FORCEABLE_STATUSES
+                          (dulu muncul di semua status non-terminal). */}
+                      {canMoneyAction && FORCEABLE_STATUSES.includes(s) ? (
                         <Button size="sm" variant="secondary" fullWidth={false} onClick={() => openAction("force-resolve", r)}>
                           Tutup paksa
                         </Button>
                       ) : null}
-                      </div>
-                    </RoleGate>
+                    </div>
                   )
                 },
               },

@@ -136,6 +136,10 @@ export default function DashboardPage() {
   const [chartEnd, setChartEnd] = useState("")
   const [chartData, setChartData] = useState<DashboardChartPoint[]>([])
   const [chartLoading, setChartLoading] = useState(false)
+  // BAD-031: true bila mode "custom" dipilih tapi belum ada tanggal — jangan
+  // fetch (backend akan memakai default 30 hari sementara label "Rentang
+  // khusus"), tampilkan empty state instruksi sebagai gantinya.
+  const [chartAwaitingRange, setChartAwaitingRange] = useState(false)
 
   const load = useCallback(
     async (mode: "initial" | "refresh" = "initial") => {
@@ -150,12 +154,14 @@ export default function DashboardPage() {
         // agar backend melewati cache 5 menit dan menghitung ulang dari DB.
         getDashboardSummary(mode === "refresh" ? { refresh: true } : undefined),
         getDashboardOrderStats(),
-        getRecentActivity({ limit: 10 }),
+        // BAD-037: backend mengabaikan query limit (hardcode 20) — potong di
+        // client agar kartu hanya menampilkan 10 terbaru.
+        getRecentActivity(),
         getFinancialSummary().catch(() => null),
       ])
       setSummary(sum)
       setOrderStats(stats)
-      setActivity(Array.isArray(act) ? act : [])
+      setActivity(Array.isArray(act) ? act.slice(0, 10) : [])
       // Penarikan menunggu tidak ada di summary dashboard — ambil dari
       // ringkasan keuangan. Gagal → null (tampil "—", bukan 0 palsu).
       setPendingWithdrawals(
@@ -179,6 +185,12 @@ export default function DashboardPage() {
 
   const loadCharts = useCallback(
     async (period: string, start: string, end: string) => {
+      if (period === "custom" && !start && !end) {
+        setChartData([])
+        setChartAwaitingRange(true)
+        return
+      }
+      setChartAwaitingRange(false)
       setChartLoading(true)
       try {
         const params: DashboardChartParams =
@@ -365,6 +377,12 @@ export default function DashboardPage() {
                   <Spinner size="md" />
                   <p className="text-body text-text-secondary">Memuat tren…</p>
                 </div>
+              ) : chartPeriod === "custom" && chartAwaitingRange ? (
+                <EmptyState
+                  compact
+                  title="Pilih rentang tanggal"
+                  description="Pilih rentang tanggal lalu tekan Terapkan."
+                />
               ) : chartData.length === 0 ? (
                 <EmptyState
                   compact

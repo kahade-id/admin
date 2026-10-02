@@ -58,6 +58,9 @@ import {
   type DisputeOrderChatMessage,
   type ResolvePreviewResult,
 } from "@/lib/api/admin/disputes"
+import { useStepUp } from "@/components/admin/step-up-gate"
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
+import { StepUpNotSupportedError } from "@/lib/api/admin/step-up"
 import { listAdmins } from "@/lib/api/admin/management"
 import { useAuth } from "@/lib/auth-context"
 import { userMessage } from "@/lib/api/response"
@@ -739,6 +742,14 @@ export default function DisputeDetailPage() {
   // Pencarian nama admin di dialog assign (filter client-side dari daftar yang dimuat).
   const [adminSearch, setAdminSearch] = useState("")
   const [resolveOpen, setResolveOpen] = useState(false)
+  // SEC-501/SEC-504: gate verifikasi ulang server untuk resolve + satu kunci
+  // idempotency per sesi dialog (dibuat saat dialog dibuka, dibuang saat
+  // ditutup; retry memakai kunci yang sama).
+  const { requestStepUp, stepUpDialog } = useStepUp()
+  const resolveKey = useMemo(
+    () => (resolveOpen ? newIdempotencyKey() : null),
+    [resolveOpen],
+  )
   const [resolution, setResolution] = useState<Resolution>("FULL_BUYER")
   // H04: alasan terstruktur keputusan (wajib) — catatan via resolveDraft (H11).
   const [resolveReason, setResolveReason] = useState("")
@@ -1119,6 +1130,31 @@ export default function DisputeDetailPage() {
 
   const handleResolve = async () => {
     if (!notesValid || !reasonValid || !splitValid || acting) return
+    // SEC-501: verifikasi ulang server SEBELUM eksekusi — fail-closed.
+    let stepUpToken: string | null
+    try {
+      stepUpToken = await requestStepUp({
+        action: "dispute.resolve",
+        targetId: disputeId,
+        title: "Verifikasi ulang",
+        description: "Menyelesaikan sengketa mencairkan escrow dan bersifat final.",
+      })
+    } catch (e) {
+      if (e instanceof StepUpNotSupportedError) {
+        toast.show({
+          title: "Backend belum mendukung verifikasi ulang server — aksi diblokir",
+          tone: "danger",
+        })
+        return
+      }
+      toast.show({
+        title: "Verifikasi ulang gagal",
+        description: userMessage(e),
+        tone: "danger",
+      })
+      return
+    }
+    if (stepUpToken === null) return // user membatalkan verifikasi
     setActing("resolve")
     try {
       // DP-001: payload persis DisputeDecisionDto {decision, decisionNotes, ...}.
@@ -1126,17 +1162,34 @@ export default function DisputeDetailPage() {
       // H04: alasan terstruktur digabung ke decisionNotes agar tercatat di audit.
       const reasonLabel =
         RESOLVE_REASON_OPTIONS.find((o) => o.value === resolveReason)?.label ?? resolveReason
-      const res = await resolveDispute(disputeId, {
-        decision: resolution,
-        decisionNotes: `[Alasan: ${reasonLabel}] ${resolveDraft.value.trim()}`,
-        ...(isSplit ? { buyerPercent: buyerPct, sellerPercent: sellerPct } : {}),
-      })
+      const res = await resolveDispute(
+        disputeId,
+        {
+          decision: resolution,
+          decisionNotes: `[Alasan: ${reasonLabel}] ${resolveDraft.value.trim()}`,
+          ...(isSplit ? { buyerPercent: buyerPct, sellerPercent: sellerPct } : {}),
+        },
+        // SEC-504: kunci idempotency SEKALI per sesi dialog (bukan per
+        // panggilan) + token step-up via X-Step-Up-Token.
+        { idempotencyKey: resolveKey ?? undefined, stepUpToken },
+      )
       setResolveOpen(false)
       resolveDraft.clear()
       setResolveReason("")
       setBuyerPercent("")
       setSellerPercent("")
       await load("refresh")
+      // SEC-501: nominal besar — backend bisa menahan eksekusi menunggu
+      // persetujuan admin kedua. Jangan toast sukses buta.
+      if (res?.pendingSecondApproval) {
+        toast.show({
+          title: "Menunggu persetujuan kedua",
+          description:
+            "Keputusan tercatat, tetapi eksekusi ditahan — nominal besar sehingga dibutuhkan persetujuan admin kedua.",
+          tone: "info",
+        })
+        return
+      }
       // BAI-046: baca hasil settlement DANA — JANGAN toast sukses buta.
       // settlement null = eksekusi finansial gagal total; buyerRefunded false
       // atau sellerDisbursement bermasalah = uang belum bergerak.
@@ -1280,6 +1333,19 @@ export default function DisputeDetailPage() {
     items.push("Tercatat di audit log beserta alasan dan catatan")
     return items
   }, [resolution, buyerPercent, sellerPercent, preview])
+
+  /**
+   * SEC-501: total disbursement pratinjau (dalam sen). Di atas Rp1.000.000
+   * → tampilkan peringatan "dibutuhkan persetujuan admin kedua".
+   */
+  const previewTotalSen = useMemo(() => {
+    if (!preview) return 0
+    const b = Number(preview.buyerAmountSen)
+    const s = Number(preview.sellerAmountSen)
+    const total = (Number.isFinite(b) ? b : 0) + (Number.isFinite(s) ? s : 0)
+    return total
+  }, [preview])
+  const isLargeNominal = previewTotalSen > 100_000_000 // > Rp1.000.000 (sen)
 
   return (
     <RoleGate href="/disputes">
@@ -1912,6 +1978,15 @@ export default function DisputeDetailPage() {
               ))}
             </ul>
           </div>
+          {/* SEC-501: nominal besar — dibutuhkan persetujuan admin kedua. */}
+          {isLargeNominal ? (
+            <div className="rounded-sm border border-warning/40 bg-warning/5 px-3 py-2">
+              <p className="text-body font-semibold text-warning-text">
+                Nominal di atas Rp1.000.000 — dibutuhkan persetujuan admin kedua
+                sebelum keputusan dieksekusi.
+              </p>
+            </div>
+          ) : null}
           {/* H04: alasan terstruktur (wajib). */}
           <Select
             label="Alasan keputusan (wajib)"
@@ -2037,6 +2112,16 @@ export default function DisputeDetailPage() {
                   <dt className="text-text-secondary">Platform menahan</dt>
                   <dd>{formatIdrSen(preview.platformRetainAmountSen)}</dd>
                 </div>
+                {/* BAD-025: kebijakan platform fee untuk keputusan FULL_BUYER —
+                    tampil hanya bila backend mengirim feePolicy. */}
+                {resolution === "FULL_BUYER" && preview.feePolicy ? (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-text-secondary">Platform fee dikembalikan ke pembeli</dt>
+                    <dd className="font-semibold">
+                      {preview.feePolicy.fullBuyerRefundsPlatformFee ? "Ya" : "Tidak"}
+                    </dd>
+                  </div>
+                ) : null}
                 {preview.isPostCompletionDispute ? (
                   <p className="pt-1 text-caption text-text-secondary">
                     Sengketa pasca-penyelesaian — disbursement mengikuti kebijakan
@@ -2090,6 +2175,8 @@ export default function DisputeDetailPage() {
           maxLength={500}
         />
       </Dialog>
+      {/* SEC-501: dialog verifikasi ulang server (step-up) untuk resolve. */}
+      {stepUpDialog}
     </RoleGate>
   )
 }

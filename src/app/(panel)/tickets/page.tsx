@@ -194,7 +194,7 @@ function TicketsListInner() {
       downloadCsv(
         `tiket-${stamp}.csv`,
         ["ID", "Subjek", "Kategori", "Status", "Prioritas", "Umur", "Pengguna", "Dibuat", "Diperbarui"],
-        all.map((r) => [
+        all.items.map((r) => [
           r.id,
           r.subject,
           r.category ?? "",
@@ -208,8 +208,11 @@ function TicketsListInner() {
       )
       toast.show({
         title: "CSV diunduh",
-        description: `${all.length} tiket sesuai filter aktif.`,
-        tone: "success",
+        // BAD-032: jujur bila terpotong di batas 5.000 baris.
+        description: all.truncated
+          ? `${all.items.length} tiket sesuai filter aktif — PERHATIAN: hanya ${FETCH_ALL_MAX_PAGES * 100} baris pertama diekspor (data melebihi batas).`
+          : `${all.items.length} tiket sesuai filter aktif.`,
+        tone: all.truncated ? "info" : "success",
       })
     } catch (e) {
       toast.show({

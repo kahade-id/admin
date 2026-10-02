@@ -16,9 +16,9 @@ import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardBody } from "@/components/ui/card"
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-// H05: step-up re-auth untuk aksi kritis RBAC.
+import { Dialog } from "@/components/ui/dialog"
+import { Input, TextArea } from "@/components/ui/input"
+// SEC-503: step-up server-side per aksi kritis RBAC (bukan jendela client-side).
 import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
@@ -186,7 +186,10 @@ function TeamPageContent() {
   const [createOpen, setCreateOpen] = useState(false)
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
   const [confirming, setConfirming] = useState(false)
-  // H05: gate verifikasi ulang untuk aksi kritis RBAC.
+  // BAD-028: alasan wajib (min 5 karakter) untuk aksi identitas kritis.
+  const [reason, setReason] = useState("")
+  const [reasonError, setReasonError] = useState<string | null>(null)
+  // SEC-503: gate verifikasi ulang server-side untuk aksi kritis RBAC.
   const reauth = useReauthGate()
 
   const selfId = profile?.id ?? null
@@ -232,13 +235,19 @@ function TeamPageContent() {
     setSearch(searchText.trim())
   }
 
-  async function handleConfirm() {
+  /**
+   * BAD-009: aksi identitas kritis dijalankan dengan token step-up server
+   * (sekali pakai, terikat aksi+target). Token diminta SEBELUM pemanggilan
+   * ini via dialog kata sandi — tanpa token, server menolak 403.
+   */
+  async function handleConfirm(stepUpToken: string) {
     if (!confirm) return
     const { kind, admin } = confirm
+    const r = reason.trim()
     setConfirming(true)
     try {
       if (kind === "reset-2fa") {
-        await resetAdmin2fa(admin.id)
+        await resetAdmin2fa(admin.id, { reason: r, stepUpToken })
         toast.show({
           title: "2FA direset.",
           description: `${admin.fullName} harus menyiapkan ulang authenticator.`,
@@ -246,25 +255,41 @@ function TeamPageContent() {
         })
       } else if (kind === "toggle-lock") {
         if (isLocked(admin)) {
-          await unlockAdmin(admin.id)
+          await unlockAdmin(admin.id, { reason: r, stepUpToken })
           toast.show({ title: "Akun dibuka.", tone: "success" })
         } else if (admin.isActive) {
-          await updateAdmin(admin.id, { isActive: false })
+          await updateAdmin(admin.id, { isActive: false }, { stepUpToken })
           toast.show({ title: "Akun dikunci.", tone: "success" })
         } else {
-          await updateAdmin(admin.id, { isActive: true })
+          await updateAdmin(admin.id, { isActive: true }, { stepUpToken })
           toast.show({ title: "Akun diaktifkan.", tone: "success" })
         }
       } else {
-        await deleteAdmin(admin.id)
+        await deleteAdmin(admin.id, { reason: r, stepUpToken })
         toast.show({ title: "Akun admin dihapus.", tone: "success" })
       }
       setConfirm(null)
+      setReason("")
       void load(page, search)
     } catch (e) {
       toast.show({ title: "Aksi gagal", description: userMessage(e), tone: "danger" })
     } finally {
       setConfirming(false)
+    }
+  }
+
+  /**
+   * BAD-009: nama aksi server untuk token step-up, sesuai jenis aksi
+   * identitas kritis. Token terikat (aksi, id admin target).
+   */
+  function stepUpActionFor(): { action: string; targetId: string } | null {
+    if (!confirm) return null
+    const { kind, admin } = confirm
+    if (kind === "reset-2fa") return { action: "admin.reset-2fa", targetId: admin.id }
+    if (kind === "delete") return { action: "admin.delete", targetId: admin.id }
+    return {
+      action: isLocked(admin) ? "admin.unlock" : "admin.lock",
+      targetId: admin.id,
     }
   }
 
@@ -514,24 +539,75 @@ function TeamPageContent() {
         />
       </Dialog>
 
-      <ConfirmDialog
+      <Dialog
         open={confirm != null}
-        onClose={() => setConfirm(null)}
+        onClose={() => {
+          if (confirming) return
+          setConfirm(null)
+          setReason("")
+          setReasonError(null)
+        }}
         title={meta.title}
         description={meta.description}
-        confirmLabel={meta.confirmLabel}
-        // H05: aksi kritis RBAC (reset 2FA / kunci / hapus admin) wajib
-        // verifikasi ulang sebelum dijalankan.
-        onConfirm={() =>
-          reauth.require(
-            () => void handleConfirm(),
-            `${meta.confirmLabel}${confirm?.admin?.fullName ? ` — ${confirm.admin.fullName}` : ""}`,
-          )
-        }
-        loading={confirming}
-        destructive={meta.destructive}
-      />
-      {/* H05: dialog verifikasi ulang untuk aksi RBAC kritis. */}
+      >
+        <div className="flex flex-col gap-3 pt-1">
+          {/* BAD-028: alasan wajib (min 5 karakter), dicatat di audit log. */}
+          <TextArea
+            label="Alasan (wajib, dicatat di audit)"
+            value={reason}
+            onChange={(e) => {
+              setReason(e.target.value)
+              if (reasonError) setReasonError(null)
+            }}
+            rows={3}
+            disabled={confirming}
+            placeholder="Minimal 5 karakter — cth. Akun disalahgunakan untuk spam…"
+          />
+          {reasonError ? (
+            <p role="alert" className="text-body text-danger-text">
+              {reasonError}
+            </p>
+          ) : null}
+          <div className="flex flex-col gap-2">
+            <Button
+              variant={meta.destructive ? "destructive" : "primary"}
+              loading={confirming}
+              disabled={reason.trim().length < 5}
+              onClick={() => {
+                const r = reason.trim()
+                if (r.length < 5) {
+                  setReasonError("Alasan wajib diisi, minimal 5 karakter.")
+                  return
+                }
+                const su = stepUpActionFor()
+                if (!su) return
+                // BAD-009/SEC-503: aksi kritis RBAC (reset 2FA / kunci /
+                // hapus admin) wajib token step-up server per aksi — dialog
+                // kata sandi muncul, tanpa token aksi tidak dijalankan.
+                reauth.require(
+                  (token) => void handleConfirm(token),
+                  `${meta.confirmLabel}${confirm?.admin?.fullName ? ` — ${confirm.admin.fullName}` : ""}`,
+                  { stepUpAction: su.action, targetId: su.targetId },
+                )
+              }}
+            >
+              {meta.confirmLabel}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={confirming}
+              onClick={() => {
+                setConfirm(null)
+                setReason("")
+                setReasonError(null)
+              }}
+            >
+              Batal
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+      {/* SEC-503: dialog verifikasi ulang server-side untuk aksi RBAC kritis. */}
       <ReauthDialog {...reauth.dialog} />
     </div>
   )

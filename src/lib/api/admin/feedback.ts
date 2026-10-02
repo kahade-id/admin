@@ -122,12 +122,15 @@ export type FeedbackListParams = {
   category?: string
   platform?: string
   rating?: number
-  from?: string
-  to?: string
+  /** BAD-011: backend AdminFeedbackQueryDto kenal `dateFrom`, bukan `from`. */
+  dateFrom?: string
+  /** BAD-011: backend AdminFeedbackQueryDto kenal `dateTo`, bukan `to`. */
+  dateTo?: string
   status?: string
   /** "all" | "user" | "guest" — diset ke undefined bila "all". */
   account?: "user" | "guest"
-  q?: string
+  /** BAD-011: backend AdminFeedbackQueryDto kenal `search`, bukan `q`. */
+  search?: string
 }
 
 export function listFeedback(
@@ -140,11 +143,11 @@ export function listFeedback(
       category: params?.category,
       platform: params?.platform,
       rating: params?.rating,
-      from: params?.from,
-      to: params?.to,
+      dateFrom: params?.dateFrom,
+      dateTo: params?.dateTo,
       status: params?.status,
       account: params?.account,
-      q: params?.q,
+      search: params?.search,
     },
   })
 }
@@ -249,8 +252,12 @@ export function findDuplicateFeedback(feedbackId: string): Promise<{ items: Feed
   )
 }
 
-/** Ekspor CSV: backend memproses dan mengembalikan URL unduhan bertanda. */
-export function exportFeedback(params?: Omit<FeedbackListParams, "cursor" | "limit">): Promise<{
+/**
+ * Ekspor feedback: backend memproses dan mengembalikan URL unduhan bertanda.
+ * BAD-011: `AdminFeedbackExportDto` HANYA kenal `{ format }` — jangan kirim
+ * filter lain (ValidationPipe forbidNonWhitelisted → 422).
+ */
+export function exportFeedback(params?: { format?: "csv" | "json" }): Promise<{
   url: string
 }> {
   return adminHttp.get<{ url: string }>("/v1/admin/feedback/export", { query: params })

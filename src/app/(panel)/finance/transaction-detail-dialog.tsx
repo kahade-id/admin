@@ -29,6 +29,8 @@ import {
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+// SEC-505: identitas + nomor VA di-mask (mask-only, tanpa unmask).
+import { maskAccountNumber, maskEmail, maskName } from "@/lib/pii"
 
 const KIND_META: Record<TimelineEventKind, { label: string; tone: BadgeTone }> = {
   LEDGER: { label: "Ledger", tone: "neutral" },
@@ -120,7 +122,12 @@ export function TransactionDetailDialog({
               </Badge>
             </Field>
             <Field label="Pemilik wallet">
-              {detail.owner?.fullName ?? detail.owner?.email ?? detail.owner?.userId ?? "—"}
+              {/* SEC-505: identitas di-mask. */}
+              {detail.owner?.fullName
+                ? maskName(detail.owner.fullName)
+                : detail.owner?.email
+                  ? maskEmail(detail.owner.email)
+                  : detail.owner?.userId ?? "—"}
             </Field>
             <Field label="Order">{detail.order?.orderId ?? "—"}</Field>
             <Field label="Waktu">{formatDateTimeWIB(detail.createdAt)}</Field>
@@ -134,7 +141,8 @@ export function TransactionDetailDialog({
               <Field label="Flash transaction ID (legacy)">{ext?.flashTransactionId ?? "—"}</Field>
               <Field label="Iris payout ID (legacy)">{ext?.irisPayoutId ?? "—"}</Field>
               <Field label="Iris ref (legacy)">{ext?.irisRef ?? "—"}</Field>
-              <Field label="VA (legacy)">{ext?.vaBank && ext?.vaNumber ? `${ext.vaBank} ${ext.vaNumber}` : "—"}</Field>
+              {/* SEC-505: nomor VA di-mask. */}
+              <Field label="VA (legacy)">{ext?.vaBank && ext?.vaNumber ? `${ext.vaBank} ${maskAccountNumber(ext.vaNumber)}` : "—"}</Field>
             </div>
           </div>
 

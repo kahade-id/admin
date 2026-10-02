@@ -8,6 +8,24 @@
  * Nilai secret TIDAK PERNAH dikembalikan utuh oleh API (hanya mask "••••ab12").
  */
 import { adminHttp } from "@/lib/api/admin-client"
+import { stepUpHeaders } from "@/lib/api/admin/step-up"
+
+function isNotFoundError(e: unknown): boolean {
+  return (
+    typeof e === "object" && e !== null && (e as { status?: number }).status === 404
+  )
+}
+
+/**
+ * Dilempar fungsi defensif bila endpoint ops-settings baru belum ada di
+ * backend yang sedang jalan (tim backend membangun paralel).
+ */
+export class OpsSettingsNotSupportedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "OpsSettingsNotSupportedError"
+  }
+}
 
 export type OpsSettingView = {
   key: string
@@ -41,16 +59,64 @@ export async function listOpsSettings(): Promise<OpsSettingView[]> {
   return (res as { settings: OpsSettingView[] }).settings
 }
 
+/**
+ * SEC-506 (audit integrasi 2026-10-03): two-person rule untuk key
+ * finansial/kritis. Bila backend menjawab 202 dengan
+ * `{ pendingApproval: { id, key, ... } }`, perubahan TIDAK langsung berlaku
+ * — fungsi mengembalikan `{ pendingApproval }` (jangan anggap sukses).
+ * Pemanggil (halaman ops-settings) wajib menanganinya: tampilkan info
+ * "menunggu persetujuan admin kedua" dan refresh antrean persetujuan.
+ */
+export type PendingApproval = {
+  id: string
+  key: string
+  label?: string | null
+  oldValue?: string | null
+  newValue?: string | null
+  proposedBy?: string | null
+  proposedById?: string | null
+  proposedAt?: string | null
+  [key: string]: unknown
+}
+
+export type UpdateOpsSettingResult = { pendingApproval: PendingApproval }
+
+export function isUpdatePending(
+  res: OpsSettingView | UpdateOpsSettingResult,
+): res is UpdateOpsSettingResult {
+  return (
+    typeof res === "object" &&
+    res !== null &&
+    "pendingApproval" in res &&
+    typeof (res as { pendingApproval?: unknown }).pendingApproval === "object"
+  )
+}
+
+/**
+ * true bila key menyentuh uang / batas finansial — kandidat two-person rule.
+ * Pola longgar by design (fail-closed: lebih baik menandai berlebih lalu
+ * backend memutuskan final).
+ */
+export function isFinancialKey(key: string): boolean {
+  return /fee|limit|dana|disburs|wallet|withdraw|payout/i.test(key)
+}
+
 export async function updateOpsSetting(
   key: string,
   value: string,
   expectedVersion?: number,
-): Promise<OpsSettingView> {
+): Promise<OpsSettingView | UpdateOpsSettingResult> {
   const res = await adminHttp.put(`/v1/admin/ops-settings/${encodeURIComponent(key)}`, {
     value,
     ...(expectedVersion !== undefined ? { expectedVersion } : {}),
   })
-  return (res as { setting: OpsSettingView }).setting
+  // SEC-506: backend bisa menjawab 202 + { pendingApproval } (two-person
+  // rule) alih-alih { setting }. adminHttp meng-unwrap envelope backend.
+  const body = res as { pendingApproval?: PendingApproval; setting?: OpsSettingView }
+  if (body && typeof body.pendingApproval === "object" && body.pendingApproval !== null) {
+    return { pendingApproval: body.pendingApproval }
+  }
+  return body.setting as OpsSettingView
 }
 
 /**
@@ -107,4 +173,127 @@ export async function updateMaintenance(
     ...(message !== undefined ? { message } : {}),
     ...(expectedVersion !== undefined ? { expectedVersion } : {}),
   }) as Promise<MaintenanceStatus>
+}
+
+// ---------------------------------------------------------------------------
+// SEC-506 (audit integrasi 2026-10-03): two-person rule — antrean persetujuan.
+//
+// KONTRAK YANG DIASUMSISKAN (tim backend membangun paralel; selaraskan bila
+// berbeda — halaman hanya memakai signature di bawah):
+// - GET  /v1/admin/ops-settings/pending-approvals
+//   → { approvals: PendingApproval[] }  (atau array langsung)
+// - POST /v1/admin/ops-settings/pending-approvals/:id/approve
+//   → { setting: OpsSettingView } | { approval: PendingApproval }
+//   Wajib header `X-Step-Up-Token` (aksi step-up `ops-setting.approve`).
+// - POST /v1/admin/ops-settings/pending-approvals/:id/reject
+//   → { approval: PendingApproval }
+//   Wajib header `X-Step-Up-Token` (aksi step-up `ops-setting.reject`).
+// - PUT  /v1/admin/ops-settings/:key menjawab 202 + `{ pendingApproval }`
+//   bila key finansial/kritis masuk antrean dua orang.
+//
+// SEMUA fungsi defensif 404 → `OpsSettingsNotSupportedError` dengan pesan
+// jelas ("membutuhkan backend terbaru"), bukan crash.
+// ---------------------------------------------------------------------------
+
+/** Daftar perubahan setting yang menunggu persetujuan admin kedua. */
+export async function getPendingApprovals(): Promise<PendingApproval[]> {
+  try {
+    const res = await adminHttp.get("/v1/admin/ops-settings/pending-approvals")
+    const body = res as { approvals?: PendingApproval[] } | PendingApproval[]
+    if (Array.isArray(body)) return body
+    return Array.isArray(body?.approvals) ? body.approvals : []
+  } catch (e) {
+    if (isNotFoundError(e)) {
+      throw new OpsSettingsNotSupportedError(
+        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (GET /v1/admin/ops-settings/pending-approvals).",
+      )
+    }
+    throw e
+  }
+}
+
+/**
+ * Setujui perubahan yang tertunda. `stepUpToken` dari step-up gate
+ * (aksi `ops-setting.approve`) — jangan panggil tanpa token. Penyusul tidak
+ * boleh menyetujui usulannya sendiri (ditegakkan di UI + WAJIB di backend).
+ */
+export async function approvePendingApproval(
+  id: string,
+  stepUpToken: string,
+): Promise<unknown> {
+  try {
+    return await adminHttp.post(
+      `/v1/admin/ops-settings/pending-approvals/${encodeURIComponent(id)}/approve`,
+      {},
+      { headers: stepUpHeaders(stepUpToken) },
+    )
+  } catch (e) {
+    if (isNotFoundError(e)) {
+      throw new OpsSettingsNotSupportedError(
+        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (POST /v1/admin/ops-settings/pending-approvals/:id/approve).",
+      )
+    }
+    throw e
+  }
+}
+
+/**
+ * Tolak perubahan yang tertunda. `stepUpToken` dari step-up gate
+ * (aksi `ops-setting.reject`).
+ */
+export async function rejectPendingApproval(
+  id: string,
+  stepUpToken: string,
+): Promise<unknown> {
+  try {
+    return await adminHttp.post(
+      `/v1/admin/ops-settings/pending-approvals/${encodeURIComponent(id)}/reject`,
+      {},
+      { headers: stepUpHeaders(stepUpToken) },
+    )
+  } catch (e) {
+    if (isNotFoundError(e)) {
+      throw new OpsSettingsNotSupportedError(
+        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (POST /v1/admin/ops-settings/pending-approvals/:id/reject).",
+      )
+    }
+    throw e
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FAL-006 (audit integrasi 2026-10-03): indikator health layanan terjemahan.
+//
+// KONTRAK YANG DIASUMSISKAN:
+// - GET /v1/admin/ops-settings/translation/health
+//   → { configured: boolean, provider?: string }
+//   `configured` = secret `CHAT_TRANSLATION_*` terdaftar & valid di registry
+//   ops-settings (secret terenkripsi). 404 → { supported: false } dan halaman
+//   menampilkan "status tak diketahui".
+// ---------------------------------------------------------------------------
+
+export type TranslationHealth = {
+  configured: boolean
+  provider?: string
+  /** false bila endpoint belum ada di backend (defensif 404). */
+  supported: boolean
+}
+
+export async function getTranslationHealth(): Promise<TranslationHealth> {
+  try {
+    const res = (await adminHttp.get("/v1/admin/ops-settings/translation/health")) as {
+      configured?: boolean
+      provider?: string
+    }
+    return {
+      configured: res?.configured === true,
+      provider: typeof res?.provider === "string" ? res.provider : undefined,
+      supported: true,
+    }
+  } catch (e) {
+    if (isNotFoundError(e)) {
+      return { configured: false, provider: undefined, supported: false }
+    }
+    throw e
+  }
 }

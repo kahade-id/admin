@@ -1025,8 +1025,8 @@ export function CampaignsTab() {
           limit: PAGE_SIZE,
           status: f.status === "" ? undefined : f.status,
           createdBy: f.creator || undefined,
-          startsFrom: f.startsFrom || undefined,
-          startsTo: f.startsTo || undefined,
+          from: f.startsFrom || undefined,
+          to: f.startsTo || undefined,
         })
         const filtered = applyLocalFilters(res.data ?? [], f)
         setRows(filtered)

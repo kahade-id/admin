@@ -11,8 +11,9 @@
  *   `pendingWithdrawals`).
  * - `getOrderStats()` → `{ total, distribution: [{ status, count, percentage }] }`.
  * - `getRecentActivity()` → `{ data: logs }` dengan `logs[].admin = { id, fullName, role }`
- *   (BUKAN `adminName`); backend me-hardcode `take: 20` dan mengabaikan param
- *   `limit` — limit dipotong client-side di `getRecentActivity()`.
+ *   (BUKAN `adminName`); backend me-hardcode `take: 20` dan tidak membaca query
+ *   apa pun (tanpa `@Query()`) — fungsi ini tidak menerima param agar kontraknya
+ *   jujur; potong di call-site bila perlu lebih sedikit.
  * - `getCharts(query)` menerima `period` + `startDate`/`endDate` (ChartQueryDto).
  */
 import { adminHttp } from "@/lib/api/admin-client"
@@ -115,23 +116,18 @@ export async function getDashboardOrderStats(): Promise<OrderStats> {
 
 /**
  * AW-003: backend mengembalikan `{ data: logs }` dengan `admin: { fullName }`.
- * Adaptor memetakan `adminName` dan memotong sesuai `limit` yang diminta —
- * backend me-hardcode `take: 20` dan mengabaikan query `limit`.
+ * Adaptor memetakan `adminName`. BAD-037: backend me-hardcode `take: 20` dan
+ * tidak membaca query apa pun (tanpa `@Query()`) — param `limit` dihapus dari
+ * kontrak agar jujur; pemotongan dilakukan di call-site.
  */
-export async function getRecentActivity(params?: {
-  limit?: number
-}): Promise<RecentActivityItem[]> {
+export async function getRecentActivity(): Promise<RecentActivityItem[]> {
   const res = await adminHttp.get<{ data: RawActivityItem[] } | RawActivityItem[]>(
     "/v1/admin/dashboard/recent-activity",
-    { query: params },
   )
   const raw = Array.isArray(res) ? res : (res?.data ?? [])
-  const mapped: RecentActivityItem[] = raw.map((item) => ({
+  return raw.map((item) => ({
     ...item,
     description: item.description ?? undefined,
     adminName: item.admin?.fullName ?? undefined,
   }))
-  // Backend mengabaikan limit (hardcode 20) — potong di client agar kontrak
-  // `limit` yang dijanjikan fungsi ini benar-benar dihormati.
-  return params?.limit != null ? mapped.slice(0, params.limit) : mapped
 }

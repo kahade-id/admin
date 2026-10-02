@@ -33,6 +33,13 @@ import {
   type AdminReturnStatus,
 } from "@/lib/api/admin/returns"
 import { ReturnActionDialog, type ReturnActionKind, type ReturnActionConfirmInput } from "../action-dialog"
+// BAD-002: konstanta status retur — satu sumber kebenaran (lihat status-constants.ts).
+import {
+  APPROVABLE_STATUSES,
+  EARLY_STATUSES,
+  FORCEABLE_STATUSES,
+  TERMINAL_STATUSES,
+} from "../status-constants"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatIdrSen } from "@/lib/format"
 
@@ -47,17 +54,6 @@ type TimelineEntry = {
 type ReturnDetail = AdminReturnItem & {
   timeline?: TimelineEntry[]
 }
-
-const EARLY_STATUSES = ["REQUESTED", "SELLER_REVIEW"]
-// BAI-081: backend hanya mengizinkan APPROVE dari REQUESTED/SELLER_REVIEW
-// (sellerRespondAsAdmin guard) — sebelumnya UI menampilkan tombol "Setujui
-// refund" di APPROVED/RECEIVED yang selalu 400.
-const APPROVABLE_STATUSES = ["REQUESTED", "SELLER_REVIEW"]
-const TERMINAL_STATUSES = ["RESOLVED_REFUND", "RESOLVED_EXCHANGE", "RESOLVED_REPAIR", "CANCELLED", "EXPIRED"]
-// BAI-082: backend resolveReturn hanya menerima APPROVED/RECEIVED — tombol
-// "Tutup paksa" hanya relevan di dua status itu (sebelumnya muncul di semua
-// status non-terminal, termasuk REQUESTED yang selalu 400).
-const FORCEABLE_STATUSES = ["APPROVED", "RECEIVED"]
 
 function senOf(v: unknown): number | null {
   if (v == null) return null

@@ -40,13 +40,6 @@ export const ADMIN_PRODUCT_TYPE_LABEL: Record<string, string> = {
   LAINNYA: "Lainnya",
 }
 
-export const ADMIN_PRODUCT_TYPE_OPTIONS = [
-  { value: "JASA", label: "Jasa" },
-  { value: "FISIK", label: "Fisik" },
-  { value: "DIGITAL", label: "Digital" },
-  { value: "LAINNYA", label: "Lainnya" },
-]
-
 export function listAdminProducts(params?: {
   page?: number
   limit?: number
@@ -54,13 +47,6 @@ export function listAdminProducts(params?: {
   moderationStatus?: string
   category?: string
   search?: string
-  /**
-   * Batch 43, item #1 — filter tipe produk (JASA/FISIK/DIGITAL/LAINNYA).
-   * KONTRAK ASUMSI: param `productType` belum diverifikasi ke backend
-   * (mega/be-commerce belum tersedia); backend yang belum mendukung
-   * diharapkan mengabaikan param ini.
-   */
-  productType?: string
 }): Promise<Paginated<AdminProductItem>> {
   return adminHttp.get<Paginated<AdminProductItem>>("/v1/admin/inventory/products", { query: params })
 }

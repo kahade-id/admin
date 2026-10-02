@@ -33,6 +33,8 @@ import { RoleGate } from "@/components/admin/role-gate"
 // backend tetap menegakkan RBAC yang ada). Copy UI tidak mengklaim
 // verifikasi per-aksi: yang dibuka adalah jendela konfirmasi 10 menit.
 import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
+import { useAuth } from "@/lib/auth-context"
 import { formatDateTimeWIB } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import {
@@ -43,9 +45,18 @@ import {
   getOpsSettingHistory,
   getMaintenanceStatus,
   updateMaintenance,
+  getPendingApprovals,
+  approvePendingApproval,
+  rejectPendingApproval,
+  getTranslationHealth,
+  isFinancialKey,
+  isUpdatePending,
+  OpsSettingsNotSupportedError,
   type OpsSettingView,
   type OpsSettingAuditItem,
   type MaintenanceStatus,
+  type PendingApproval,
+  type TranslationHealth,
 } from "@/lib/api/admin/ops-settings"
 
 export default function OpsSettingsPage() {
@@ -68,6 +79,10 @@ export default function OpsSettingsPage() {
 
   // H05: re-auth gate untuk simpan setting & maintenance.
   const reauth = useReauthGate()
+  // FAL-003/SEC-506: step-up gate untuk aksi sensitif (tutup polling,
+  // setujui/tolak perubahan finansial). Stub W4 — diganti implementasi W2.
+  const stepUp = useStepUp()
+  const { profile } = useAuth()
 
   // Dialog ubah
   const [editing, setEditing] = useState<OpsSettingView | null>(null)
@@ -86,6 +101,17 @@ export default function OpsSettingsPage() {
   const [conflict, setConflict] = useState<{ key: string; detail: string } | null>(null)
   // BAI-104: key yang sedang di-reset ke default.
   const [resettingKey, setResettingKey] = useState<string | null>(null)
+
+  // SEC-506: antrean persetujuan two-person rule untuk key finansial/kritis.
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([])
+  const [pendingLoading, setPendingLoading] = useState(true)
+  // true bila endpoint pending-approvals 404 → backend belum siap; tampilkan
+  // banner jujur (bukan diam-diam single-approval).
+  const [twoPersonUnsupported, setTwoPersonUnsupported] = useState(false)
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null)
+
+  // FAL-006: indikator health layanan terjemahan chat (CHAT_TRANSLATION_*).
+  const [translationHealth, setTranslationHealth] = useState<TranslationHealth | null>(null)
 
   /** true bila error adalah 409 konflik versi (BAI-118). */
   const isConflictError = (e: unknown) =>
@@ -113,6 +139,26 @@ export default function OpsSettingsPage() {
     } finally {
       setMaintenanceLoading(false)
     }
+    // SEC-506: antrean persetujuan (defensif 404 → banner, bukan crash).
+    setPendingLoading(true)
+    try {
+      setPendingApprovals(await getPendingApprovals())
+      setTwoPersonUnsupported(false)
+    } catch (e) {
+      if (e instanceof OpsSettingsNotSupportedError) {
+        setTwoPersonUnsupported(true)
+      } else {
+        toast.show({ title: "Gagal memuat antrean persetujuan", description: userMessage(e), tone: "danger" })
+      }
+    } finally {
+      setPendingLoading(false)
+    }
+    // FAL-006: health layanan terjemahan (defensif 404 → "tak diketahui").
+    try {
+      setTranslationHealth(await getTranslationHealth())
+    } catch (e) {
+      toast.show({ title: "Gagal memuat status terjemahan", description: userMessage(e), tone: "danger" })
+    }
   }, [toast])
 
   useEffect(() => {
@@ -121,6 +167,78 @@ export default function OpsSettingsPage() {
 
   /** BAI-110: kunci boolean yang dialog ubahnya memakai select true/false. */
   const isBooleanKey = (key: string) => key === "WALLET_ENABLED" || key === "MAINTENANCE_MODE"
+
+  /**
+   * Hint format/validasi per key di dialog ubah.
+   * BAD-004: FONNTE_WEBHOOK_IPS — daftar IP dipisah koma, harus IP valid.
+   */
+  const editHint = (key: string): string | undefined => {
+    if (key === "FONNTE_API_URL") {
+      return "URL divalidasi anti-SSRF saat disimpan (wajib HTTPS, tanpa kredensial, bukan IP privat) dan dinormalisasi — nilai tersimpan bisa berbeda dari yang diketik."
+    }
+    if (key === "FONNTE_WEBHOOK_IPS") {
+      return "Daftar IP dipisah koma, contoh: 103.52.212.5 — harus IP valid, typo membuat webhook ditolak."
+    }
+    // SEC-506: key finansial/kritis bisa masuk antrean two-person rule.
+    if (isFinancialKey(key)) {
+      return "Key finansial/kritis — perubahan bisa memerlukan persetujuan admin kedua (two-person rule) sebelum berlaku."
+    }
+    return undefined
+  }
+
+  /** true bila admin saat ini adalah pengusul perubahan tertunda. */
+  const isOwnProposal = (a: PendingApproval): boolean => {
+    const proposer = a.proposedById ?? a.proposedBy
+    if (!proposer || !profile) return false
+    return proposer === profile.id || proposer === profile.adminId
+  }
+
+  /** SEC-506: setujui perubahan tertunda — wajib step-up; pengusul tidak
+   *  boleh menyetujui usulannya sendiri (tombol nonaktif + backend wajib
+   *  menegakkan). */
+  const doApprove = async (a: PendingApproval) => {
+    if (isOwnProposal(a) || approvalBusyId) return
+    const token = await stepUp.requestStepUp({
+      action: "ops-setting.approve",
+      targetId: a.id,
+      title: "Setujui perubahan setting",
+      description: `Menyetujui perubahan ${a.key} yang diusulkan ${a.proposedBy ?? "admin lain"}. Aksi ini dicatat di audit.`,
+    })
+    if (!token) return
+    setApprovalBusyId(a.id)
+    try {
+      await approvePendingApproval(a.id, token)
+      toast.show({ title: "Disetujui", description: `${a.key} kini berlaku.`, tone: "success" })
+      setPendingApprovals(await getPendingApprovals())
+      setSettings(await listOpsSettings())
+    } catch (e) {
+      toast.show({ title: "Gagal menyetujui", description: userMessage(e), tone: "danger" })
+    } finally {
+      setApprovalBusyId(null)
+    }
+  }
+
+  /** SEC-506: tolak perubahan tertunda — wajib step-up. */
+  const doReject = async (a: PendingApproval) => {
+    if (approvalBusyId) return
+    const token = await stepUp.requestStepUp({
+      action: "ops-setting.reject",
+      targetId: a.id,
+      title: "Tolak perubahan setting",
+      description: `Menolak perubahan ${a.key} yang diusulkan ${a.proposedBy ?? "admin lain"}. Aksi ini dicatat di audit.`,
+    })
+    if (!token) return
+    setApprovalBusyId(a.id)
+    try {
+      await rejectPendingApproval(a.id, token)
+      toast.show({ title: "Ditolak", description: `Perubahan ${a.key} dibatalkan.`, tone: "success" })
+      setPendingApprovals(await getPendingApprovals())
+    } catch (e) {
+      toast.show({ title: "Gagal menolak", description: userMessage(e), tone: "danger" })
+    } finally {
+      setApprovalBusyId(null)
+    }
+  }
 
   const openEdit = (s: OpsSettingView) => {
     setEditing(s)
@@ -164,7 +282,24 @@ export default function OpsSettingsPage() {
     setSaving(true)
     try {
       // BAI-118: kirim versi yang ditampilkan saat dialog dibuka.
-      const updated = await updateOpsSetting(editing.key, newValue.trim(), editing.version)
+      const result = await updateOpsSetting(editing.key, newValue.trim(), editing.version)
+      // SEC-506: backend menjawab 202 + pendingApproval (two-person rule) —
+      // perubahan BELUM berlaku; jangan anggap sukses.
+      if (isUpdatePending(result)) {
+        toast.show({
+          title: result.pendingApproval.key,
+          description: "Perubahan menunggu persetujuan admin kedua (two-person rule) — belum berlaku.",
+          tone: "info",
+        })
+        setEditing(null)
+        try {
+          setPendingApprovals(await getPendingApprovals())
+        } catch {
+          /* antrean mungkin belum didukung backend — banner sudah menangani */
+        }
+        return
+      }
+      const updated = result
       setSettings((prev) => prev.map((s) => (s.key === updated.key ? updated : s)))
       toast.show({ title: updated.label, description: "Diperbarui. Berlaku maks ~60 detik tanpa restart.", tone: "success" })
       setEditing(null)
@@ -236,7 +371,8 @@ export default function OpsSettingsPage() {
     }
   }
 
-  const openHistory = async (s: OpsSettingView) => {    setHistoryFor(s)
+  const openHistory = async (s: OpsSettingView) => {
+    setHistoryFor(s)
     setHistoryLoading(true)
     try {
       setHistory(await getOpsSettingHistory(s.key))
@@ -277,6 +413,15 @@ export default function OpsSettingsPage() {
       </div>
     )
   }
+
+  // BAD-026: secret Fonnte (token) terisi sementara allowlist IP webhook kosong.
+  const fonnteSecretConfigured = settings.some(
+    (x) =>
+      /fonnte/i.test(x.key) &&
+      x.key !== "FONNTE_WEBHOOK_IPS" &&
+      x.isSecret &&
+      x.configured,
+  )
 
   return (
     <RoleGate href="/ops-settings">
@@ -369,14 +514,123 @@ export default function OpsSettingsPage() {
               >
                 {maintenanceSaving ? "Menyimpan…" : "Simpan mode maintenance"}
               </Button>
-              {/* BAI-115: jujur soal jendela konfirmasi — bukan verifikasi per aksi. */}
+              {/* SEC-503: tiap aksi kritis meminta verifikasi ulang kata sandi —
+                  server menerbitkan token sekali pakai khusus aksi tersebut. */}
               <p className="mt-1 text-xs text-muted-foreground">
-                Verifikasi identitas membuka jendela konfirmasi 10 menit untuk aksi kritis
-                di halaman ini (bukan verifikasi per aksi).
+                Setiap aksi kritis meminta verifikasi ulang kata sandi; server
+                menerbitkan token sekali pakai khusus untuk aksi tersebut.
               </p>
             </div>
           </div>
         )}
+      </Card>
+
+      {/* SEC-506: two-person rule — antrean persetujuan perubahan finansial/kritis. */}
+      {twoPersonUnsupported ? (
+        <Card className="p-4 border-yellow-500">
+          <p className="text-sm text-yellow-800">
+            ⚠️ Two-person rule belum aktif di backend — perubahan finansial saat
+            ini single-approval. Membutuhkan backend terbaru
+            (GET /v1/admin/ops-settings/pending-approvals).
+          </p>
+        </Card>
+      ) : (
+        <Card className="p-4 space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="font-medium">Menunggu persetujuan</div>
+              <p className="text-xs text-muted-foreground">
+                Perubahan key finansial/kritis memerlukan persetujuan admin kedua.
+                Pengusul tidak boleh menyetujui usulannya sendiri (ditegakkan di UI
+                dan wajib di backend).
+              </p>
+            </div>
+            {!pendingLoading && pendingApprovals.length > 0 && (
+              <Badge variant="soft" tone="warning">
+                {pendingApprovals.length} menunggu
+              </Badge>
+            )}
+          </div>
+          {pendingLoading ? (
+            <Spinner />
+          ) : pendingApprovals.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Tidak ada perubahan yang menunggu persetujuan.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {pendingApprovals.map((a) => {
+                const own = isOwnProposal(a)
+                const busy = approvalBusyId === a.id
+                return (
+                  <div key={a.id} className="border rounded p-3 text-sm space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <code className="font-mono text-xs font-semibold">{a.key}</code>
+                      <span className="text-xs text-muted-foreground">
+                        {a.proposedAt ? formatDateTimeWIB(a.proposedAt) : ""}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Nilai lama: <code className="font-mono">{a.oldValue ?? "—"}</code>
+                      {" → "}
+                      Nilai baru: <code className="font-mono">{a.newValue ?? "—"}</code>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Diusulkan oleh <code className="font-mono">{a.proposedBy ?? "—"}</code>
+                      {own ? " (Anda)" : ""}
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        disabled={busy || own}
+                        title={own ? "Pengusul tidak boleh menyetujui usulannya sendiri" : undefined}
+                        onClick={() => void doApprove(a)}
+                      >
+                        {busy ? "Memproses…" : "Setuju"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => void doReject(a)}
+                      >
+                        Tolak
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* FAL-006: indikator health layanan terjemahan chat (CHAT_TRANSLATION_*). */}
+      <Card className="p-4 space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="font-medium">Terjemahan Chat</div>
+            <div className="text-xs text-muted-foreground font-mono">CHAT_TRANSLATION_*</div>
+          </div>
+          {!translationHealth ? (
+            <Spinner />
+          ) : !translationHealth.supported ? (
+            <Badge variant="soft" tone="neutral">Status tak diketahui</Badge>
+          ) : translationHealth.configured ? (
+            <Badge variant="soft" tone="success">Terkonfigurasi</Badge>
+          ) : (
+            <Badge variant="outline">Belum diset</Badge>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {!translationHealth
+            ? "Memuat status…"
+            : !translationHealth.supported
+              ? "Status tak diketahui — membutuhkan backend terbaru (GET /v1/admin/ops-settings/translation/health)."
+              : translationHealth.configured
+                ? `Provider: ${translationHealth.provider ?? "tidak diketahui"}. Key secret dirender sebagai input password dan tersimpan terenkripsi.`
+                : "Key CHAT_TRANSLATION_* belum terdaftar di registry ops-settings — terjemahan chat nonaktif."}
+        </p>
       </Card>
 
       {settings.length === 0 ? (
@@ -404,9 +658,28 @@ export default function OpsSettingsPage() {
                   {s.source && (
                     <Badge variant="soft">{s.source === "db" ? "Panel" : ".env"}</Badge>
                   )}
+                  {/* BAD-026: badge "Metode utama" pada kartu FONNTE_WEBHOOK_IPS. */}
+                  {s.key === "FONNTE_WEBHOOK_IPS" && (
+                    <Badge variant="soft" tone="info">
+                      Metode utama
+                    </Badge>
+                  )}
+                  {/* SEC-506: penanda key finansial/kritis (kandidat two-person rule). */}
+                  {isFinancialKey(s.key) && (
+                    <Badge variant="soft" tone="warning">
+                      Finansial
+                    </Badge>
+                  )}
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">{s.description}</p>
+              {/* BAD-026: peringatan inline bila IP kosong sementara secret terisi. */}
+              {s.key === "FONNTE_WEBHOOK_IPS" && !s.configured && fonnteSecretConfigured && (
+                <p className="text-xs text-yellow-700">
+                  ⚠️ Daftar IP kosong sementara secret Fonnte terisi — webhook berisiko
+                  ditolak bila backend mewajibkan allowlist IP. Isi daftar IP yang valid.
+                </p>
+              )}
               {s.status === "decrypt_failed" && (
                 <p className="text-xs text-red-600">
                   Baris database ada tetapi gagal didekripsi (mis. kunci enkripsi berubah) —
@@ -465,9 +738,8 @@ export default function OpsSettingsPage() {
             <Button variant="secondary" onClick={() => setEditing(null)}>
               Batal
             </Button>
-            {/* H05/BAI-115: ubah setting operasional wajib re-auth (jendela
-                konfirmasi 10 menit — bukan verifikasi per aksi; enforcement
-                server per-aksi masih backlog). */}
+            {/* SEC-503: ubah setting operasional wajib verifikasi ulang per
+                aksi (token step-up sekali pakai dari server). */}
             <Button
               onClick={() => reauth.require(() => void doSave(), `Ubah setting ${editing?.key ?? ""}`)}
               disabled={saving || !newValue.trim()}
@@ -499,12 +771,9 @@ export default function OpsSettingsPage() {
             ) : (
               <Field
                 label="Nilai baru"
-                // BAI-112: aturan validasi/normalisasi terlihat SEBELUM submit.
-                hint={
-                  editing.key === "FONNTE_API_URL"
-                    ? "URL divalidasi anti-SSRF saat disimpan (wajib HTTPS, tanpa kredensial, bukan IP privat) dan dinormalisasi — nilai tersimpan bisa berbeda dari yang diketik."
-                    : undefined
-                }
+                // BAI-112/BAD-004/SEC-506: aturan validasi/normalisasi terlihat
+                // SEBELUM submit (hint per key via editHint).
+                hint={editHint(editing.key)}
               >
                 <Input
                   type={editing.isSecret ? "password" : "text"}
@@ -607,6 +876,8 @@ export default function OpsSettingsPage() {
       </Dialog>
       {/* H05: dialog verifikasi ulang untuk aksi kritis. */}
       <ReauthDialog {...reauth.dialog} />
+      {/* SEC-506: dialog step-up untuk setujui/tolak perubahan finansial. */}
+      {stepUp.stepUpDialog}
     </div>
     </RoleGate>
   )

@@ -34,11 +34,14 @@ import {
   type InsuranceClaim,
   type InsuranceClaimStatus,
 } from "@/lib/api/admin/insurance-claims"
+import { useStepUp } from "@/components/admin/step-up-gate"
+import { StepUpNotSupportedError } from "@/lib/api/admin/step-up"
+import { useAuth } from "@/lib/auth-context"
 import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
-// ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
-import { maskEmail } from "@/lib/pii"
+// ADM-405 / SEC-505: identitas pengguna di-mask secara default (mask-only, tanpa unmask).
+import { maskEmail, maskName } from "@/lib/pii"
 
 const PAGE_SIZE = 20
 
@@ -88,10 +91,13 @@ function claimNote(c: InsuranceClaim): string {
   return String(c.note ?? c.notes ?? "—")
 }
 
+/** SEC-505: identitas pengguna di-mask (nama/email/username tidak tampil mentah). */
 function claimUser(c: InsuranceClaim): string {
-  return (
-    c.user?.fullName ?? c.user?.username ?? c.user?.email ?? c.userId ?? "—"
-  )
+  const u = c.user
+  if (u?.fullName) return maskName(u.fullName)
+  if (u?.username) return maskName(u.username)
+  if (u?.email) return maskEmail(u.email)
+  return c.userId ?? "—"
 }
 
 function claimOrder(c: InsuranceClaim): string {
@@ -150,6 +156,10 @@ function allowedActions(status: string): Action[] {
 
 export default function InsuranceClaimsPage() {
   const toast = useToast()
+  // SEC-502: identitas admin login (pemisahan tugas APPROVED→PAID) + gate
+  // verifikasi ulang server untuk PAID.
+  const { profile } = useAuth()
+  const { requestStepUp, stepUpDialog } = useStepUp()
 
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -234,16 +244,63 @@ export default function InsuranceClaimsPage() {
 
   const handleAction = async (action: Action) => {
     if (!selected || acting) return
+    // SEC-502: PAID mengeksekusi payout nyata — wajib verifikasi ulang
+    // server (step-up) sebelum eksekusi. Fail-closed bila backend belum
+    // mendukung atau user membatalkan.
+    let stepUpToken: string | undefined
+    if (action === "PAID") {
+      try {
+        const token = await requestStepUp({
+          action: "insurance-claim.pay",
+          targetId: selected.id,
+          title: "Verifikasi ulang",
+          description:
+            `Membayar klaim sebesar ${formatRupiah(claimAmount(selected))} ` +
+            "bersifat final dan tidak bisa dibatalkan.",
+        })
+        if (token === null) return // user membatalkan verifikasi
+        stepUpToken = token
+      } catch (e) {
+        if (e instanceof StepUpNotSupportedError) {
+          toast.show({
+            title: "Backend belum mendukung verifikasi ulang server — aksi diblokir",
+            tone: "danger",
+          })
+          return
+        }
+        toast.show({
+          title: "Verifikasi ulang gagal",
+          description: userMessage(e),
+          tone: "danger",
+        })
+        return
+      }
+    }
     setActing(action)
     try {
-      await updateInsuranceClaimStatus(
+      const res = await updateInsuranceClaimStatus(
         selected.id,
         {
           status: action,
           note: note.trim() || undefined,
         },
-        reviewKey ?? undefined,
+        { idempotencyKey: reviewKey ?? undefined, stepUpToken },
       )
+      // SEC-502: nominal besar — backend bisa menahan payout menunggu
+      // persetujuan admin kedua. Jangan toast sukses buta.
+      if (res?.pendingSecondApproval) {
+        toast.show({
+          title: "Menunggu persetujuan kedua",
+          description:
+            "Klaim disetujui untuk dibayar, tetapi payout ditahan — nominal besar sehingga dibutuhkan persetujuan admin kedua.",
+          tone: "info",
+        })
+        setSelected(null)
+        setNote("")
+        setReviewKey(null)
+        await load("refresh")
+        return
+      }
       toast.show({
         title: ACTION_META[action].label,
         description: `Klaim ${selected.id} → ${STATUS_LABEL[action]}.`,
@@ -266,6 +323,14 @@ export default function InsuranceClaimsPage() {
 
   const reviewStatus = selected ? String(selected.status ?? "") : ""
   const actions = allowedActions(reviewStatus)
+  // SEC-502: pemisahan tugas — admin yang menyetujui klaim tidak boleh
+  // mengeksekusi PAID-nya sendiri. Defensif: backend belum tentu mengirim
+  // `approvedBy`; fallback ke `reviewedBy` (pada status APPROVED, reviewer
+  // = approver). Bila keduanya kosong, pemeriksaan tidak memblokir.
+  const paidBlockedBySelfApproval =
+    !!profile?.id &&
+    !!selected &&
+    (selected.approvedBy ?? selected.reviewedBy) === profile.id
 
   return (
     <RoleGate href="/insurance-claims">
@@ -466,11 +531,18 @@ export default function InsuranceClaimsPage() {
                       key={action}
                       variant={ACTION_META[action].variant}
                       loading={acting === action}
-                      disabled={acting != null}
+                      disabled={
+                        acting != null ||
+                        (action === "PAID" && paidBlockedBySelfApproval)
+                      }
                       onClick={() =>
                         action === "PAID" ? setConfirmPaid(true) : handleAction(action)
                       }
-                      title={ACTION_META[action].description}
+                      title={
+                        action === "PAID" && paidBlockedBySelfApproval
+                          ? "Anda yang menyetujui klaim ini — pembayaran harus dieksekusi admin lain."
+                          : ACTION_META[action].description
+                      }
                     >
                       {ACTION_META[action].label}
                     </Button>
@@ -511,7 +583,11 @@ export default function InsuranceClaimsPage() {
           description={
             `Tindakan ini MENGKREDIT wallet ${claimUser(selected)} sebesar ` +
             `${formatRupiah(claimAmount(selected))} (cap pertanggungan ${formatRupiah(claimCap(selected))}). ` +
-            `Payout bersifat final dan tidak bisa dibatalkan. Pastikan nominal dan penerima sudah benar.`
+            `Payout bersifat final dan tidak bisa dibatalkan. Pastikan nominal dan penerima sudah benar.` +
+            // SEC-502: peringatan nominal besar — dibutuhkan persetujuan admin kedua.
+            ((claimAmount(selected) ?? 0) > 1_000_000
+              ? " Nominal di atas Rp1.000.000 — dibutuhkan persetujuan admin kedua."
+              : "")
           }
           confirmLabel={`Ya, bayar ${formatRupiah(claimAmount(selected))}`}
           cancelLabel="Batal"
@@ -522,6 +598,8 @@ export default function InsuranceClaimsPage() {
           }}
         />
       ) : null}
+      {/* SEC-502: dialog verifikasi ulang server (step-up) untuk PAID. */}
+      {stepUpDialog}
     </RoleGate>
   )
 }

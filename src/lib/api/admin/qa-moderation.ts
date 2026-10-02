@@ -110,6 +110,8 @@ export type QaModerationEvent = {
     | "APPEAL_SUBMITTED"
     | "APPEAL_APPROVED"
     | "APPEAL_REJECTED"
+    // FAL-012 (audit integrasi 2026-10-03): backend mencatat resolusi laporan.
+    | "REPORT_RESOLVED"
   reason_code: QaModerationReason | null
   note: string | null
   created_at: string

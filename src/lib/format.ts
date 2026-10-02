@@ -5,7 +5,11 @@
  * Indonesia. Murni fungsi tanpa dependensi lain.
  */
 
-/** "26 Sep 2026, 14.30 WIB" — input kosong/invalid → "—". */
+/** "26 Sep 2026, 14:30 WIB" — input kosong/invalid → "—".
+ *
+ * FAL-021 (audit integrasi 2026-10-03): samakan ke format FE (titik-dua,
+ * bukan titik) — "14.30" → "14:30".
+ */
 export function formatDateTimeWIB(d: Date | number | string | null | undefined): string {
   if (d == null || d === "") return "—"
   const date = d instanceof Date ? d : new Date(d)
@@ -20,7 +24,7 @@ export function formatDateTimeWIB(d: Date | number | string | null | undefined):
     hour12: false,
   }).formatToParts(date)
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ""
-  return `${get("day")} ${get("month")} ${get("year")}, ${get("hour")}.${get("minute")} WIB`
+  return `${get("day")} ${get("month")} ${get("year")}, ${get("hour")}:${get("minute")} WIB`
 }
 
 /**
@@ -69,10 +73,18 @@ export function endOfMonthDateString(isoDate: string): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
 }
 
-/** "1.234.567" — non-finite → "—". */
+/**
+ * "1.234.567" — non-finite → "—".
+ *
+ * BAD-021 (audit integrasi 2026-10-03): `Math.trunc` → `Math.round`
+ * (round-half-up), selaras kebijakan pecahan kanonis DBL-003/004.
+ * CATATAN: temuan menyebut `formatIDR`, tetapi satu-satunya `Math.trunc`
+ * di file ini ada di fungsi ini — `formatIDR` sudah memakai pembulatan
+ * 2 desimal (BAI-052) dan TIDAK diubah.
+ */
 export function formatNumber(n: unknown): string {
   if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return Math.trunc(n).toLocaleString("id-ID")
+  return Math.round(n).toLocaleString("id-ID")
 }
 
 /**
@@ -136,4 +148,102 @@ export function ageHours(d: Date | number | string | null | undefined): number |
   const date = d instanceof Date ? d : new Date(d)
   if (Number.isNaN(date.getTime())) return null
   return Math.max(0, (Date.now() - date.getTime()) / 3600000)
+}
+
+/**
+ * Waktu relatif: "Baru saja" → "5 menit lalu" → "2 jam lalu" → "Kemarin" →
+ * tanggal eksplisit. Invalid → "—".
+ *
+ * FAL-022 (audit integrasi 2026-10-03): selaras konvensi FE
+ * `formatTimeAgo` (DBL-009 bucket kanonis lintas repo) — <24 jam →
+ * "X jam lalu", 24–48 jam → "Kemarin" (delta jam, bukan hari kalender),
+ * selebihnya tanggal eksplisit. Beda dari `formatAge`: fungsi ini memakai
+ * sufiks "lalu"/"Kemarin" seperti FE; fallback tanggal memakai WIB
+ * (konvensi admin). `now` bisa disuntik untuk test; delta negatif dijepit
+ * ke 0 → "Baru saja".
+ */
+export function formatRelativeTime(
+  d: Date | number | string | null | undefined,
+  now: Date | number = Date.now(),
+): string {
+  if (d == null || d === "") return "—"
+  const date = d instanceof Date ? d : new Date(d)
+  if (Number.isNaN(date.getTime())) return "—"
+  const base = typeof now === "number" ? now : now.getTime()
+  const deltaSec = Math.max(0, Math.floor((base - date.getTime()) / 1000))
+  if (deltaSec < 60) return "Baru saja"
+  const minutes = Math.floor(deltaSec / 60)
+  if (minutes < 60) return `${minutes} menit lalu`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} jam lalu`
+  // DBL-009: "Kemarin" = 24–48 jam lalu (delta jam) — selaras FE.
+  if (hours < 48) return "Kemarin"
+  return formatDateWIB(date)
+}
+
+/**
+ * Label per tipe untuk pesan tanpa teks yang bisa ditampilkan
+ * (FAL-004, audit integrasi 2026-10-03) — memakai data yang SUDAH dikirim
+ * backend, bukan menebak isi:
+ * - IMAGE → "Gambar", VIDEO → "Video"
+ * - FILE → "Dokumen: {fileName}", VOICE → "Pesan suara ({durationSeconds} dtk)"
+ * - LOCATION → "Lokasi: {label}"
+ * - PRODUCT_CARD/ORDER_CARD → ringkasan dari `cardSnapshot`/`card`
+ *   (title, harga, orderCode)
+ * - POLL → "Polling: {question}"
+ * - TEXT/SYSTEM tanpa teks → "Isi disembunyikan — DM privat"
+ *   (backend tidak mengirim isi untuk DM privat; media tanpa caption memang
+ *   tidak punya teks — bukan isi yang disembunyikan).
+ */
+export function messageFallbackLabel(message: unknown): string {
+  const obj = (message ?? {}) as Record<string, unknown>
+  const t = String(obj.messageType ?? obj.type ?? "TEXT").toUpperCase()
+  const str = (v: unknown): string =>
+    typeof v === "string" && v.trim() ? v : ""
+  switch (t) {
+    case "IMAGE":
+      return "Gambar"
+    case "VIDEO":
+      return "Video"
+    case "FILE": {
+      const name = str(obj.fileName) || str(obj.file_name) || str(obj.name)
+      return name ? `Dokumen: ${name}` : "Dokumen"
+    }
+    case "VOICE": {
+      const dur = obj.durationSeconds ?? obj.duration_seconds
+      return typeof dur === "number" && Number.isFinite(dur)
+        ? `Pesan suara (${dur} dtk)`
+        : "Pesan suara"
+    }
+    case "LOCATION": {
+      const label = str(obj.label) || str(obj.address)
+      return label ? `Lokasi: ${label}` : "Lokasi"
+    }
+    case "PRODUCT_CARD":
+    case "ORDER_CARD": {
+      const snap = (obj.cardSnapshot ?? obj.card_snapshot ?? obj.card ?? {}) as Record<
+        string,
+        unknown
+      >
+      const title = str(snap.title)
+      const code = str(snap.orderCode) || str(snap.order_code)
+      const priceRaw = snap.price ?? snap.amount
+      const price =
+        typeof priceRaw === "number" && Number.isFinite(priceRaw)
+          ? ` · ${formatIDR(priceRaw)}`
+          : ""
+      const bits = [title || (t === "PRODUCT_CARD" ? "Kartu produk" : "Kartu order")]
+      if (code) bits.push(code)
+      return `${bits.join(" · ")}${price}`
+    }
+    case "POLL": {
+      const poll = (obj.poll ?? {}) as Record<string, unknown>
+      const q = str(obj.question) || str(poll.question)
+      return q ? `Polling: ${q}` : "Polling"
+    }
+    case "SYSTEM":
+      return "Pesan sistem"
+    default:
+      return "Isi disembunyikan — DM privat"
+  }
 }

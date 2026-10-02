@@ -29,16 +29,20 @@ import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import {
+  closeChatPoll,
+  getChatPoll,
   getModerationEventDetail,
   getModerationStats,
   getRoomMessages,
   listModerationEvents,
   reviewModerationEvent,
+  type ChatPoll,
   type ModerationEvent,
 } from "@/lib/api/admin/chat"
 import { listAuditLogs, type AdminAuditLogItem } from "@/lib/api/admin/system"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB } from "@/lib/format"
+import { useStepUp } from "@/components/admin/step-up-gate"
+import { formatDateTimeWIB, messageFallbackLabel } from "@/lib/format"
 
 const PAGE_SIZE = 20
 const ROOM_MESSAGE_LIMIT = 50
@@ -149,15 +153,6 @@ function messageText(message: unknown): string | null {
   return null
 }
 
-/** Label fallback bila sebuah pesan tidak membawa teks. */
-function messageFallbackLabel(message: unknown): string {
-  const obj = (message ?? {}) as Record<string, unknown>
-  const t = String(obj.messageType ?? obj.type ?? "TEXT").toUpperCase()
-  // Pesan media tanpa caption memang tidak punya teks — bukan isi yang disembunyikan.
-  if (t !== "TEXT" && t !== "SYSTEM") return "Pesan tanpa teks"
-  return "Isi disembunyikan — DM privat"
-}
-
 /**
  * Pratinjau isi pesan dari detail moderation-event (content/snippet).
  * null = metadata-only (mis. DM privat yang isinya disembunyikan backend).
@@ -202,8 +197,244 @@ function messageTime(message: unknown): string {
   return typeof raw === "string" ? formatDateTimeWIB(raw) : ""
 }
 
+/** FAL-003: deteksi pesan polling — kembalikan pollId bila pesan bertipe POLL. */
+function pollIdOf(message: unknown): string | null {
+  const obj = (message ?? {}) as Record<string, unknown>
+  const t = String(obj.messageType ?? obj.type ?? "").toUpperCase()
+  const embedded = obj.poll as Record<string, unknown> | undefined
+  const id = obj.pollId ?? embedded?.id
+  if (t === "POLL" || (typeof id === "string" && id)) {
+    return typeof id === "string" && id ? id : null
+  }
+  return null
+}
+
+/** FAL-003: poll mentah yang disematkan backend di payload pesan (bila ada). */
+function inlinePollOf(message: unknown): unknown {
+  const obj = (message ?? {}) as Record<string, unknown>
+  const p = obj.poll
+  return p && typeof p === "object" ? p : undefined
+}
+
+/** FAL-007: kutipan pesan yang dibalas (snippet), bila ada. */
+function replyToSnippet(message: unknown): string | null {
+  const obj = (message ?? {}) as Record<string, unknown>
+  const rt = obj.replyTo
+  if (!rt || typeof rt !== "object") return null
+  const rec = rt as Record<string, unknown>
+  for (const key of ["content", "text", "body", "caption"]) {
+    const v = rec[key]
+    if (typeof v === "string" && v.trim()) return v.slice(0, 140)
+  }
+  return null
+}
+
+/** FAL-007: penanda ephemeral/view-once, bila ada. */
+function ephemeralLabel(message: unknown): string | null {
+  const obj = (message ?? {}) as Record<string, unknown>
+  if (obj.viewOnce === true) return "⏳ Sekali lihat"
+  const ttl = obj.ephemeralTtlSeconds
+  if (typeof ttl === "number" && Number.isFinite(ttl) && ttl > 0) {
+    return `⏳ Hilang dalam ${ttl} dtk`
+  }
+  return null
+}
+
+function isPinnedMessage(message: unknown): boolean {
+  const obj = (message ?? {}) as Record<string, unknown>
+  return obj.isPinned === true
+}
+
+type StepUpRequest = (opts: {
+  action: string
+  targetId?: string
+  title: string
+  description?: string
+}) => Promise<string | null>
+
+/**
+ * FAL-003: kartu hasil polling di daftar pesan room.
+ * Mengambil hasil via getChatPoll (defensif 404) lalu menampilkan opsi +
+ * jumlah suara + total; tombol "Tutup polling" meminta alasan + step-up
+ * (aksi `chat.poll.close`) sebelum memanggil closeChatPoll.
+ */
+function PollCard({
+  pollId,
+  inlinePoll,
+  requestStepUp,
+}: {
+  pollId: string
+  inlinePoll?: unknown
+  requestStepUp: StepUpRequest
+}) {
+  const toast = useToast()
+  const [poll, setPoll] = useState<ChatPoll | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [closeOpen, setCloseOpen] = useState(false)
+  const [reason, setReason] = useState("")
+  const [closing, setClosing] = useState(false)
+
+  const loadPoll = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      if (inlinePoll && typeof inlinePoll === "object") {
+        // Backend menyematkan hasil poll di payload pesan — normalisasi ringan.
+        const p = inlinePoll as Record<string, unknown>
+        setPoll({
+          id: pollId,
+          question: typeof p.question === "string" ? p.question : "",
+          options: Array.isArray(p.options) ? (p.options as ChatPoll["options"]) : [],
+          totalVotes: typeof p.totalVotes === "number" ? p.totalVotes : 0,
+          isClosed: p.isClosed === true,
+          closedAt: typeof p.closedAt === "string" ? p.closedAt : null,
+        })
+      } else {
+        setPoll(await getChatPoll(pollId))
+      }
+    } catch (e) {
+      setError(userMessage(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [pollId, inlinePoll])
+
+  useEffect(() => {
+    void loadPoll()
+  }, [loadPoll])
+
+  const doClose = async () => {
+    if (!poll || closing) return
+    if (!reason.trim()) {
+      toast.show({ title: "Alasan wajib diisi", tone: "danger" })
+      return
+    }
+    const token = await requestStepUp({
+      action: "chat.poll.close",
+      targetId: pollId,
+      title: "Tutup polling",
+      description: `Menutup polling "${poll.question || pollId}". Aksi ini dicatat di audit.`,
+    })
+    if (!token) return
+    setClosing(true)
+    try {
+      const updated = await closeChatPoll(pollId, reason.trim(), token)
+      setPoll(updated)
+      setCloseOpen(false)
+      setReason("")
+      toast.show({ title: "Polling ditutup", tone: "success" })
+    } catch (e) {
+      toast.show({
+        title: "Gagal menutup polling",
+        description: userMessage(e),
+        tone: "danger",
+      })
+    } finally {
+      setClosing(false)
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-sm border border-border bg-surface px-3 py-2">
+      {loading ? (
+        <p className="text-caption text-text-secondary">Memuat hasil polling…</p>
+      ) : error ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-caption text-danger-text">{error}</p>
+          <button
+            type="button"
+            onClick={() => void loadPoll()}
+            className="text-caption font-semibold text-info-text hover:underline"
+          >
+            Coba lagi
+          </button>
+        </div>
+      ) : poll ? (
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-body font-semibold text-text-primary">
+              📊 {poll.question || "Polling"}
+            </p>
+            <Badge tone={poll.isClosed ? "neutral" : "success"}>
+              {poll.isClosed ? "Ditutup" : "Aktif"}
+            </Badge>
+          </div>
+          {poll.options.map((o) => {
+            const pct =
+              poll.totalVotes > 0
+                ? Math.round((o.voteCount / poll.totalVotes) * 100)
+                : 0
+            return (
+              <div key={o.id} className="text-caption">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-text-primary">{o.text}</span>
+                  <span className="shrink-0 text-text-secondary">
+                    {o.voteCount} suara ({pct}%)
+                  </span>
+                </div>
+                <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-info"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+          <p className="text-caption text-text-tertiary">
+            Total {poll.totalVotes} suara
+            {poll.closedAt ? ` · ditutup ${formatDateTimeWIB(poll.closedAt)}` : ""}
+          </p>
+          {!poll.isClosed ? (
+            <RoleGate roles={["SUPER_ADMIN", "DISPUTE_ADMIN"]}>
+              <Button
+                variant="secondary"
+                size="sm"
+                fullWidth={false}
+                onClick={() => setCloseOpen(true)}
+              >
+                Tutup polling
+              </Button>
+            </RoleGate>
+          ) : null}
+        </div>
+      ) : null}
+
+      <Dialog
+        open={closeOpen}
+        onClose={() => {
+          if (!closing) setCloseOpen(false)
+        }}
+        title="Tutup polling"
+        description="Polling yang ditutup tidak bisa menerima suara lagi. Alasan wajib diisi dan tercatat di audit."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setCloseOpen(false)} disabled={closing}>
+              Batal
+            </Button>
+            <Button onClick={() => void doClose()} disabled={closing || !reason.trim()}>
+              {closing ? "Menutup…" : "Tutup polling"}
+            </Button>
+          </>
+        }
+      >
+        <TextArea
+          label="Alasan penutupan"
+          rows={3}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="cth: Konten polling melanggar kebijakan…"
+          maxLength={500}
+        />
+      </Dialog>
+    </div>
+  )
+}
+
 export default function ChatModerationPage() {
   const toast = useToast()
+  const stepUp = useStepUp()
 
   const [filter, setFilter] = useState<Filter>("ALL")
   const [severityFilter, setSeverityFilter] = useState("ALL")
@@ -237,6 +468,11 @@ export default function ChatModerationPage() {
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesOlderLoading, setMessagesOlderLoading] = useState(false)
   const [messagesError, setMessagesError] = useState<string | null>(null)
+  // FAL-005: toggle "Tampilkan pesan terhapus" (default OFF) — mengontrol
+  // param `includeDeleted` di getRoomMessages. CATATAN: akses pesan terhapus
+  // sebaiknya diaudit di backend (siapa melihat pesan terhapus, kapan) —
+  // toggle ini hanya mengontrol param, bukan audit.
+  const [showDeleted, setShowDeleted] = useState(false)
 
   // ADM-128: riwayat review satu event dari audit log
   // (targetType=ChatModerationEvent & targetId=<eventId>).
@@ -344,6 +580,7 @@ export default function ChatModerationPage() {
     setMsgCursor(null)
     setMsgHasMore(false)
     setMessagesError(null)
+    setShowDeleted(false)
     setReviewHistory([])
     setReviewHistoryError(null)
     try {
@@ -384,13 +621,14 @@ export default function ChatModerationPage() {
   }
 
   // ADM-103: adaptor mengembalikan envelope { messages, nextCursor, hasMore }.
-  const loadRoomMessages = async (roomId: string) => {
-    setMessagesVisible(true)
-    if (messages !== null || messagesLoading) return
+  const fetchRoomMessages = async (roomId: string, includeDeleted: boolean) => {
     setMessagesLoading(true)
     setMessagesError(null)
     try {
-      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT, includeDeleted: true })
+      const res = await getRoomMessages(roomId, {
+        limit: ROOM_MESSAGE_LIMIT,
+        includeDeleted,
+      })
       setMessages(res.messages)
       setMsgCursor(res.nextCursor)
       setMsgHasMore(res.hasMore)
@@ -401,11 +639,27 @@ export default function ChatModerationPage() {
     }
   }
 
+  const loadRoomMessages = async (roomId: string) => {
+    setMessagesVisible(true)
+    if (messages !== null || messagesLoading) return
+    await fetchRoomMessages(roomId, showDeleted)
+  }
+
+  /** FAL-005: toggle pesan terhapus → muat ulang dengan param baru. */
+  const toggleShowDeleted = (roomId: string) => {
+    const next = !showDeleted
+    setShowDeleted(next)
+    setMessages(null)
+    setMsgCursor(null)
+    setMsgHasMore(false)
+    void fetchRoomMessages(roomId, next)
+  }
+
   const loadOlderRoomMessages = async (roomId: string) => {
     if (!msgCursor || messagesOlderLoading) return
     setMessagesOlderLoading(true)
     try {
-      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT, cursor: msgCursor, includeDeleted: true })
+      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT, cursor: msgCursor, includeDeleted: showDeleted })
       setMessages((prev) => [...(prev ?? []), ...res.messages])
       setMsgCursor(res.nextCursor)
       setMsgHasMore(res.hasMore)
@@ -451,6 +705,10 @@ export default function ChatModerationPage() {
   // null berarti backend mengirim metadata-only (isi disembunyikan).
   const detailPreview = detail ? eventMessagePreview(detail) : null
   const detailIsPrivate = detail ? isPrivateRoom(detail) : false
+  // BAD-007: backend sedang menambahkan `roomId` ke detail event — baca
+  // defensif dari dua sisi agar tombol "Lihat pesan room" tampil baik
+  // sebelum maupun sesudah backend selesai.
+  const detailRoomId = detail ? (detail.roomId ?? detail.room?.id ?? null) : null
 
   return (
     <RoleGate href="/chat">
@@ -679,20 +937,33 @@ export default function ChatModerationPage() {
               )}
             </div>
 
-            {detail.roomId ? (
+            {detailRoomId ? (
               <div className="space-y-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  fullWidth={false}
-                  onClick={() =>
-                    messagesVisible
-                      ? setMessagesVisible(false)
-                      : void loadRoomMessages(String(detail.roomId))
-                  }
-                >
-                  {messagesVisible ? "Sembunyikan pesan" : "Lihat pesan room"}
-                </Button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    fullWidth={false}
+                    onClick={() =>
+                      messagesVisible
+                        ? setMessagesVisible(false)
+                        : void loadRoomMessages(detailRoomId)
+                    }
+                  >
+                    {messagesVisible ? "Sembunyikan pesan" : "Lihat pesan room"}
+                  </Button>
+                  {/* FAL-005: toggle pesan terhapus (default OFF). Akses
+                      pesan terhapus sebaiknya diaudit di backend. */}
+                  <label className="flex cursor-pointer items-center gap-2 text-caption text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={showDeleted}
+                      onChange={() => toggleShowDeleted(detailRoomId)}
+                      className="h-4 w-4 accent-info"
+                    />
+                    Tampilkan pesan terhapus
+                  </label>
+                </div>
                 {messagesVisible ? (
                   messagesLoading ? (
                     <div className="flex items-center gap-2 py-3">
@@ -706,7 +977,7 @@ export default function ChatModerationPage() {
                         variant="secondary"
                         size="sm"
                         fullWidth={false}
-                        onClick={() => void loadRoomMessages(String(detail.roomId))}
+                        onClick={() => void loadRoomMessages(detailRoomId)}
                       >
                         Coba lagi
                       </Button>
@@ -714,25 +985,55 @@ export default function ChatModerationPage() {
                   ) : messages && messages.length > 0 ? (
                     <>
                       <ul className="max-h-64 space-y-2 overflow-y-auto">
-                        {messages.map((m, i) => (
-                          <li key={i} className="rounded-sm border border-border bg-surface px-3 py-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-caption font-semibold text-text-primary">
-                                {messageSenderLabel(m)}
-                              </span>
-                              <span className="text-caption text-text-tertiary">
-                                {messageTime(m)}
-                              </span>
-                            </div>
-                            <p className="mt-1 text-body text-text-primary">
-                              {messageText(m) ?? (
-                                <span className="italic text-text-tertiary">
-                                  {messageFallbackLabel(m)}
+                        {messages.map((m, i) => {
+                          const msgPollId = pollIdOf(m)
+                          const replySnippet = replyToSnippet(m)
+                          const ephLabel = ephemeralLabel(m)
+                          const pinned = isPinnedMessage(m)
+                          return (
+                            <li key={i} className="rounded-sm border border-border bg-surface px-3 py-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-caption font-semibold text-text-primary">
+                                  {messageSenderLabel(m)}
                                 </span>
-                              )}
-                            </p>
-                          </li>
-                        ))}
+                                <span className="text-caption text-text-tertiary">
+                                  {messageTime(m)}
+                                </span>
+                              </div>
+                              {/* FAL-007: badge pin / reply / ephemeral. */}
+                              {pinned || ephLabel ? (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {pinned ? (
+                                    <Badge tone="info">📌 Disematkan</Badge>
+                                  ) : null}
+                                  {ephLabel ? (
+                                    <Badge tone="warning">{ephLabel}</Badge>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                              {replySnippet ? (
+                                <blockquote className="mt-1 border-l-2 border-border pl-2 text-caption italic text-text-tertiary">
+                                  {replySnippet}
+                                </blockquote>
+                              ) : null}
+                              <p className="mt-1 text-body text-text-primary">
+                                {messageText(m) ?? (
+                                  <span className="italic text-text-tertiary">
+                                    {messageFallbackLabel(m)}
+                                  </span>
+                                )}
+                              </p>
+                              {/* FAL-003: kartu hasil polling untuk pesan POLL. */}
+                              {msgPollId ? (
+                                <PollCard
+                                  pollId={msgPollId}
+                                  inlinePoll={inlinePollOf(m)}
+                                  requestStepUp={stepUp.requestStepUp}
+                                />
+                              ) : null}
+                            </li>
+                          )
+                        })}
                       </ul>
                       {msgHasMore ? (
                         <div className="mt-2">
@@ -741,7 +1042,7 @@ export default function ChatModerationPage() {
                             size="sm"
                             fullWidth={false}
                             loading={messagesOlderLoading}
-                            onClick={() => void loadOlderRoomMessages(String(detail?.roomId))}
+                            onClick={() => void loadOlderRoomMessages(detailRoomId)}
                           >
                             Muat pesan lama
                           </Button>
@@ -814,6 +1115,8 @@ export default function ChatModerationPage() {
           </div>
         ) : null}
       </Dialog>
+      {/* FAL-003/SEC-506: dialog step-up untuk aksi sensitif (tutup polling). */}
+      {stepUp.stepUpDialog}
     </RoleGate>
   )
 }

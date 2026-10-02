@@ -87,6 +87,8 @@ const EVENT_LABEL: Record<string, string> = {
   APPEAL_SUBMITTED: "Keberatan diajukan",
   APPEAL_APPROVED: "Keberatan disetujui",
   APPEAL_REJECTED: "Keberatan ditolak",
+  // FAL-012 (audit integrasi 2026-10-03).
+  REPORT_RESOLVED: "Laporan diselesaikan",
 }
 
 type QueueFilters = {
