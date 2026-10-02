@@ -180,12 +180,12 @@ export async function updateMaintenance(
 //
 // KONTRAK YANG DIASUMSISKAN (tim backend membangun paralel; selaraskan bila
 // berbeda — halaman hanya memakai signature di bawah):
-// - GET  /v1/admin/ops-settings/pending-approvals
+// - GET  /v1/admin/approvals/pending
 //   → { approvals: PendingApproval[] }  (atau array langsung)
-// - POST /v1/admin/ops-settings/pending-approvals/:id/approve
+// - POST /v1/admin/approvals/:id/approve
 //   → { setting: OpsSettingView } | { approval: PendingApproval }
 //   Wajib header `X-Step-Up-Token` (aksi step-up `ops-setting.approve`).
-// - POST /v1/admin/ops-settings/pending-approvals/:id/reject
+// - POST /v1/admin/approvals/:id/reject
 //   → { approval: PendingApproval }
 //   Wajib header `X-Step-Up-Token` (aksi step-up `ops-setting.reject`).
 // - PUT  /v1/admin/ops-settings/:key menjawab 202 + `{ pendingApproval }`
@@ -198,14 +198,14 @@ export async function updateMaintenance(
 /** Daftar perubahan setting yang menunggu persetujuan admin kedua. */
 export async function getPendingApprovals(): Promise<PendingApproval[]> {
   try {
-    const res = await adminHttp.get("/v1/admin/ops-settings/pending-approvals")
+    const res = await adminHttp.get("/v1/admin/approvals/pending")
     const body = res as { approvals?: PendingApproval[] } | PendingApproval[]
     if (Array.isArray(body)) return body
     return Array.isArray(body?.approvals) ? body.approvals : []
   } catch (e) {
     if (isNotFoundError(e)) {
       throw new OpsSettingsNotSupportedError(
-        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (GET /v1/admin/ops-settings/pending-approvals).",
+        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (GET /v1/admin/approvals/pending).",
       )
     }
     throw e
@@ -223,14 +223,14 @@ export async function approvePendingApproval(
 ): Promise<unknown> {
   try {
     return await adminHttp.post(
-      `/v1/admin/ops-settings/pending-approvals/${encodeURIComponent(id)}/approve`,
+      `/v1/admin/approvals/${encodeURIComponent(id)}/approve`,
       {},
       { headers: stepUpHeaders(stepUpToken) },
     )
   } catch (e) {
     if (isNotFoundError(e)) {
       throw new OpsSettingsNotSupportedError(
-        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (POST /v1/admin/ops-settings/pending-approvals/:id/approve).",
+        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (POST /v1/admin/approvals/:id/approve).",
       )
     }
     throw e
@@ -247,14 +247,14 @@ export async function rejectPendingApproval(
 ): Promise<unknown> {
   try {
     return await adminHttp.post(
-      `/v1/admin/ops-settings/pending-approvals/${encodeURIComponent(id)}/reject`,
+      `/v1/admin/approvals/${encodeURIComponent(id)}/reject`,
       {},
       { headers: stepUpHeaders(stepUpToken) },
     )
   } catch (e) {
     if (isNotFoundError(e)) {
       throw new OpsSettingsNotSupportedError(
-        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (POST /v1/admin/ops-settings/pending-approvals/:id/reject).",
+        "Two-person rule belum aktif di backend — membutuhkan backend terbaru (POST /v1/admin/approvals/:id/reject).",
       )
     }
     throw e

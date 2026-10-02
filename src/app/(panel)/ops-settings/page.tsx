@@ -531,7 +531,7 @@ export default function OpsSettingsPage() {
           <p className="text-sm text-yellow-800">
             ⚠️ Two-person rule belum aktif di backend — perubahan finansial saat
             ini single-approval. Membutuhkan backend terbaru
-            (GET /v1/admin/ops-settings/pending-approvals).
+            (GET /v1/admin/approvals/pending).
           </p>
         </Card>
       ) : (
