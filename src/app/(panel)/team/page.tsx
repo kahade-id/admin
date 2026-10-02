@@ -27,6 +27,7 @@ import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { useAuth } from "@/lib/auth-context"
 import { formatDateTimeWIB } from "@/lib/format"
+import { isValidEmail } from "@/lib/validation"
 import { userMessage } from "@/lib/api/response"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import {
@@ -93,7 +94,8 @@ function CreateAdminForm({ onCreated }: { onCreated: () => void }) {
       setFormError("Nama lengkap minimal 2 karakter.")
       return
     }
-    if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
+    // SYS-C-204: pola email kanonis (@/lib/validation) — selaras FE.
+    if (!isValidEmail(email)) {
       setFormError("Format email tidak valid.")
       return
     }
