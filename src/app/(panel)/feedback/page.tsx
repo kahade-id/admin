@@ -153,10 +153,10 @@ export default function FeedbackListPage() {
     category: "",
     platform: "",
     rating: "",
-    from: "",
-    to: "",
+    dateFrom: "",
+    dateTo: "",
     account: "",
-    q: "",
+    search: "",
   })
   const [searchDraft, setSearchDraft] = useState("")
   const [rows, setRows] = useState<FeedbackItem[]>([])
@@ -176,10 +176,10 @@ export default function FeedbackListPage() {
           category: filters.category || undefined,
           platform: filters.platform || undefined,
           rating: filters.rating ? Number(filters.rating) : undefined,
-          from: filters.from || undefined,
-          to: filters.to || undefined,
+          dateFrom: filters.dateFrom || undefined,
+          dateTo: filters.dateTo || undefined,
           account: filters.account === "user" || filters.account === "guest" ? filters.account : undefined,
-          q: filters.q || undefined,
+          search: filters.search || undefined,
         })
         setRows((prev) => (append ? [...prev, ...(res.data ?? [])] : (res.data ?? [])))
         setNextCursor(res.nextCursor ?? null)
@@ -212,7 +212,7 @@ export default function FeedbackListPage() {
   }
 
   const resetFilters = () => {
-    setFilters({ status: "ALL", category: "", platform: "", rating: "", from: "", to: "", account: "", q: "" })
+    setFilters({ status: "ALL", category: "", platform: "", rating: "", dateFrom: "", dateTo: "", account: "", search: "" })
     setSearchDraft("")
   }
 
@@ -305,16 +305,7 @@ export default function FeedbackListPage() {
             fullWidth={false}
             onClick={async () => {
               try {
-                const { url } = await exportFeedback({
-                  status: filters.status === "ALL" ? undefined : filters.status,
-                  category: filters.category || undefined,
-                  platform: filters.platform || undefined,
-                  rating: filters.rating ? Number(filters.rating) : undefined,
-                  from: filters.from || undefined,
-                  to: filters.to || undefined,
-                  account: filters.account === "user" || filters.account === "guest" ? filters.account : undefined,
-                  q: filters.q || undefined,
-                })
+                const { url } = await exportFeedback({ format: "csv" })
                 window.open(url, "_blank", "noopener,noreferrer")
               } catch (e) {
                 toast.show({ title: "Gagal mengekspor", description: userMessage(e), tone: "danger" })
@@ -346,13 +337,13 @@ export default function FeedbackListPage() {
           <Select label="Platform" options={PLATFORM_OPTIONS} value={filters.platform} onChange={(e) => setFilter("platform", e.target.value)} />
           <Select label="Rating" options={RATING_OPTIONS} value={filters.rating} onChange={(e) => setFilter("rating", e.target.value)} />
           <Select label="Akun" options={ACCOUNT_OPTIONS} value={filters.account} onChange={(e) => setFilter("account", e.target.value)} />
-          <Input label="Dari tanggal" type="date" value={filters.from} onChange={(e) => setFilter("from", e.target.value)} />
-          <Input label="Sampai tanggal" type="date" value={filters.to} onChange={(e) => setFilter("to", e.target.value)} />
+          <Input label="Dari tanggal" type="date" value={filters.dateFrom} onChange={(e) => setFilter("dateFrom", e.target.value)} />
+          <Input label="Sampai tanggal" type="date" value={filters.dateTo} onChange={(e) => setFilter("dateTo", e.target.value)} />
           <form
             className="flex items-end gap-2"
             onSubmit={(e) => {
               e.preventDefault()
-              setFilter("q", searchDraft.trim())
+              setFilter("search", searchDraft.trim())
             }}
           >
             <Input
