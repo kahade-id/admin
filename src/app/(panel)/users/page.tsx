@@ -50,6 +50,10 @@ const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "banned", label: "Diblokir" },
   { value: "kyc_approved", label: "KYC disetujui" },
   { value: "kyc_pending", label: "KYC menunggu" },
+  // BAI-070: segmen KYC lain yang sebelumnya tak terjangkau filter.
+  { value: "kyc_rejected", label: "KYC ditolak" },
+  { value: "kyc_revoked", label: "KYC dicabut" },
+  { value: "kyc_unverified", label: "KYC belum diajukan" },
   { value: "flagged", label: "Perlu review" },
 ]
 
@@ -78,6 +82,10 @@ function KycBadge({ status }: { status: KycStatus }) {
   if (upper === "APPROVED") return <Badge tone="success">Terverifikasi</Badge>
   if (upper === "PENDING") return <Badge tone="warning">Menunggu</Badge>
   if (upper === "REJECTED") return <Badge tone="danger">Ditolak</Badge>
+  // ESI-020 (audit integrasi 2026-09-30): `UNVERIFIED` (status default
+  // mayoritas user) & `REVOKED` sebelumnya tampil sebagai enum mentah.
+  if (upper === "UNVERIFIED") return <Badge tone="neutral">Belum diverifikasi</Badge>
+  if (upper === "REVOKED") return <Badge tone="danger">Dicabut</Badge>
   return <Badge tone="neutral">{status}</Badge>
 }
 

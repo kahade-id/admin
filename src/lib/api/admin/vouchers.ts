@@ -84,8 +84,8 @@ export interface VoucherListQuery {
   limit?: number
   /** "true" | "false" — filter status aktif */
   isActive?: "true" | "false"
-  /** Pencarian kode/nama voucher (diteruskan ke backend bila didukung). */
-  q?: string
+  /** Pencarian kode/nama voucher (BAI-014: backend membaca param `search`). */
+  search?: string
 }
 
 /** GET /v1/admin/vouchers — daftar voucher. */

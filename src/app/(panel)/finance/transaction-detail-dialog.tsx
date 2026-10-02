@@ -42,6 +42,14 @@ function formatRupiah(n: unknown): string {
   return `Rp${formatNumber(n)}`
 }
 
+/** Label Indonesia untuk status transaksi — jangan tampilkan enum mentah (DSC-015). */
+const TX_STATUS_LABEL: Record<string, string> = {
+  PENDING: "Menunggu",
+  PROCESSING: "Diproses",
+  SUCCESS: "Berhasil",
+  FAILED: "Gagal",
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -108,7 +116,7 @@ export function TransactionDetailDialog({
             <Field label="Tipe">{String(detail.type)}</Field>
             <Field label="Status">
               <Badge tone={String(detail.status) === "SUCCESS" ? "success" : String(detail.status) === "FAILED" ? "danger" : "warning"}>
-                {String(detail.status)}
+                {TX_STATUS_LABEL[String(detail.status)] ?? String(detail.status)}
               </Badge>
             </Field>
             <Field label="Pemilik wallet">
@@ -121,11 +129,12 @@ export function TransactionDetailDialog({
           <div>
             <h4 className="mb-2 text-body font-semibold text-text-primary">Referensi eksternal</h4>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-              <Field label="Provider order ID">{ext?.providerOrderId ?? "—"}</Field>
-              <Field label="Flash transaction ID">{ext?.flashTransactionId ?? "—"}</Field>
-              <Field label="Iris payout ID">{ext?.irisPayoutId ?? "—"}</Field>
-              <Field label="Iris ref">{ext?.irisRef ?? "—"}</Field>
-              <Field label="VA">{ext?.vaBank && ext?.vaNumber ? `${ext.vaBank} ${ext.vaNumber}` : "—"}</Field>
+              {/* BAI-053: provider lama (Midtrans/Flash/Iris) hanya referensi historis — era DANA. */}
+              <Field label="Midtrans order ID (legacy)">{ext?.midtransOrderId ?? "—"}</Field>
+              <Field label="Flash transaction ID (legacy)">{ext?.flashTransactionId ?? "—"}</Field>
+              <Field label="Iris payout ID (legacy)">{ext?.irisPayoutId ?? "—"}</Field>
+              <Field label="Iris ref (legacy)">{ext?.irisRef ?? "—"}</Field>
+              <Field label="VA (legacy)">{ext?.vaBank && ext?.vaNumber ? `${ext.vaBank} ${ext.vaNumber}` : "—"}</Field>
             </div>
           </div>
 

@@ -1,16 +1,22 @@
 /**
- * Admin — Keuangan: ringkasan, antrean penarikan, dan transaksi.
+ * Admin — Keuangan: ringkasan, antrean penarikan legacy, dan transaksi.
  *
- * - (a) Kartu ringkasan: escrow aktif, revenue hari ini, revenue bulan ini,
- *   antrean penarikan (dari getFinancialSummary + getEscrowSummary).
- * - (b) Antrean withdrawal pending: DataTable + Pagination; tiap baris bisa
- *   Setujui (catatan opsional) / Tolak (alasan min 5 karakter) lewat Dialog.
- *   approveWithdrawal / rejectWithdrawal sudah menyertakan header
- *   `Idempotency-Key` per panggilan (lihat src/lib/api/admin/finance.ts) —
- *   halaman ini tidak perlu meneruskannya manual.
+ * - (a) Kartu ringkasan: escrow aktif (BAI-047: label sumber angka —
+ *   ORDER_BASED bila dana dipegang DANA era tanpa-wallet), revenue hari ini,
+ *   revenue bulan ini, antrean penarikan (dari getFinancialSummary +
+ *   getEscrowSummary).
+ * - (b) Antrean withdrawal pending (LEGACY wallet): tombol "Setujui"
+ *   DITAMPILKAN tetapi backend selalu 410 GONE (IRIS_PAYOUT_SUNSET, BAI-041)
+ *   — jalur payout legacy di-sunset, jangan eksekusi Midtrans; UI
+ *   menampilkan 410 apa adanya. Hanya "Tolak" yang benar-benar memproses
+ *   (refund saldo). Pencairan dana aktual kini via halaman Disbursement
+ *   DANA (`/finance/disbursements`). Kuorum dual-approval (ADM-205) tetap
+ *   ditampilkan dari `approvalInfo` backend sebagai informasi.
  * - (c) Tabel transaksi: pencarian client-side (debounce ~400ms), filter tipe,
  *   filter rentang tanggal (default 30 hari terakhir, maks 90 hari —
  *   rentang wajib di backend).
+ * - BAI-042: tombol recheck legacy ("Cek status") DIHAPUS — backend 501;
+ *   recheck payout DANA ada di halaman Disbursement DANA.
  */
 "use client"
 
@@ -19,7 +25,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog"
+import { Dialog } from "@/components/ui/dialog"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
@@ -61,8 +67,6 @@ import {
   type WalletTransactionStatus,
   type WalletTransactionType,
   downloadFinanceCsv,
-  recheckWithdrawal,
-  type WithdrawalRecheckResult,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { TX_META, txLabel } from "@/lib/tx-labels"
@@ -116,10 +120,16 @@ const TX_STATUS_FILTERS: Array<{ value: WalletTransactionStatus | ""; label: str
 const TYPE_FILTERS: Array<{ value: WalletTransactionType | ""; label: string }> = [
   { value: "", label: "Semua tipe" },
   { value: "TOP_UP", label: "Top up" },
+  // DSC-012: "Penarikan" (noun) disengaja — judul aksi di mobile adalah
+  // "Tarik Dana" (verb, app/withdraw.tsx). Bukan inkonsistensi.
+  // Glosarium arus uang: "Pencairan" = disbursement DANA ke penjual
+  // (ORDER_RELEASE / DISPUTE_RELEASE) — jangan disebut "Payout";
+  // "Dana dikembalikan" = refund ke pembeli (ORDER_REFUND);
+  // provider pembayaran satu-satunya: "DANA" (bukan Flash).
   { value: "WITHDRAW", label: "Penarikan" },
   { value: "ORDER_LOCK", label: "Escrow dikunci" },
-  { value: "ORDER_RELEASE", label: "Escrow cair" },
-  { value: "ORDER_REFUND", label: "Refund order" },
+  { value: "ORDER_RELEASE", label: "Dana dicairkan ke penjual" },
+  { value: "ORDER_REFUND", label: "Dana order dikembalikan" },
   { value: "FEE_DEDUCT", label: "Fee platform" },
   { value: "DISPUTE_RELEASE", label: "Cair sengketa" },
 ]
@@ -180,6 +190,20 @@ function withdrawUserName(tx: PendingWithdrawal): string {
     (tx.wallet?.user?.email ? maskEmail(tx.wallet.user.email) : null) ??
     tx.wallet?.userId ??
     "—"
+  )
+}
+
+/**
+ * BAI-041: deteksi 410 GONE (IRIS_PAYOUT_SUNSET) dari error adminHttp/ApiError
+ * agar aksi payout legacy menampilkan 410 apa adanya (jangan eksekusi Midtrans).
+ */
+function isGoneError(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false
+  const rec = e as { status?: unknown; code?: unknown; backendCode?: unknown }
+  return (
+    rec.status === 410 ||
+    rec.code === "IRIS_PAYOUT_SUNSET" ||
+    rec.backendCode === "IRIS_PAYOUT_SUNSET"
   )
 }
 
@@ -274,7 +298,9 @@ function FinancePageInner() {
     void loadPending(pendingPage)
   }, [pendingPage, loadPending])
 
-  // Dialog Setujui / Tolak
+  // Dialog Setujui / Tolak penarikan (legacy). BAI-041: "Setujui" selalu
+  // 410 GONE (IRIS_PAYOUT_SUNSET) dari backend — ditampilkan apa adanya,
+  // jangan eksekusi Midtrans.
   const [actionTx, setActionTx] = useState<PendingWithdrawal | null>(null)
   const [actionKind, setActionKind] = useState<"approve" | "reject" | null>(null)
   const [note, setNote] = useState("")
@@ -312,6 +338,8 @@ function FinancePageInner() {
   const handleSubmitAction = useCallback(async () => {
     if (!actionTx || !actionKind || submitting) return
     const trimmed = note.trim()
+    // "Tolak" wajib alasan (min 5, sesuai WithdrawalRejectDto); "Setujui"
+    // catatannya opsional.
     if (actionKind === "reject" && trimmed.length < 5) {
       setNoteError("Alasan minimal 5 karakter.")
       return
@@ -320,23 +348,18 @@ function FinancePageInner() {
     const mapKey = `${actionKind}:${actionTx.txId}`
     try {
       if (actionKind === "approve") {
-        const res = await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
-        // ADM-205: persetujuan pertama belum mengeksekusi payout.
-        if (res?.status === "AWAITING_SECOND_APPROVAL") {
-          toast.show({
-            title: "Persetujuan tercatat",
-            description:
-              res.message ??
-              `Menunggu persetujuan ${(res.requiredApprovals ?? 2) - (res.approvals ?? 1)} admin lain sebelum payout dieksekusi.`,
-            tone: "info",
-          })
-        } else {
-          toast.show({
-            title: res?.status === "ALREADY_EXECUTED" ? "Payout sudah dieksekusi" : "Penarikan disetujui",
-            description: formatRupiah(actionTx.amount),
-            tone: "success",
-          })
-        }
+        // BAI-041: jalur payout legacy DI-SUNSET — backend selalu melempar
+        // 410 GONE (IRIS_PAYOUT_SUNSET) dan TIDAK mengeksekusi payout ke
+        // provider mana pun. Panggil apa adanya agar 410 tampil jujur di UI;
+        // JANGAN pernah mengeksekusi Midtrans dari sini. Respons sukses
+        // dual-approval (AWAITING_SECOND_APPROVAL dsb.) tidak lagi dikirim
+        // backend — jangan baca field fiktif (pelajaran BAI-061).
+        await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
+        toast.show({
+          title: "Penarikan disetujui",
+          description: formatRupiah(actionTx.amount),
+          tone: "success",
+        })
       } else {
         await rejectWithdrawal(actionTx.txId, trimmed, actionKeyFor(actionTx.txId, actionKind))
         toast.show({
@@ -352,10 +375,14 @@ function FinancePageInner() {
       await loadSummary()
       await loadPending(pendingPage)
     } catch (e) {
+      // BAI-041: aksi "Setujui" legacy selalu 410 GONE dari backend —
+      // tampilkan 410 apa adanya (tone info, bukan danger), jangan
+      // eksekusi Midtrans.
+      const gone = actionKind === "approve" && isGoneError(e)
       toast.show({
-        title: "Gagal memproses penarikan",
+        title: gone ? "410 GONE — payout legacy dinonaktifkan" : "Gagal memproses penarikan",
         description: userMessage(e),
-        tone: "danger",
+        tone: gone ? "info" : "danger",
       })
     } finally {
       setSubmitting(false)
@@ -467,51 +494,9 @@ function FinancePageInner() {
     setF({ status: value, txPage: "1" })
   }
 
-  // ADM-213: recheck manual SATU withdrawal PROCESSING (bukan retry payout).
-  const [recheckTx, setRecheckTx] = useState<AdminTransactionItem | null>(null)
-  const [rechecking, setRechecking] = useState(false)
-  const [recheckKey, setRecheckKey] = useState<string | null>(null)
-  const openRecheck = (r: AdminTransactionItem) => {
-    setRecheckTx(r)
-    setRecheckKey(newIdempotencyKey())
-  }
-  const closeRecheck = () => {
-    if (rechecking) return
-    setRecheckTx(null)
-    setRecheckKey(null)
-  }
-  const handleRecheck = async () => {
-    if (!recheckTx || rechecking) return
-    setRechecking(true)
-    try {
-      const res: WithdrawalRecheckResult = await recheckWithdrawal(
-        recheckTx.txId,
-        recheckKey ?? undefined,
-      )
-      const outcomeMsg: Record<string, string> = {
-        CONFIRMED: `Payout dikonfirmasi provider (${res.providerStatus}) — status SUCCESS.`,
-        FAILED_REFUNDED: `Payout dinyatakan gagal oleh provider (${res.providerStatus}) — dana dikembalikan ke wallet.`,
-        STILL_PROCESSING: `Masih diproses provider (${res.providerStatus}) — tetap PROCESSING, tanpa perubahan.`,
-        UNKNOWN: `Status tidak diketahui provider (${res.providerStatus}) — tetap PROCESSING, perlu investigasi manual.`,
-      }
-      toast.show({
-        title: "Hasil cek status payout",
-        description: outcomeMsg[String(res.outcome)] ?? String(res.outcome ?? "—"),
-        tone: res.outcome === "FAILED_REFUNDED" ? "danger" : res.outcome === "CONFIRMED" ? "success" : "info",
-      })
-      setRecheckTx(null)
-      setRecheckKey(null)
-      void loadTransactions(txPage)
-    } catch (e) {
-      toast.show({
-        title: "Gagal mengecek status payout",
-        description: userMessage(e),
-        tone: "danger",
-      })
-    } finally {
-      setRechecking(false)
-    }
-  }
+  // BAI-042: recheck legacy DIHAPUS — backend 501 (men-query Midtrans Iris,
+  // provider yang salah untuk payout DANA). Recheck payout DANA ada di
+  // halaman Disbursement DANA (/finance/disbursements).
 
   // ADM-215: unduh export CSV ledger (terotentikasi, rentang = filter tanggal).
   const [csvLoading, setCsvLoading] = useState(false)
@@ -669,6 +654,9 @@ function FinancePageInner() {
                           >
                             Tolak
                           </Button>
+                          {/* BAI-041: tombol "Setujui" legacy DITAMPILKAN, tetapi backend
+                              selalu 410 GONE (IRIS_PAYOUT_SUNSET) — submit menampilkan
+                              410 apa adanya; jangan eksekusi Midtrans. */}
                           {info?.approvedByMe ? (
                             <Button
                               variant="secondary"
@@ -779,18 +767,7 @@ function FinancePageInner() {
                       <Button variant="secondary" size="sm" fullWidth={false} onClick={() => setDetailTxId(r.txId)}>
                         Detail
                       </Button>
-                      {/* ADM-213: recheck manual — hanya untuk PROCESSING; bukan retry payout */}
-                      {String(r.withdrawStatus) === "PROCESSING" ? (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          fullWidth={false}
-                          onClick={() => openRecheck(r)}
-                          title="Tanyakan status payout ke Midtrans Iris. Tidak mengirim payout baru."
-                        >
-                          Cek status
-                        </Button>
-                      ) : null}
+                      {/* BAI-042: tombol "Cek status" legacy dihapus (backend 501) — recheck payout DANA di halaman Disbursement DANA. */}
                     </div>
                   ),
                 },
@@ -859,7 +836,21 @@ function FinancePageInner() {
             <StatCard
               label="Escrow aktif"
               value={formatRupiah(escrow?.totalEscrowBalance)}
-              hint={`${formatNumber(escrow?.activeEscrowOrders ?? 0)} order aktif`}
+              hint={
+                escrow?.source === "ORDER_BASED"
+                  ? `${formatNumber(escrow?.activeEscrowOrders ?? 0)} order aktif — dihitung dari order (dana dipegang DANA)`
+                  : `${formatNumber(escrow?.activeEscrowOrders ?? 0)} order aktif — dari saldo wallet escrow`
+              }
+            />
+            {/* MFE-011: escrow DANA-direct (mode tanpa-wallet) — sumber
+                kebenaran escrow saat ini; kartu lama hanya menghitung
+                wallet.escrowBalance sehingga selalu Rp0 tanpa wallet. */}
+            <StatCard
+              label="Escrow DANA aktif"
+              value={formatRupiah(escrow?.danaEscrowBalance ?? 0)}
+              hint={`${formatNumber(escrow?.danaEscrowPayments ?? 0)} pembayaran DANA · ${formatNumber(
+                escrow?.danaDisbursementsPending ?? 0,
+              )} pencairan tertunda`}
             />
             {/* ADM-211: revenue gabungan (fee + langganan) dengan breakdown — kartu
                 lama hanya menampilkan fee platform sehingga pendapatan mengecil. */}
@@ -958,11 +949,11 @@ function FinancePageInner() {
         )}
       </section>
 
-      {/* (b) Antrean penarikan */}
+      {/* (b) Antrean penarikan (LEGACY wallet) */}
       <section aria-label="Antrean penarikan" className="mt-8">
         <Card>
           <CardHeader
-            title="Antrean penarikan"
+            title="Antrean penarikan (legacy)"
             subtitle={
               pendingTotal > 0
                 ? `${pendingTotal.toLocaleString("id-ID")} menunggu persetujuan`
@@ -970,6 +961,18 @@ function FinancePageInner() {
             }
           />
           <CardBody>
+            {/* BAI-041: jalur payout legacy di-sunset (backend 410 GONE). Pencairan
+                dana aktual kini via halaman Disbursement DANA. */}
+            <div className="mb-4 rounded-md border border-warning-border bg-warning-bg p-3">
+              <p className="text-body text-text-primary">
+                <span className="font-semibold">Antrean legacy dinonaktifkan.</span>{" "}
+                Tombol persetujuan penarikan dihapus — payout kini berjalan via{" "}
+                <a href="/finance/disbursements" className="font-semibold text-primary-text underline">
+                  Disbursement DANA
+                </a>
+                . Hanya penolakan (refund saldo) yang masih tersedia di sini.
+              </p>
+            </div>
             <div className="mb-4 flex justify-end">
               {/* H02: kustomisasi kolom antrean penarikan. */}
               <Button
@@ -1008,7 +1011,7 @@ function FinancePageInner() {
         <Card>
           <CardHeader
             title="Transaksi"
-            subtitle="Pencarian server-side: txId, deskripsi, order, referensi eksternal (Midtrans/Flash/Iris). Klik Detail untuk timeline."
+            subtitle="Pencarian server-side: txId, deskripsi, order, referensi eksternal (DANA/legacy). Klik Detail untuk timeline."
             action={
               <Button
                 variant="secondary"
@@ -1140,24 +1143,7 @@ function FinancePageInner() {
       {/* E3: Dialog detail transaksi + timeline */}
       <TransactionDetailDialog txId={detailTxId} onClose={() => setDetailTxId(null)} />
 
-      {/* ADM-213: konfirmasi recheck manual payout PROCESSING */}
-      <ConfirmDialog
-        open={recheckTx !== null}
-        onClose={closeRecheck}
-        title="Cek status payout ke provider?"
-        description={
-          recheckTx
-            ? `Menanyakan status payout ${recheckTx.txId} (${formatRupiah(recheckTx.amount)}) ke Midtrans Iris. TIDAK mengirim payout baru. ` +
-              `Bila provider menyatakan completed → SUCCESS; failed → FAILED + dana dikembalikan; selain itu tetap PROCESSING tanpa perubahan.`
-            : undefined
-        }
-        confirmLabel="Ya, cek status"
-        cancelLabel="Batal"
-        loading={rechecking}
-        onConfirm={() => void handleRecheck()}
-      />
-
-      {/* Dialog Setujui / Tolak penarikan */}
+      {/* Dialog Setujui / Tolak penarikan (legacy) */}
       <Dialog
         open={actionTx !== null}
         onClose={closeAction}
@@ -1203,14 +1189,18 @@ function FinancePageInner() {
           </p>
         ) : (
           <div className="flex flex-col gap-2">
+            {/* BAI-041: jalur payout legacy di-sunset — backend selalu 410 GONE
+                (IRIS_PAYOUT_SUNSET). Dialog ini jujur: tidak ada payout yang
+                dieksekusi; pencairan dana kini via Disbursement DANA. */}
             <p className="text-body text-text-secondary">
-              {actionTx?.approvalInfo
-                ? `Persetujuan ${actionTx.approvalInfo.approvals}/${actionTx.approvalInfo.requiredApprovals} — payout ke rekening tujuan dieksekusi setelah ${actionTx.approvalInfo.requiredApprovals} admin BERBEDA menyetujui. Tindakan ini tidak bisa dibatalkan.`
-                : "Penarikan yang disetujui akan diproses ke rekening tujuan. Tindakan ini tidak bisa dibatalkan."}
+              Jalur payout legacy sudah dinonaktifkan (410 GONE — IRIS_PAYOUT_SUNSET):
+              penarikan ini tidak dapat disetujui atau dicairkan dari sini.
+              Pencairan dana kini berjalan via Disbursement DANA.
             </p>
-            {actionTx?.approvalInfo?.approvedByMe ? (
-              <p className="text-caption text-warning-text">
-                Anda sudah menyetujui penarikan ini — menunggu persetujuan admin lain.
+            {actionTx?.approvalInfo ? (
+              <p className="text-caption text-text-secondary">
+                Riwayat persetujuan: {actionTx.approvalInfo.approvals}/
+                {actionTx.approvalInfo.requiredApprovals} admin.
               </p>
             ) : null}
           </div>
@@ -1226,11 +1216,7 @@ function FinancePageInner() {
               if (noteError) setNoteError(null)
             }}
             error={noteError ?? undefined}
-            placeholder={
-              actionKind === "reject"
-                ? "Contoh: nama rekening tidak sesuai…"
-                : "Contoh: disetujui setelah verifikasi…"
-            }
+            placeholder="Contoh: nama rekening tidak sesuai…"
           />
         </div>
       </Dialog>

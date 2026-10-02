@@ -41,12 +41,12 @@ import { formatDateTimeWIB, formatIDR, formatNumber, num } from "@/lib/format"
 import { menuForRole } from "@/lib/rbac"
 
 const ORDER_LABEL: Record<string, string> = {
-  WAITING_CONFIRMATION: "Menunggu konfirmasi",
+  WAITING_CONFIRMATION: "Menunggu konfirmasi penjual",
   WAITING_PAYMENT: "Menunggu pembayaran",
-  PROCESSING: "Diproses",
-  IN_DELIVERY: "Dikirim",
+  PROCESSING: "Diproses penjual",
+  IN_DELIVERY: "Dalam pengiriman",
   COMPLETED: "Selesai",
-  DISPUTED: "Disengketakan",
+  DISPUTED: "Sengketa",
   CANCELLED: "Dibatalkan",
 }
 
@@ -81,10 +81,30 @@ const MENU_DESC: Record<string, string> = {
   "/badges": "Kelola badge verifikasi",
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: string
+  /** Penjelasan definisi metrik (BAI-122/124/134) — tampil sebagai hint kecil. */
+  hint?: string
+}) {
   return (
     <Card>
-      <p className="text-caption text-text-secondary">{label}</p>
+      <p className="text-caption text-text-secondary">
+        {label}
+        {hint ? (
+          <span
+            className="ml-1 cursor-help text-text-tertiary underline decoration-dotted underline-offset-2"
+            title={hint}
+            aria-label={hint}
+          >
+            ?
+          </span>
+        ) : null}
+      </p>
       <p className="mt-1 text-h3 font-bold text-text-primary">{value}</p>
     </Card>
   )
@@ -126,7 +146,9 @@ export default function DashboardPage() {
         // AW-002: ambil keempatnya paralel — getFinancialSummary gagal (mis. role
       // tanpa akses keuangan) → null, tampil "—" bukan 0 palsu.
       const [sum, stats, act, fin] = await Promise.all([
-        getDashboardSummary(),
+        // BAI-125: mode "refresh" (tombol "Muat ulang") kirim refresh=true
+        // agar backend melewati cache 5 menit dan menghitung ulang dari DB.
+        getDashboardSummary(mode === "refresh" ? { refresh: true } : undefined),
         getDashboardOrderStats(),
         getRecentActivity({ limit: 10 }),
         getFinancialSummary().catch(() => null),
@@ -246,7 +268,11 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
                 <StatCard label="Total pengguna" value={statNum(summary.users?.total)} />
                 <StatCard label="Total order" value={statNum(summary.orders?.total)} />
-                <StatCard label="Escrow aktif" value={statNum(summary.orders?.active)} />
+                <StatCard
+                  label="Escrow aktif"
+                  value={statNum(summary.orders?.active)}
+                  hint="Order yang belum final: menunggu konfirmasi penjual, menunggu pembayaran, diproses, atau dikirim. Tidak termasuk selesai/dibatalkan/disengketakan."
+                />
                 <StatCard label="KYC menunggu" value={statNum(summary.kyc?.pending)} />
                 <StatCard
                   label="Sengketa menunggu"

@@ -260,7 +260,11 @@ export default function FeedbackDetailPage() {
         if (closing) return
         setClosing(true)
         try {
-          await closeFeedback(feedbackId, closeReason, closeNote.trim() || undefined)
+          // BAI-006: backend /close hanya menerima { reason } — catatan
+          // penutupan disimpan sebagai catatan internal agar tidak hilang.
+          const note = closeNote.trim()
+          if (note) await addFeedbackNote(feedbackId, note)
+          await closeFeedback(feedbackId, closeReason)
           setCloseOpen(false)
           setCloseNote("")
           await load()

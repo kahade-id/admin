@@ -154,19 +154,29 @@ export function deleteCampaign(campaignId: string): Promise<{ message: string }>
 /**
  * POST /v1/admin/campaigns/:campaignId/activate — aktifkan kampanye dan
  * terbitkan voucher personal untuk pengguna yang memenuhi syarat.
+ * BAI-007: backend mewajibkan { reason } (min 5 karakter).
  */
 export function activateCampaign(
   campaignId: string,
+  reason: string,
 ): Promise<CampaignActivationResult> {
   return adminHttp.post<CampaignActivationResult>(
     `/v1/admin/campaigns/${encodeURIComponent(campaignId)}/activate`,
+    { reason },
   )
 }
 
-/** POST /v1/admin/campaigns/:campaignId/pause — jeda kampanye. */
-export function pauseCampaign(campaignId: string): Promise<AdminCampaignItem> {
+/**
+ * POST /v1/admin/campaigns/:campaignId/pause — jeda kampanye.
+ * BAI-007: backend mewajibkan { reason } (min 5 karakter).
+ */
+export function pauseCampaign(
+  campaignId: string,
+  reason: string,
+): Promise<AdminCampaignItem> {
   return adminHttp.post<AdminCampaignItem>(
     `/v1/admin/campaigns/${encodeURIComponent(campaignId)}/pause`,
+    { reason },
   )
 }
 

@@ -147,7 +147,12 @@ function ProductsTab() {
                     </>
                   ) : null}
                   <Button size="sm" variant="secondary" fullWidth={false} onClick={() => moderate(r, "FLAGGED")}>Tandai</Button>
-                  <Button size="sm" variant="secondary" fullWidth={false} onClick={() => adjust(r)}>Sesuaikan stok</Button>
+                  {/* BAI-012: POST /v1/admin/inventory/adjust SUPER_ADMIN-only
+                      (backend @AdminRoles) — sembunyikan dari CUSTOMER_SUPPORT
+                      agar tidak 403. */}
+                  <RoleGate roles={["SUPER_ADMIN"]}>
+                    <Button size="sm" variant="secondary" fullWidth={false} onClick={() => adjust(r)}>Sesuaikan stok</Button>
+                  </RoleGate>
                 </div>) },
             ]}
             rows={rows}

@@ -1,5 +1,6 @@
 /** Kahade admin — moderasi sengketa (dispute). */
-import { adminHttp } from "@/lib/api/admin-client"
+import { adminHttp, getAdminAccessToken } from "@/lib/api/admin-client"
+import { API_BASE_URL } from "@/lib/api/config"
 import type { Paginated } from "@/lib/api/admin/kyc"
 
 /**
@@ -20,7 +21,22 @@ const idempotencyHeaders = (): Record<string, string> => ({
   "Idempotency-Key": newIdempotencyKey(),
 })
 
-export type DisputeStatus = string
+/**
+ * Status sengketa — selaras enum backend `DisputeStatus`
+ * (OPEN|ASSIGNED|UNDER_REVIEW|WAITING_RESPONSE|RESOLVED|ESCALATED).
+ *
+ * ESI-019 (audit integrasi 2026-09-30): sebelumnya `string` polos —
+ * typo status tak tertangkap tsc dan drift enum backend tak terdeteksi.
+ * `string` tetap ditoleransi sebagai fallback untuk nilai baru backend.
+ */
+export type DisputeStatus =
+  | "OPEN"
+  | "ASSIGNED"
+  | "UNDER_REVIEW"
+  | "WAITING_RESPONSE"
+  | "RESOLVED"
+  | "ESCALATED"
+  | (string & {})
 
 export type AdminDisputeItem = {
   id: string
@@ -202,6 +218,28 @@ export function previewResolveDispute(
   )
 }
 
+/**
+ * BAI-046: respons resolve membawa `settlement` (hasil eksekusi finansial
+ * DANA) — bisa null = gagal total. UI WAJIB membacanya: jangan toast sukses
+ * buta bila refund buyer / disbursement seller gagal.
+ */
+export type DisputeSettlementResult = {
+  buyerRefunded: boolean
+  buyerRefundAlready: boolean
+  /** null bila porsi seller = 0 (tidak ada disbursement). */
+  sellerDisbursement: {
+    outcome: string
+    disbursementId?: string | null
+    status?: string | null
+  } | null
+}
+
+export type ResolveDisputeResult = {
+  decision?: string
+  /** null = eksekusi settlement DANA gagal total (cek log server). */
+  settlement: DisputeSettlementResult | null
+}
+
 export function resolveDispute(
   disputeId: string,
   input: {
@@ -214,11 +252,11 @@ export function resolveDispute(
     /** Wajib bila decision === 'SPLIT': int 1–99, jumlah dengan buyerPercent = 100. */
     sellerPercent?: number
   },
-): Promise<unknown> {
+): Promise<ResolveDisputeResult> {
   // DP-001: payload persis kontrak backend DisputeDecisionDto.
   // Field lama {resolution, notes, winnerId} tidak dikenal backend dan
   // selalu menghasilkan 400.
-  return adminHttp.post(
+  return adminHttp.post<ResolveDisputeResult>(
     `/v1/admin/disputes/${encodeURIComponent(disputeId)}/resolve`,
     input,
     { headers: idempotencyHeaders() },
@@ -239,6 +277,80 @@ export function escalateDispute(disputeId: string, reason: string): Promise<unkn
   return adminHttp.post(
     `/v1/admin/disputes/${encodeURIComponent(disputeId)}/quick-escalate`,
     { note: reason },
+    { headers: idempotencyHeaders() },
+  )
+}
+
+/**
+ * BAI-095 — catatan internal sengketa (kolaboratif antar admin).
+ * Backend: GET/POST /v1/admin/disputes/:disputeId/notes. Hanya mediator
+ * yang di-assign / SUPER_ADMIN (NOT_ASSIGNED_ADMIN).
+ */
+export type DisputeInternalNote = {
+  id: string
+  disputeId: string
+  adminId: string
+  note: string
+  createdAt: string
+  admin?: { adminId: string; fullName: string } | null
+}
+
+export async function listDisputeNotes(disputeId: string): Promise<DisputeInternalNote[]> {
+  const res = await adminHttp.get<{ disputeId: string; notes: DisputeInternalNote[] }>(
+    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/notes`,
+  )
+  return Array.isArray(res?.notes) ? res.notes : []
+}
+
+export function addDisputeNote(disputeId: string, note: string): Promise<DisputeInternalNote> {
+  return adminHttp.post<DisputeInternalNote>(
+    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/notes`,
+    { note },
+    { headers: idempotencyHeaders() },
+  )
+}
+
+/**
+ * BAI-094 — upload file bukti "titipan" admin (multipart). adminHttp tidak
+ * mendukung FormData (selalu JSON), jadi pakai fetch langsung dengan token
+ * dari memori (pola sama dengan admin-client).
+ */
+export async function adminUploadDisputeEvidenceFile(
+  disputeId: string,
+  file: File,
+): Promise<{ fileKey: string; fileUrl?: string }> {
+  const form = new FormData()
+  form.append("file", file)
+  const token = getAdminAccessToken()
+  const res = await fetch(
+    `${API_BASE_URL}/v1/admin/disputes/${encodeURIComponent(disputeId)}/evidence/upload`,
+    {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "include",
+      body: form,
+    },
+  )
+  if (!res.ok) {
+    throw new Error(`Upload bukti gagal (${res.status})`)
+  }
+  return (await res.json()) as { fileKey: string; fileUrl?: string }
+}
+
+export type AdminDisputeEvidenceResult = {
+  evidence: unknown
+  fileResults: unknown[]
+  summary: { filesAttached: number; totalSizeBytes: number }
+  notificationDelivered: boolean
+}
+
+export function adminSubmitDisputeEvidence(
+  disputeId: string,
+  input: { title: string; description: string; fileUrls: string[]; fileTypes: string[]; tags?: string[] },
+): Promise<AdminDisputeEvidenceResult> {
+  return adminHttp.post<AdminDisputeEvidenceResult>(
+    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/evidence`,
+    input,
     { headers: idempotencyHeaders() },
   )
 }

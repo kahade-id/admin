@@ -3,7 +3,7 @@
 /**
  * Admin — Daftar sengketa escrow.
  *
- * Filter 6 status, tabel dengan paginasi bernomor, klik "Tinjau" → detail.
+ * Filter 7 status, tabel dengan paginasi bernomor, klik "Tinjau" → detail.
  *
  * Port dari frontend/app/admin/(panel)/disputes/index.tsx → web desktop.
  */
@@ -55,6 +55,12 @@ const FETCH_ALL_MAX_PAGES = 50
 /** SLA mediasi sengketa — selaras DISPUTE_SLA_HOURS backend (72 jam). */
 const DISPUTE_SLA_HOURS = 72
 
+// WAITING_RESPONSE dipertahankan di filter: nilai enum backend DisputeStatus
+// yang valid dan diterima API filter (`dispute-list-query.dto.ts`); endpoint
+// assign backend juga menerimanya. Alur backend saat ini memang tidak
+// mentransisikan sengketa KE status ini (catatan BAI-089), tetapi data
+// historis bisa berstatus ini — filter kosong lebih jujur daripada opsi
+// yang hilang.
 type Filter =
   | "ALL"
   | "OPEN"
@@ -69,10 +75,10 @@ type Filter =
 const FILTER_OPTIONS = [
   { value: "ALL", label: "Semua" },
   { value: "OPEN", label: "Terbuka" },
-  { value: "ASSIGNED", label: "Ditugaskan" },
+  { value: "ASSIGNED", label: "Ditugaskan ke mediator" },
   { value: "UNASSIGNED", label: "Belum ditugaskan" },
-  { value: "UNDER_REVIEW", label: "Ditinjau" },
-  { value: "WAITING_RESPONSE", label: "Menunggu respons" },
+  { value: "UNDER_REVIEW", label: "Ditinjau mediator" },
+  { value: "WAITING_RESPONSE", label: "Menunggu tanggapan" },
   { value: "ESCALATED", label: "Dieskalasi" },
   { value: "RESOLVED", label: "Selesai" },
 ]
@@ -323,7 +329,7 @@ function DisputesListInner() {
       void reason
       void notes
       toast.show({
-        title: "Bulk review selesai",
+        title: "Tinjau massal selesai",
         description: `${ok} sengketa masuk review${failed > 0 ? `, ${failed} gagal` : ""}.`,
         tone: failed > 0 ? "danger" : "success",
       })
@@ -624,7 +630,7 @@ function DisputesListInner() {
         reasonOptions={BULK_REVIEW_REASONS}
         impactItems={[
           "Sengketa berstatus ASSIGNED → UNDER_REVIEW (siap diberi keputusan)",
-          "Sengketa dengan status lain dilewati otomatis (lihat dry-run)",
+          "Sengketa dengan status lain dilewati otomatis (lihat uji coba)",
           "Tercatat di audit log per sengketa oleh backend",
         ]}
         confirmLabel="Ya, masukkan ke review"

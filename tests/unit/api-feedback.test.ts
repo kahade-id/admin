@@ -124,23 +124,22 @@ describe("alur kerja feedback", () => {
   it("balas ke pelapor", async () => {
     await replyToFeedback("fb-1", "Terima kasih, sudah kami perbaiki di v2.1.")
     expect(adminHttpMock.post).toHaveBeenCalledWith("/v1/admin/feedback/fb-1/reply", {
-      message: "Terima kasih, sudah kami perbaiki di v2.1.",
+      body: "Terima kasih, sudah kami perbaiki di v2.1.",
     })
   })
 
   it("eskalasi risiko keamanan", async () => {
     await escalateFeedback("fb-1", "SECURITY_RISK", "Ada indikasi eksfiltrasi token.")
     expect(adminHttpMock.post).toHaveBeenCalledWith("/v1/admin/feedback/fb-1/escalate", {
-      riskType: "SECURITY_RISK",
-      reason: "Ada indikasi eksfiltrasi token.",
+      risk: "SECURITY_RISK",
+      note: "Ada indikasi eksfiltrasi token.",
     })
   })
 
   it("tutup dengan reason code", async () => {
-    await closeFeedback("fb-1", "RESOLVED", "Fixed di rilis 2.1.0")
+    await closeFeedback("fb-1", "RESOLVED")
     expect(adminHttpMock.post).toHaveBeenCalledWith("/v1/admin/feedback/fb-1/close", {
-      reasonCode: "RESOLVED",
-      note: "Fixed di rilis 2.1.0",
+      reason: "RESOLVED",
     })
   })
 

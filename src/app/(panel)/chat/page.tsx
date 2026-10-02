@@ -390,7 +390,7 @@ export default function ChatModerationPage() {
     setMessagesLoading(true)
     setMessagesError(null)
     try {
-      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT })
+      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT, includeDeleted: true })
       setMessages(res.messages)
       setMsgCursor(res.nextCursor)
       setMsgHasMore(res.hasMore)
@@ -405,7 +405,7 @@ export default function ChatModerationPage() {
     if (!msgCursor || messagesOlderLoading) return
     setMessagesOlderLoading(true)
     try {
-      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT, cursor: msgCursor })
+      const res = await getRoomMessages(roomId, { limit: ROOM_MESSAGE_LIMIT, cursor: msgCursor, includeDeleted: true })
       setMessages((prev) => [...(prev ?? []), ...res.messages])
       setMsgCursor(res.nextCursor)
       setMsgHasMore(res.hasMore)
@@ -621,9 +621,14 @@ export default function ChatModerationPage() {
         title="Detail moderasi"
         footer={
           detail && !detailError && !detailLoading ? (
-            <Button variant="primary" loading={submitting} onClick={handleSubmitReview}>
-              Kirim review
-            </Button>
+            // BAI-010: POST moderation-events/:eventId/review hanya untuk
+            // SUPER_ADMIN/DISPUTE_ADMIN (backend @AdminRoles) — sembunyikan
+            // tombol dari CUSTOMER_SUPPORT agar tidak 403.
+            <RoleGate roles={["SUPER_ADMIN", "DISPUTE_ADMIN"]}>
+              <Button variant="primary" loading={submitting} onClick={handleSubmitReview}>
+                Kirim review
+              </Button>
+            </RoleGate>
           ) : undefined
         }
       >

@@ -207,6 +207,18 @@ const ROUTES: RouteSpec[] = [
       adminHttpMock.get.mockResolvedValue({ settings: [] })
     },
   },
+  // MERGE 2026-10-01: dua halaman disbursement dari kedua sisi audit —
+  // mock default paginasi cocok untuk GET /v1/admin/finance/disbursements.
+  {
+    href: "/finance/disbursements",
+    load: () => import("@/app/(panel)/finance/disbursements/page"),
+    heading: /Disbursement DANA/,
+  },
+  {
+    href: "/disbursements",
+    load: () => import("@/app/(panel)/disbursements/page"),
+    heading: /^Disbursement$/,
+  },
 ]
 
 beforeEach(() => {

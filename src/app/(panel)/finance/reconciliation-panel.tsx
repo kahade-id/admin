@@ -33,10 +33,12 @@ import {
   decideCorrection,
   downloadFindingsCsv,
   getBatchDiscrepancies,
+  getReconcileJobStatus,
   listCorrections,
   listFindings,
   listReconciliationBatches,
   newIdempotencyKey,
+  reconcileAll,
   reconcileUser,
   requestCorrection,
   type CorrectionStatus,
@@ -45,6 +47,7 @@ import {
   type LedgerCorrection,
   type ReconciliationBatch,
   type ReconciliationFinding,
+  type ReconcileJobStatus,
   type ReconcileResult,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
@@ -453,6 +456,103 @@ function ReconcileUserSection() {
                       Saldo tercatat sama dengan hasil perhitungan ulang.
                     </p>
                   )}
+                </div>
+              ) : null}
+            </>
+          )}
+        </CardBody>
+      </Card>
+    </section>
+  )
+}
+
+// ============================================================
+// Bagian 2b: Rekonsiliasi massal (async) — BAI-051
+// ============================================================
+
+function ReconcileAllSection() {
+  const { show } = useToast()
+  const { role } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [job, setJob] = useState<ReconcileJobStatus | null>(null)
+  const [polling, setPolling] = useState(false)
+
+  const canReconcile = role === "SUPER_ADMIN"
+
+  const poll = useCallback(async (jobId: string | number) => {
+    setPolling(true)
+    try {
+      const st = await getReconcileJobStatus(jobId)
+      setJob(st)
+      // Poll tiap 5 detik sampai terminal (completed/failed).
+      if (st.status === "completed" || st.status === "failed") {
+        setPolling(false)
+        show({
+          tone: st.status === "completed" ? "success" : "danger",
+          title: st.status === "completed" ? "Rekonsiliasi massal selesai." : "Rekonsiliasi massal gagal.",
+          description: st.status === "failed" && st.error ? st.error : undefined,
+        })
+      } else {
+        setTimeout(() => void poll(jobId), 5000)
+      }
+    } catch (err: unknown) {
+      setPolling(false)
+      show({ tone: "danger", title: "Gagal memantau job rekonsiliasi.", description: userMessage(err) })
+    }
+  }, [show])
+
+  const run = async () => {
+    if (busy || polling) return
+    setBusy(true)
+    setJob(null)
+    try {
+      const res = await reconcileAll()
+      show({ tone: "info", title: "Job rekonsiliasi massal diantrekan.", description: `Job ID: ${res.jobId}` })
+      void poll(res.jobId)
+    } catch (err: unknown) {
+      show({ tone: "danger", title: "Gagal memulai rekonsiliasi massal.", description: userMessage(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section aria-label="Rekonsiliasi massal">
+      <Card>
+        <CardHeader
+          title="Rekonsiliasi massal"
+          subtitle="Antrekan job async untuk semua wallet (hasil snapshot batch). Hanya SUPER_ADMIN."
+        />
+        <CardBody>
+          {!canReconcile ? (
+            <p className="text-body text-text-secondary">
+              Role Anda ({role ?? "—"}) tidak diizinkan menjalankan rekonsiliasi massal.
+            </p>
+          ) : (
+            <>
+              <Button variant="primary" fullWidth={false} loading={busy || polling} onClick={() => void run()}>
+                {polling ? "Memantau job…" : "Jalankan reconcile-all"}
+              </Button>
+              {job ? (
+                <div className="mt-4 rounded-md border border-border p-4">
+                  <div className="mb-2 flex items-center gap-2">
+                    <Badge tone={job.status === "completed" ? "success" : job.status === "failed" ? "danger" : "info"}>
+                      {job.status}
+                    </Badge>
+                    <span className="font-mono text-caption text-text-secondary">
+                      job {String(job.jobId)}
+                    </span>
+                  </div>
+                  {job.requestedAt ? (
+                    <p className="text-caption text-text-secondary">
+                      Diminta {formatDateTimeWIB(job.requestedAt)}{job.requestedBy ? ` oleh ${job.requestedBy}` : ""}
+                    </p>
+                  ) : null}
+                  {job.status === "completed" && job.result != null ? (
+                    <pre className="mt-2 max-h-48 overflow-auto rounded bg-surface-sunken p-2 font-mono text-caption">
+                      {JSON.stringify(job.result, null, 2)}
+                    </pre>
+                  ) : null}
                 </div>
               ) : null}
             </>
@@ -1227,6 +1327,8 @@ export function ReconciliationPanel() {
   return (
     <div className="space-y-8">
       <ReconcileUserSection />
+      {/* BAI-051: trigger + polling reconcile-all async (SUPER_ADMIN). */}
+      <ReconcileAllSection />
       <FindingsSection />
       <CorrectionsSection />
       <BatchesSection />

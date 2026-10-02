@@ -10,9 +10,12 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  addDaysToDateString,
   ageHours,
+  endOfMonthDateString,
   formatAge,
   formatDateTimeWIB,
+  formatDateWIB,
   formatIDR,
   formatNumber,
 } from "@/lib/format"
@@ -50,6 +53,44 @@ describe("formatDateTimeWIB", () => {
   })
 })
 
+describe("formatDateWIB (BAI-129)", () => {
+  it("string 'YYYY-MM-DD' backend = tanggal kalender WIB, tanpa jam menyesatkan", () => {
+    // Sebelum BAI-129, string ini diparse sebagai UTC midnight lalu diformat
+    // dengan jam → "07.00 WIB". Sekarang: tanggal saja.
+    expect(formatDateWIB("2026-09-30")).toBe("30 Sep 2026")
+  })
+
+  it("tidak digeser tanggal di zona browser mana pun (jangkar tengah hari UTC)", () => {
+    expect(formatDateWIB("2026-01-01")).toBe("1 Jan 2026")
+  })
+
+  it("menerima Date dan timestamp (diformat dalam WIB)", () => {
+    expect(formatDateWIB(new Date("2026-01-05T17:00:00.000Z"))).toBe("6 Jan 2026")
+    expect(formatDateWIB(new Date("2026-01-05T17:00:00.000Z").getTime())).toBe(
+      "6 Jan 2026",
+    )
+  })
+
+  it("input kosong/invalid → '—'", () => {
+    expect(formatDateWIB(null)).toBe("—")
+    expect(formatDateWIB("")).toBe("—")
+    expect(formatDateWIB("bukan-tanggal")).toBe("—")
+  })
+})
+
+describe("addDaysToDateString & endOfMonthDateString (BAI-135)", () => {
+  it("tambah hari lintas batas bulan/tahun", () => {
+    expect(addDaysToDateString("2026-09-28", 6)).toBe("2026-10-04")
+    expect(addDaysToDateString("2026-12-31", 1)).toBe("2027-01-01")
+  })
+
+  it("hari terakhir bulan (termasuk Februari kabisat 2024)", () => {
+    expect(endOfMonthDateString("2026-09-15")).toBe("2026-09-30")
+    expect(endOfMonthDateString("2024-02-10")).toBe("2024-02-29")
+    expect(endOfMonthDateString("2026-02-10")).toBe("2026-02-28")
+  })
+})
+
 describe("formatNumber & formatIDR", () => {
   it("pemisah ribuan titik gaya Indonesia", () => {
     expect(formatNumber(1234567)).toBe("1.234.567")
@@ -62,8 +103,15 @@ describe("formatNumber & formatIDR", () => {
     expect(formatIDR(0)).toBe("Rp0")
   })
 
-  it("desimal dipotong (uang rupiah tidak berkoma)", () => {
-    expect(formatIDR(150000.99)).toBe("Rp150.000")
+  it("desimal pecahan TIDAK dipotong diam-diam (BAI-052)", () => {
+    // Backend `toIdr` bisa mengembalikan pecahan sen (mis. 12345 sen → 123.45
+    // rupiah). Math.trunc diam-diam memotong Rp150.000,99 → "Rp150.000".
+    // Kontrak baru: bilangan bulat tanpa desimal; pecahan tampil 2 desimal.
+    expect(formatIDR(150000.99)).toBe("Rp150.000,99")
+    // MERGE 2026-10-01: koordinator memutuskan kontrak pecahan = 2 desimal
+    // (BAI-052), BUKAN Math.round (DBL-003) — test fe-admin yang assert
+    // "Rp150.001" diganti dengan kontrak audit yang benar.
+    expect(formatIDR(150000.4)).toBe("Rp150.000,40")
     expect(formatNumber(150000.99)).toBe("150.000")
   })
 
@@ -82,9 +130,18 @@ describe("formatAge (umur antrean)", () => {
     expect(formatAge(d)).toBe("45 mnt")
   })
 
-  it("1–48 jam → jam", () => {
+  it("1–24 jam → jam", () => {
     const d = new Date(Date.now() - 3 * 3600 * 1000).toISOString()
     expect(formatAge(d)).toBe("3 jam")
+  })
+
+  // DBL-009 (audit integrasi 2026-10-01): bucket kanonis lintas repo —
+  // 24–48 jam → "Kemarin" (selaras frontend formatTimeAgo).
+  it("24–48 jam → 'Kemarin'", () => {
+    const d = new Date(Date.now() - 30 * 3600 * 1000).toISOString()
+    expect(formatAge(d)).toBe("Kemarin")
+    const d2 = new Date(Date.now() - 47 * 3600 * 1000).toISOString()
+    expect(formatAge(d2)).toBe("Kemarin")
   })
 
   it("lebih dari 48 jam → hari", () => {

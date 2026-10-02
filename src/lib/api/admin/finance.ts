@@ -13,7 +13,11 @@
  * - `approveWithdrawal` / `rejectWithdrawal` mewajibkan header
  *   `Idempotency-Key: <UUID v4>` (interceptor idempotency global) — kunci
  *   dibuat per panggilan agar double-tap tidak mengeksekusi dua payout.
- * - Nominal sudah dikonversi backend dari sen (BigInt) ke Rupiah (number).
+ * - BAI-041/042: `approveWithdrawal` kini 410 GONE dan `recheckWithdrawal`
+ *   kini 501 (jalur payout legacy di-sunset; DANA satu-satunya provider).
+ *   Payout DANA dicek/dikelola via `@/lib/api/admin/disbursements`.
+ * - Nominal sudah dikonversi backend dari sen (BigInt) ke Rupiah (number,
+ *   bisa pecahan — tampilkan dengan formatIDR, bukan Math.trunc).
  */
 import {
   adminHttp,
@@ -73,6 +77,15 @@ export type EscrowSummary = {
   totalEscrowBalance: number
   walletsWithEscrow: number
   activeEscrowOrders: number
+  /** BAI-047: sumber angka — ORDER_BASED (dana dipegang DANA, era tanpa-wallet) | WALLET_BASED. */
+  source?: "WALLET_BASED" | "ORDER_BASED"
+  /**
+   * MFE-011: agregat escrow DANA-direct (mode tanpa-wallet) — sumber
+   * kebenaran escrow saat ini, bukan wallet.escrowBalance.
+   */
+  danaEscrowBalance?: number
+  danaEscrowPayments?: number
+  danaDisbursementsPending?: number
 }
 
 export type RevenueBreakdown = {
@@ -278,8 +291,7 @@ export type ListTransactionsQuery = {
   q?: string
 }
 
-/** Daftar transaksi wallet; `startDate`/`endDate` wajib (default 30 hari terakhir, maks 90 hari). */
-export async function listTransactions(
+/** Daftar transaksi wallet; `startDate`/`endDate` wajib (default 30 hari terakhir, maks 90 hari). */export async function listTransactions(
   query: ListTransactionsQuery = {},
 ): Promise<Paginated<AdminTransactionItem>> {
   const { startDate, endDate, ...rest } = query
@@ -336,10 +348,16 @@ export async function getTransactionsSummary(
   )
 }
 
-/** ADM-213: hasil recheck manual SATU withdrawal PROCESSING ke provider. */
+/** ADM-213: hasil recheck manual SATU withdrawal PROCESSING ke provider.
+ *
+ * BAI-042 (P0): endpoint legacy ini DINONAKTIFKAN — backend mengembalikan
+ * 501 LEGACY_WITHDRAWAL_RECHECK_DISABLED (jalur lama men-query Midtrans Iris,
+ * provider yang salah untuk payout DANA). Untuk payout DANA gunakan
+ * `recheckDisbursement` di `@/lib/api/admin/disbursements`.
+ */
 export type WithdrawalRecheckResult = {
   txId?: string
-  /** Status mentah dari Midtrans Iris: completed/processed/failed/rejected/queued/processing/not_found/unknown. */
+  /** Status mentah dari provider (legacy: Midtrans Iris). */
   providerStatus?: string
   /** CONFIRMED | FAILED_REFUNDED | STILL_PROCESSING | UNKNOWN */
   outcome?: string
@@ -349,10 +367,10 @@ export type WithdrawalRecheckResult = {
 }
 
 /**
- * ADM-213: cek ulang status payout ke Midtrans Iris untuk SATU withdrawal
- * PROCESSING. BUKAN retry — tidak pernah mengirim payout baru; hanya query
- * status lalu menerapkan transisi aman (completed→SUCCESS, failed→FAILED+refund,
- * selain itu tetap PROCESSING). Idempoten via Idempotency-Key.
+ * BAI-042: DINONAKTIFKAN (501) — cek ulang legacy men-query Midtrans Iris,
+ * bukan DANA. Fungsi dipertahankan agar import lama tidak rusak, tetapi
+ * backend selalu menolak. Untuk payout DANA gunakan
+ * `recheckDisbursement(id)` dari `@/lib/api/admin/disbursements`.
  */
 export function recheckWithdrawal(
   txId: string,
@@ -377,8 +395,13 @@ export function listPendingWithdrawals(params?: {
 }
 
 /** Setujui penarikan pending — ADM-205 dual control (idempoten). Catatan admin opsional.
- * Persetujuan PERTAMA mengembalikan AWAITING_SECOND_APPROVAL tanpa payout;
- * payout dieksekusi hanya setelah kuorum admin BERBEDA tercapai. */
+ *
+ * BAI-041 (P0): jalur payout legacy DI-SUNSET — backend mengembalikan
+ * 410 GONE (IRIS_PAYOUT_SUNSET) dan TIDAK LAGI mengeksekusi payout ke provider
+ * mana pun. DANA Enterprise satu-satunya provider; pencairan dana tercatat di
+ * EscrowDisbursement (`@/lib/api/admin/disbursements`). Fungsi dipertahankan
+ * agar import lama tidak rusak, tetapi backend selalu menolak.
+ */
 export function approveWithdrawal(
   txId: string,
   note?: string,
@@ -440,6 +463,42 @@ export function reconcileUser(userId: string): Promise<ReconcileResult> {
   return adminHttp.post<ReconcileResult>(
     `/v1/admin/finance/reconcile/user/${encodeURIComponent(userId)}`,
     {},
+  )
+}
+
+/**
+ * BAI-051 (P1): rekonsiliasi massal async (SUPER_ADMIN). Mengembalikan
+ * HTTP 202 + `{ jobId }`; poll `getReconcileJobStatus(jobId)` untuk hasil.
+ */
+export type ReconcileAllResult = {
+  jobId: string | number
+  status: string
+  message?: string
+}
+
+export type ReconcileJobStatus = {
+  jobId: string | number
+  /** Bull job state: waiting | active | completed | failed | delayed | ... */
+  status: string
+  requestedBy?: string
+  requestedAt?: string
+  result?: unknown
+  error?: string
+}
+
+export function reconcileAll(): Promise<ReconcileAllResult> {
+  return adminHttp.post<ReconcileAllResult>(
+    "/v1/admin/finance/reconcile/all",
+    {},
+  )
+}
+
+/** BAI-051: poll status job reconcile-all (SUPER_ADMIN). */
+export function getReconcileJobStatus(
+  jobId: string | number,
+): Promise<ReconcileJobStatus> {
+  return adminHttp.get<ReconcileJobStatus>(
+    `/v1/admin/finance/reconcile/status/${encodeURIComponent(String(jobId))}`,
   )
 }
 

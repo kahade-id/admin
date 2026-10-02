@@ -220,9 +220,14 @@ export default function ShowcaseReportDetailPage() {
         action: dialogAction,
         resolution: resolution.trim() || undefined,
       })
+      // BAI-036 — beri tahu bila laporan lain se-item ikut diselesaikan otomatis.
+      const extra =
+        typeof res.relatedReportsResolved === "number" && res.relatedReportsResolved > 0
+          ? ` ${res.relatedReportsResolved} laporan lain untuk item yang sama ikut diselesaikan otomatis.`
+          : ""
       toast.show({
         title: "Berhasil",
-        description: res.message ?? "Aksi moderasi berhasil.",
+        description: `${res.message ?? "Aksi moderasi berhasil."}${extra}`,
         tone: "success",
       })
       setDialogAction(null)
@@ -1084,6 +1089,14 @@ export default function ShowcaseReportDetailPage() {
         description={dialogMeta?.description}
         footer={
           <div className="flex flex-col gap-3">
+            {dialogAction === "takedown" ? (
+              <p className="rounded-sm border border-warning/40 bg-warning/10 p-2.5 text-caption text-text-primary">
+                {/* BAI-036 — peringatan: laporan PENDING lain untuk item yang
+                    sama ikut diselesaikan otomatis oleh takedown ini. */}
+                Perhatian: laporan lain yang masih terbuka untuk item yang sama
+                akan otomatis ikut diselesaikan (ditindak) oleh takedown ini.
+              </p>
+            ) : null}
             <TextArea
               // ADM-320: wajib min. 10 char khusus untuk takedown.
               label={dialogAction === "takedown" ? "Catatan resolusi (WAJIB — min. 10 karakter)" : "Catatan resolusi (opsional)"}

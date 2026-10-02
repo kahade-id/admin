@@ -1,8 +1,9 @@
 /** Peta label & tone status KYC — dipakai halaman daftar & detail. */
 
 export const KYC_STATUS_LABEL: Record<string, string> = {
-  PENDING: "Menunggu",
-  APPROVED: "Disetujui",
+  UNVERIFIED: "Belum verifikasi",
+  PENDING: "Sedang ditinjau",
+  APPROVED: "Terverifikasi",
   REJECTED: "Ditolak",
   REVOKED: "Dicabut",
 }
@@ -11,6 +12,7 @@ export const KYC_STATUS_TONE: Record<
   string,
   "neutral" | "info" | "success" | "warning" | "danger" | "accent"
 > = {
+  UNVERIFIED: "neutral",
   PENDING: "warning",
   APPROVED: "success",
   REJECTED: "danger",

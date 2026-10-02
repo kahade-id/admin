@@ -108,7 +108,7 @@ export type RoomMessagesResponse = {
  */
 export async function getRoomMessages(
   roomId: string,
-  params?: { limit?: number; before?: string; cursor?: string },
+  params?: { limit?: number; before?: string; cursor?: string; includeDeleted?: boolean },
 ): Promise<RoomMessagesResponse> {
   const res = await adminHttp.get<RoomMessagesResponse>(
     `/v1/admin/chat/rooms/${encodeURIComponent(roomId)}/messages`,

@@ -12,7 +12,7 @@ import { usePathname, useRouter } from "next/navigation"
 import type { ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
-import { ToastProvider } from "@/components/ui/toast"
+import { ToastProvider, useToast } from "@/components/ui/toast"
 import { AuthProvider, RequireAuth, useAuth } from "@/lib/auth-context"
 import { menuForRole, roleLabel } from "@/lib/rbac"
 import { Breadcrumb } from "@/components/admin/breadcrumb"
@@ -63,10 +63,21 @@ function Sidebar() {
 
 function Header() {
   const router = useRouter()
+  const toast = useToast()
   const { profile, role, logout } = useAuth()
 
   async function handleLogout() {
-    await logout()
+    const { serverLogoutOk } = await logout()
+    if (!serverLogoutOk) {
+      // AUT-004: sesi server mungkin masih hidup — jangan biarkan admin
+      // mengira sudah keluar sepenuhnya.
+      toast.show({
+        title: "Logout tidak tuntas",
+        description:
+          "Sesi di server mungkin masih aktif karena jaringan bermasalah. Token perangkat ini sudah dihapus.",
+        tone: "danger",
+      })
+    }
     router.replace("/login")
   }
 
@@ -80,9 +91,14 @@ function Header() {
           {role ? roleLabel(role) : ""} · {profile?.email ?? ""}
         </p>
       </div>
-      <Button variant="ghost" size="sm" fullWidth={false} onClick={handleLogout}>
-        Keluar
-      </Button>
+      <div className="flex items-center gap-2">
+        <Link href="/profile" className="text-body text-text-secondary hover:text-text-primary">
+          Profil
+        </Link>
+        <Button variant="ghost" size="sm" fullWidth={false} onClick={handleLogout}>
+          Keluar
+        </Button>
+      </div>
     </header>
   )
 }
