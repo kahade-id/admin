@@ -39,10 +39,12 @@
  *   bila backend mengizinkan; AdminRole belum punya role "fraud" sehingga UI
  *   section "Riwayat lokasi aksi" di detail pengguna SUPER_ADMIN-only).
  *
- * Catatan: KYC_ADMIN boleh revoke/restore tier abu via endpoint users
- * (method-level `@AdminRoles('SUPER_ADMIN','KYC_ADMIN')` di
- * admin-users.controller.ts:223,240) — belum ada entry UI khusus; gunakan
- * halaman detail pengguna sebagai SUPER_ADMIN bila perlu.
+ * BAD-027 (dikoreksi 2026-10-03): revoke/restore tier abu adalah
+ * SUPER_ADMIN-ONLY — method-level `@AdminRoles('SUPER_ADMIN')` di
+ * admin-users.controller.ts:303 (revokeGrayVerified) dan :320
+ * (restoreGrayVerified). Komentar sebelumnya yang mengklaim KYC_ADMIN boleh
+ * adalah SALAH. Belum ada entry UI khusus; gunakan halaman detail pengguna
+ * sebagai SUPER_ADMIN bila perlu.
  */
 
 export type AdminRole =
@@ -77,6 +79,8 @@ export const MENU: MenuItem[] = [
   { label: "Laporan Etalase", href: "/reports/showcase", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Moderasi Chat", href: "/chat", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Moderasi Q&A", href: "/qa-moderation", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  // FAL-010 (audit integrasi 2026-10-03): moderasi komentar showcase.
+  { label: "Komentar Etalase", href: "/showcase-comments", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Badge & Verifikasi", href: "/badges", roles: ["SUPER_ADMIN"] },
   { label: "Keuangan & Escrow", href: "/finance", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   // BAI-043: antrean lifecycle EscrowDisbursement DANA (satu-satunya permukaan

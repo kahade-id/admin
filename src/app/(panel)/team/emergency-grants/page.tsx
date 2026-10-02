@@ -29,7 +29,7 @@ import {
 import { roleLabel } from "@/lib/rbac"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
-// H05: step-up re-auth untuk aksi grant darurat.
+// SEC-503: step-up server-side untuk aksi grant darurat.
 import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 
 import { ErrorBlock, LoadingBlock, PageHeader } from "../../_components/admin-ui"
@@ -60,7 +60,7 @@ function remainingLabel(expiresAt: string): string {
 
 function EmergencyGrantsContent() {
   const toast = useToast()
-  // H05: gate verifikasi ulang untuk aksi grant darurat.
+  // SEC-503: gate verifikasi ulang server-side untuk aksi grant darurat.
   const reauth = useReauthGate()
   const [grants, setGrants] = useState<EmergencyGrant[]>([])
   const [admins, setAdmins] = useState<AdminUserItem[]>([])
@@ -107,25 +107,37 @@ function EmergencyGrantsContent() {
     setFormError(null)
   }
 
-  async function handleCreate() {
+  /** Validasi form grant — dipakai sebelum dialog step-up agar kesalahan
+   * form muncul tanpa meminta kata sandi dulu. */
+  function validateGrantForm(): string | null {
     const r = reason.trim()
     const mins = Number(duration)
-    if (!adminId) {
-      setFormError("Pilih admin penerima akses darurat.")
+    if (!adminId) return "Pilih admin penerima akses darurat."
+    if (r.length < MIN_REASON) return `Alasan minimal ${MIN_REASON} karakter.`
+    if (!Number.isInteger(mins) || mins < 1 || mins > MAX_DURATION_MINUTES)
+      return `Durasi 1–${MAX_DURATION_MINUTES} menit.`
+    return null
+  }
+
+  /**
+   * BAD-009: pemberian grant darurat memakai token step-up server
+   * (`admin.emergency-grant.create`, terikat id admin target).
+   */
+  async function handleCreate(stepUpToken: string) {
+    const err = validateGrantForm()
+    if (err) {
+      setFormError(err)
       return
     }
-    if (r.length < MIN_REASON) {
-      setFormError(`Alasan minimal ${MIN_REASON} karakter.`)
-      return
-    }
-    if (!Number.isInteger(mins) || mins < 1 || mins > MAX_DURATION_MINUTES) {
-      setFormError(`Durasi 1–${MAX_DURATION_MINUTES} menit.`)
-      return
-    }
+    const r = reason.trim()
+    const mins = Number(duration)
     setFormError(null)
     setSaving(true)
     try {
-      await createEmergencyGrant({ adminId, reason: r, scope, durationMinutes: mins })
+      await createEmergencyGrant(
+        { adminId, reason: r, scope, durationMinutes: mins },
+        { stepUpToken },
+      )
       toast.show({ title: "Akses darurat diberikan.", tone: "success" })
       setFormOpen(false)
       resetForm()
@@ -137,13 +149,17 @@ function EmergencyGrantsContent() {
     }
   }
 
-  async function handleRevoke() {
+  /**
+   * BAD-009: pencabutan grant memakai token step-up server
+   * (`admin.emergency-grant.revoke`, terikat id grant).
+   */
+  async function handleRevoke(stepUpToken: string) {
     if (!revokeTarget) return
     const g = revokeTarget
     setRevokeTarget(null)
     setRevoking(true)
     try {
-      await revokeEmergencyGrant(g.id)
+      await revokeEmergencyGrant(g.id, { stepUpToken })
       toast.show({ title: "Grant dicabut.", tone: "success" })
       await load()
     } catch (e) {
@@ -298,8 +314,20 @@ function EmergencyGrantsContent() {
           />
           <Button
             loading={saving}
-            // H05: grant darurat wajib verifikasi ulang.
-            onClick={() => reauth.require(() => void handleCreate(), "Beri akses darurat")}
+            // BAD-009/SEC-503: grant darurat wajib token step-up server per
+            // aksi — validasi form dulu agar kesalahan form tidak meminta
+            // kata sandi sia-sia.
+            onClick={() => {
+              const err = validateGrantForm()
+              if (err) {
+                setFormError(err)
+                return
+              }
+              reauth.require((token) => void handleCreate(token), "Beri akses darurat", {
+                stepUpAction: "admin.emergency-grant.create",
+                targetId: adminId,
+              })
+            }}
           >
             Beri akses
           </Button>
@@ -312,17 +340,19 @@ function EmergencyGrantsContent() {
         title="Cabut grant ini?"
         description={`Akses darurat ${revokeTarget?.adminName ?? ""} (${revokeTarget ? scopeLabel(revokeTarget.scope) : ""}) akan dicabut sebelum kedaluwarsa.`}
         confirmLabel="Cabut grant"
-        // H05: pencabutan grant darurat wajib verifikasi ulang.
+        // BAD-009/SEC-503: pencabutan grant darurat wajib token step-up
+        // server per aksi.
         onConfirm={() =>
           reauth.require(
-            () => void handleRevoke(),
+            (token) => void handleRevoke(token),
             `Cabut grant darurat ${revokeTarget?.adminName ?? ""}`,
+            { stepUpAction: "admin.emergency-grant.revoke", targetId: revokeTarget?.id },
           )
         }
         loading={revoking}
         destructive
       />
-      {/* H05: dialog verifikasi ulang untuk aksi grant darurat. */}
+      {/* SEC-503: dialog verifikasi ulang server-side untuk aksi grant darurat. */}
       <ReauthDialog {...reauth.dialog} />
     </div>
   )

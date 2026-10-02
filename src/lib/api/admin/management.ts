@@ -1,6 +1,7 @@
 /** Kahade admin — manajemen akun admin (tim). */
 import { adminHttp, getAdminAccessToken, AdminAuthError } from "@/lib/api/admin-client"
 import { API_BASE_URL } from "@/lib/api/config"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
 import type { Paginated } from "@/lib/api/admin/kyc"
 
 /**
@@ -20,6 +21,40 @@ function newIdempotencyKey(): string {
 const idempotencyHeaders = (): Record<string, string> => ({
   "Idempotency-Key": newIdempotencyKey(),
 })
+
+/**
+ * BAD-028: opsi umum aksi identitas kritis — alasan audit + token step-up.
+ * `reason` WAJIB (min 5 karakter; divalidasi di UI dengan pesan Indonesia,
+ * divalidasi ulang backend) dan dicatat di audit log.
+ */
+export type CriticalActionOpts = {
+  /** Alasan aksi — wajib, min 5 karakter. */
+  reason: string
+  /**
+   * BAD-009: token step-up sekali pakai dari POST /v1/admin/auth/step-up,
+   * terikat aksi+target. Dikirim via header `X-Step-Up-Token`; server
+   * menolak 403 bila absen (fail-closed).
+   */
+  stepUpToken?: string
+}
+
+/** Header aksi kritis: idempotency + token step-up (bila ada). */
+function criticalActionHeaders(stepUpToken?: string): Record<string, string> {
+  return {
+    ...idempotencyHeaders(),
+    ...(stepUpToken ? { [STEP_UP_HEADER]: stepUpToken } : {}),
+  }
+}
+
+/**
+ * Body `{ reason }` — defensif: JANGAN kirim bila reason kosong (backend
+ * lama yang belum punya DTO alasan mengabaikan body; body kosong tidak
+ * merusak).
+ */
+function reasonBody(reason: string): { reason: string } | undefined {
+  const r = reason.trim()
+  return r ? { reason: r } : undefined
+}
 
 /**
  * Nilai enum AdminRole di backend (prisma):
@@ -99,37 +134,63 @@ export function getAdmin(id: string): Promise<AdminUserItem> {
 export function updateAdmin(
   id: string,
   input: UpdateAdminInput,
+  opts: { stepUpToken?: string } = {},
 ): Promise<AdminUserItem> {
   return adminHttp.put<AdminUserItem>(
     `/v1/admin/management/${encodeURIComponent(id)}`,
     input,
-    { headers: idempotencyHeaders() },
+    { headers: criticalActionHeaders(opts.stepUpToken) },
   )
 }
 
-/** DELETE /v1/admin/management/:id — soft-delete akun admin. */
-export function deleteAdmin(id: string): Promise<{ message: string }> {
+/**
+ * DELETE /v1/admin/management/:id — soft-delete akun admin.
+ *
+ * BAD-009/BAD-028: wajib `reason` (min 5 karakter, dicatat di audit) dan
+ * token step-up per aksi (`admin.delete`) via header `X-Step-Up-Token`.
+ */
+export function deleteAdmin(
+  id: string,
+  opts: CriticalActionOpts,
+): Promise<{ message: string }> {
   return adminHttp.delete<{ message: string }>(
     `/v1/admin/management/${encodeURIComponent(id)}`,
-    { headers: idempotencyHeaders() },
+    {
+      headers: criticalActionHeaders(opts.stepUpToken),
+      body: reasonBody(opts.reason),
+    },
   )
 }
 
-/** POST /v1/admin/management/:id/reset-2fa — reset 2FA akun admin. */
-export function resetAdmin2fa(id: string): Promise<{ message: string }> {
+/**
+ * POST /v1/admin/management/:id/reset-2fa — reset 2FA akun admin.
+ *
+ * BAD-009/BAD-028: wajib `reason` dan token step-up (`admin.reset-2fa`).
+ */
+export function resetAdmin2fa(
+  id: string,
+  opts: CriticalActionOpts,
+): Promise<{ message: string }> {
   return adminHttp.post<{ message: string }>(
     `/v1/admin/management/${encodeURIComponent(id)}/reset-2fa`,
-    undefined,
-    { headers: idempotencyHeaders() },
+    reasonBody(opts.reason),
+    { headers: criticalActionHeaders(opts.stepUpToken) },
   )
 }
 
-/** POST /v1/admin/management/:id/unlock — buka akun admin yang terkunci. */
-export function unlockAdmin(id: string): Promise<{ message: string }> {
+/**
+ * POST /v1/admin/management/:id/unlock — buka akun admin yang terkunci.
+ *
+ * BAD-009/BAD-028: wajib `reason` dan token step-up (`admin.unlock`).
+ */
+export function unlockAdmin(
+  id: string,
+  opts: CriticalActionOpts,
+): Promise<{ message: string }> {
   return adminHttp.post<{ message: string }>(
     `/v1/admin/management/${encodeURIComponent(id)}/unlock`,
-    undefined,
-    { headers: idempotencyHeaders() },
+    reasonBody(opts.reason),
+    { headers: criticalActionHeaders(opts.stepUpToken) },
   )
 }
 
@@ -278,22 +339,33 @@ export function listEmergencyGrants(opts: { activeOnly?: boolean } = {}): Promis
 
 /**
  * POST /v1/admin/emergency-grants — berikan akses darurat sementara.
+ *
+ * BAD-009: aksi kritis — token step-up per aksi (`admin.emergency-grant.create`)
+ * via header `X-Step-Up-Token`; server menolak 403 bila absen.
  */
 export function createEmergencyGrant(
   input: CreateEmergencyGrantInput,
+  opts: { stepUpToken?: string } = {},
 ): Promise<EmergencyGrant> {
   return adminHttp.post<EmergencyGrant>(
     "/v1/admin/emergency-grants",
     input,
-    { headers: idempotencyHeaders() },
+    { headers: criticalActionHeaders(opts.stepUpToken) },
   )
 }
 
-/** DELETE /v1/admin/emergency-grants/:id — cabut grant sebelum kedaluwarsa. */
-export function revokeEmergencyGrant(id: string): Promise<{ message: string }> {
+/**
+ * DELETE /v1/admin/emergency-grants/:id — cabut grant sebelum kedaluwarsa.
+ *
+ * BAD-009: token step-up per aksi (`admin.emergency-grant.revoke`).
+ */
+export function revokeEmergencyGrant(
+  id: string,
+  opts: { stepUpToken?: string } = {},
+): Promise<{ message: string }> {
   return adminHttp.delete<{ message: string }>(
     `/v1/admin/emergency-grants/${encodeURIComponent(id)}`,
-    { headers: idempotencyHeaders() },
+    { headers: criticalActionHeaders(opts.stepUpToken) },
   )
 }
 
