@@ -101,12 +101,20 @@ export function formatNumber(n: unknown): string {
  * lintas repo — MERGE 2026-10-01: koordinator MEMUTUSKAN kontrak audit yang
  * benar dipertahankan, yaitu pecahan sen TAMPIL 2 desimal (BAI-052), BUKAN
  * Math.round yang menghilangkan fraksi sen (Rp150.000,99 → Rp150.001).
+ *
+ * SYS-C-101 (ronde 3): kebijakan 2 desimal DIPERTAHANKAN — verifikasi ulang:
+ * tidak ada Math.round/Math.trunc diam-diam pada fraksi; pembulatan hanya
+ * ke 2 desimal (round-half-up) untuk kerapian tampil.
+ * SYS-C-104 (ronde 3): tanda negatif kanonis "-RpX" (selaras FE/BE-util),
+ * BUKAN "Rp-X" — minus diekstrak sebelum prefix "Rp".
  */
 export function formatIDR(n: unknown): string {
   if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  if (Number.isInteger(n)) return `Rp${n.toLocaleString("id-ID")}`
-  const rounded = Math.round(n * 100) / 100
-  return `Rp${rounded.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const sign = n < 0 ? "-" : ""
+  const abs = Math.abs(n)
+  if (Number.isInteger(abs)) return `${sign}Rp${abs.toLocaleString("id-ID")}`
+  const rounded = Math.round(abs * 100) / 100
+  return `${sign}Rp${rounded.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 /**

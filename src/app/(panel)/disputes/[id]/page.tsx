@@ -64,7 +64,7 @@ import { StepUpNotSupportedError } from "@/lib/api/admin/step-up"
 import { listAdmins } from "@/lib/api/admin/management"
 import { useAuth } from "@/lib/auth-context"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatIdrSen, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR as formatIDRCanonical, formatIdrSen } from "@/lib/format"
 // ADM-405: PII penggugat di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail, maskName } from "@/lib/pii"
 // Batch 139 — H: fondasi admin web.
@@ -120,11 +120,15 @@ const MESSAGE_TEMPLATES = [
   },
 ]
 
-/** "Rp1.234.567" — konsisten dengan halaman keuangan. */
+/**
+ * Adapter: nilai order bisa string numerik (kolom desimal) — normalisasi ke
+ * number lalu delegasi ke formatIDR kanonis (@/lib/format): "-RpX" untuk
+ * negatif (SYS-C-104) + pecahan 2 desimal tanpa Math.round diam-diam
+ * (SYS-C-101 / BAI-052).
+ */
 function formatIDR(n: unknown): string {
-  const v = typeof n === "string" ? Number(n) : typeof n === "number" ? n : NaN
-  if (!Number.isFinite(v)) return "—"
-  return `Rp${formatNumber(Math.round(v))}`
+  const v = typeof n === "string" ? Number(n) : n
+  return formatIDRCanonical(v)
 }
 
 type DisputeParty = { userId?: string; fullName?: string; email?: string }
