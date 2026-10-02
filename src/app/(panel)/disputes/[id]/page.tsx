@@ -51,6 +51,8 @@ import {
   addDisputeNote,
   adminUploadDisputeEvidenceFile,
   adminSubmitDisputeEvidence,
+  DISPUTE_EVIDENCE_ACCEPT,
+  validateDisputeEvidenceFiles,
   type AdminDisputeItem,
   type DisputeDecision,
   type DisputeInternalNote,
@@ -526,6 +528,13 @@ function AdminEvidenceUploader({
 
   const handleSubmit = async () => {
     if (files.length === 0 || !title.trim() || !description.trim() || busy) return
+    // SYS-C-303 — validasi pra-upload sesuai batas server SEBELUM upload,
+    // agar gagal cepat dengan pesan jelas (bukan setelah upload lalu ditolak).
+    const validation = validateDisputeEvidenceFiles(files)
+    if (!validation.ok) {
+      toast.show({ title: "File tidak valid", description: validation.message, tone: "danger" })
+      return
+    }
     setBusy(true)
     try {
       setPhase("Mengunggah file…")
@@ -581,13 +590,26 @@ function AdminEvidenceUploader({
         <input
           type="file"
           multiple
-          accept="image/jpeg,image/png,image/webp,application/pdf,video/mp4,video/quicktime,video/webm"
+          accept={DISPUTE_EVIDENCE_ACCEPT}
           disabled={busy}
-          onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+          onChange={(e) => {
+            const picked = Array.from(e.target.files ?? [])
+            // SYS-C-303 — umpan balik langsung saat pilih file (validasi penuh
+            // tetap di handleSubmit sebelum upload).
+            const v = validateDisputeEvidenceFiles(picked)
+            if (picked.length > 0 && !v.ok) {
+              toast.show({ title: "File tidak valid", description: v.message, tone: "danger" })
+              e.target.value = ""
+              return
+            }
+            setFiles(picked)
+          }}
           className="text-body text-text-primary"
         />
         {files.length > 0 ? (
-          <p className="text-caption text-text-secondary">{files.length} file dipilih</p>
+          <p className="text-caption text-text-secondary">
+            {files.length} file dipilih — maks 10 file, 10MB/file, total 50MB (JPEG/PNG/WebP/HEIC/HEIF/PDF/MP4/MOV/WebM)
+          </p>
         ) : null}
         <Button
           variant="secondary"

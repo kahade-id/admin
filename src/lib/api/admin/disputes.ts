@@ -342,6 +342,70 @@ export function addDisputeNote(disputeId: string, note: string): Promise<Dispute
 }
 
 /**
+ * SYS-C-303 — batas server untuk bukti sengketa (jalur admin). Sumber kebenaran (backend):
+ * - Upload (`POST :disputeId/evidence/upload`): `UploadPurpose.DISPUTE_EVIDENCE` →
+ *   `ALLOWED_CONTENT_TYPES` + `MAX_FILE_SIZE` (50MB) di `src/modules/upload/upload.service.ts`.
+ * - Submit (`POST :disputeId/evidence`): `submitEvidenceAsAdmin` di
+ *   `admin-disputes.service.ts` → maks 10MB per file, total 50MB per submit;
+ *   `SubmitEvidenceDto` → `@ArrayMaxSize(10)` untuk fileUrls.
+ *
+ * Batas EFEKTIF pra-upload memakai yang paling ketat dari kedua tahap
+ * (10MB/file dari submit), agar file yang lolos upload tidak ditolak saat submit.
+ */
+export const DISPUTE_EVIDENCE_MAX_FILES = 10
+export const DISPUTE_EVIDENCE_MAX_FILE_BYTES = 10 * 1024 * 1024
+export const DISPUTE_EVIDENCE_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+/** Sama persis dengan `ALLOWED_CONTENT_TYPES[DISPUTE_EVIDENCE]` backend — termasuk HEIC/HEIF. */
+export const DISPUTE_EVIDENCE_ALLOWED_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "application/pdf",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+] as const
+/** Untuk atribut `accept=` input file — selaras dengan yang diterima server. */
+export const DISPUTE_EVIDENCE_ACCEPT = DISPUTE_EVIDENCE_ALLOWED_TYPES.join(",")
+
+export type DisputeEvidenceFileValidation = { ok: true } | { ok: false; message: string }
+
+/**
+ * Validasi pra-upload: cek jumlah/ukuran/tipe SESUAI batas server SEBELUM
+ * upload, agar gagal cepat dengan pesan jelas (bukan setelah upload lalu
+ * ditolak backend). Tipe kosong/tak dikenal ditolak — submit backend memakai
+ * `file.type` kiriman klien untuk cek allowlist, jadi tipe yang tak terdeteksi
+ * browser pasti ditolak di sana juga.
+ */
+export function validateDisputeEvidenceFiles(files: File[]): DisputeEvidenceFileValidation {
+  if (files.length === 0) {
+    return { ok: false, message: "Pilih minimal satu file bukti." }
+  }
+  if (files.length > DISPUTE_EVIDENCE_MAX_FILES) {
+    return { ok: false, message: `Maksimal ${DISPUTE_EVIDENCE_MAX_FILES} file per pengiriman bukti.` }
+  }
+  const allowed = new Set<string>(DISPUTE_EVIDENCE_ALLOWED_TYPES)
+  for (const f of files) {
+    if (!f.type || !allowed.has(f.type)) {
+      return {
+        ok: false,
+        message: `Tipe file tidak didukung: ${f.name}${f.type ? ` (${f.type})` : " (tipe tak terdeteksi)"}.`,
+      }
+    }
+    if (f.size > DISPUTE_EVIDENCE_MAX_FILE_BYTES) {
+      return { ok: false, message: `Ukuran file melebihi 10MB: ${f.name}.` }
+    }
+  }
+  const total = files.reduce((sum, f) => sum + f.size, 0)
+  if (total > DISPUTE_EVIDENCE_MAX_TOTAL_BYTES) {
+    return { ok: false, message: "Total ukuran file melebihi 50MB." }
+  }
+  return { ok: true }
+}
+
+/**
  * BAI-094 — upload file bukti "titipan" admin (multipart). adminHttp tidak
  * mendukung FormData (selalu JSON), jadi pakai fetch langsung dengan token
  * dari memori (pola sama dengan admin-client).
