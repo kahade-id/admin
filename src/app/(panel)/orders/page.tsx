@@ -53,11 +53,12 @@ import {
   type AdminOrderItem,
   type AdminOrderStatus,
 } from "@/lib/api/admin/orders"
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import { getRoomIdByOrder, getRoomMessages } from "@/lib/api/admin/chat"
 import { userMessage } from "@/lib/api/response"
 import { downloadCsv } from "@/lib/csv"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatNumber, messageFallbackLabel } from "@/lib/format"
 // ADM-405: PII pihak transaksi di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail, maskName } from "@/lib/pii"
 
@@ -295,7 +296,7 @@ function OrdersPageContent() {
       downloadCsv(
         `order-${stamp}.csv`,
         ["ID Order", "Judul", "Status", "Pembeli", "Penjual", "Nilai", "Dibayar pembeli", "Diterima penjual", "Dibuat"],
-        all.map((r) => [
+        all.items.map((r) => [
           r.orderId,
           r.title ?? "",
           STATUS_LABEL[String(r.status)] ?? String(r.status),
@@ -309,8 +310,11 @@ function OrdersPageContent() {
       )
       toast.show({
         title: "CSV diunduh",
-        description: `${all.length} order sesuai filter aktif.`,
-        tone: "success",
+        // BAD-032: jujur bila terpotong di batas 5.000 baris.
+        description: all.truncated
+          ? `${all.items.length} order sesuai filter aktif — PERHATIAN: hanya ${FETCH_ALL_MAX_PAGES * 100} baris pertama diekspor (data melebihi batas).`
+          : `${all.items.length} order sesuai filter aktif.`,
+        tone: all.truncated ? "info" : "success",
       })
     } catch (e) {
       toast.show({
@@ -442,6 +446,12 @@ function OrdersPageContent() {
     null,
   )
   const [confirmOpen, setConfirmOpen] = useState(false)
+  // SEC-504: satu kunci idempotency per sesi dialog konfirmasi — dibuat saat
+  // dialog dibuka, dibuang saat ditutup; retry memakai kunci yang sama.
+  const forceKey = useMemo(
+    () => (confirmOpen ? newIdempotencyKey() : null),
+    [confirmOpen],
+  )
   const [reason, setReason] = useState("")
   const [reasonError, setReasonError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -965,7 +975,9 @@ function OrdersPageContent() {
                             {typeof rec.createdAt === "string" ? formatDateTimeWIB(rec.createdAt) : ""}
                           </p>
                           <p className="mt-0.5 text-body text-text-primary">
-                            {text ?? "Pesan tanpa teks"}
+                            {/* FAL-004: label per tipe (Gambar/Video/Dokumen/…),
+                                bukan "Pesan tanpa teks" generik. */}
+                            {text ?? messageFallbackLabel(rec)}
                           </p>
                         </li>
                       )

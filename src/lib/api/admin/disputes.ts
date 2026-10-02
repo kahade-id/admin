@@ -2,12 +2,19 @@
 import { adminHttp, getAdminAccessToken } from "@/lib/api/admin-client"
 import { API_BASE_URL } from "@/lib/api/config"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
 
 /**
  * UUID v4 untuk `Idempotency-Key`. Backend mewajibkan header ini pada
  * endpoint mutasi sengketa (`@Idempotency()`): assign, under-review,
  * resolve — tanpa header, backend menolak dengan 400 IDEMPOTENCY_KEY_REQUIRED.
  * Pola sama seperti `src/lib/api/admin/finance.ts`.
+ *
+ * SEC-504: diekspor agar pemanggil bisa membuat SATU kunci per sesi dialog
+ * (bukan per panggilan — retry harus memakai kunci yang sama).
+ *
+ * CATATAN: tidak diekspor dari barrel agar tak bentrok dengan
+ * `@/lib/api/admin/finance` (sumber kanonis `newIdempotencyKey`).
  */
 function newIdempotencyKey(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -238,6 +245,23 @@ export type ResolveDisputeResult = {
   decision?: string
   /** null = eksekusi settlement DANA gagal total (cek log server). */
   settlement: DisputeSettlementResult | null
+  /**
+   * SEC-501: true bila backend menahan eksekusi menunggu persetujuan admin
+   * kedua (nominal besar) — UI wajib menampilkan status "Menunggu
+   * persetujuan kedua", bukan sukses.
+   */
+  pendingSecondApproval?: boolean
+}
+
+export type ResolveDisputeOpts = {
+  /**
+   * SEC-504: kunci idempotency dibuat SEKALI per sesi dialog di pemanggil
+   * (useMemo saat dialog dibuka) — retry memakai kunci yang sama.
+   * Bila tidak diberi, dibuatkan (fallback).
+   */
+  idempotencyKey?: string
+  /** SEC-501: token verifikasi ulang server (header X-Step-Up-Token). */
+  stepUpToken?: string
 }
 
 export function resolveDispute(
@@ -252,14 +276,21 @@ export function resolveDispute(
     /** Wajib bila decision === 'SPLIT': int 1–99, jumlah dengan buyerPercent = 100. */
     sellerPercent?: number
   },
+  opts?: ResolveDisputeOpts,
 ): Promise<ResolveDisputeResult> {
   // DP-001: payload persis kontrak backend DisputeDecisionDto.
   // Field lama {resolution, notes, winnerId} tidak dikenal backend dan
   // selalu menghasilkan 400.
+  const headers: Record<string, string> = {
+    "Idempotency-Key": opts?.idempotencyKey ?? newIdempotencyKey(),
+  }
+  if (opts?.stepUpToken) {
+    headers[STEP_UP_HEADER] = opts.stepUpToken
+  }
   return adminHttp.post<ResolveDisputeResult>(
     `/v1/admin/disputes/${encodeURIComponent(disputeId)}/resolve`,
     input,
-    { headers: idempotencyHeaders() },
+    { headers },
   )
 }
 

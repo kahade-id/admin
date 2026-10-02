@@ -43,6 +43,9 @@ export type WalletTransactionType =
   | "TRANSFER_RECEIVED"
   | "CAMPAIGN_CASHBACK"
   | "TOPUP_BONUS"
+  // BAD-019: sinkron dengan backend `prisma/schema.prisma` enum
+  // WalletTransactionType (16 nilai) — sebelumnya hilang dari union.
+  | "MILESTONE_RELEASE"
 
 export type WalletTransactionStatus = "PENDING" | "SUCCESS" | "FAILED"
 

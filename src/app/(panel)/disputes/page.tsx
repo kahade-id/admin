@@ -161,9 +161,10 @@ function DisputesListInner() {
       targetFilter: Filter,
       targetSearch: string,
       targetCategory: CategoryFilter,
-    ): Promise<AdminDisputeItem[]> => {
+    ): Promise<{ items: AdminDisputeItem[]; truncated: boolean }> => {
       const unassignedOnly = targetFilter === "UNASSIGNED"
       const out: AdminDisputeItem[] = []
+      let truncated = false
       for (let p = 1; p <= FETCH_ALL_MAX_PAGES; p++) {
         const res = await listDisputes({
           page: p,
@@ -173,11 +174,13 @@ function DisputesListInner() {
           search: targetSearch.trim() || undefined,
           unassigned: unassignedOnly || undefined,
         })
-        const items = res.data ?? []
-        out.push(...items)
-        if (p >= (res.totalPages ?? 1) || items.length === 0) break
+        const batch = res.data ?? []
+        out.push(...batch)
+        if (p >= (res.totalPages ?? 1) || batch.length === 0) break
+        // BAD-032: cap tercapai tetapi backend masih punya halaman berikut.
+        if (p === FETCH_ALL_MAX_PAGES) truncated = true
       }
-      return out
+      return { items: out, truncated }
     },
     [],
   )
@@ -247,9 +250,12 @@ function DisputesListInner() {
 
   // H14: ekspor sebagai job — backend sengketa belum punya endpoint job,
   // jadi dipakai fallback unduhan langsung dengan UI status yang sama.
+  // BAD-032: tandai bila ekspor terpotong di batas halaman.
+  const exportTruncatedRef = useRef(false)
   const exportJob = useExportJob({
     request: async () => {
       const all = await fetchAllMatching(filter, search, categoryFilter)
+      exportTruncatedRef.current = all.truncated
       const stamp = new Date().toISOString().slice(0, 10)
       return {
         type: "file" as const,
@@ -257,7 +263,7 @@ function DisputesListInner() {
           downloadCsv(
             `sengketa-${stamp}.csv`,
             ["ID Sengketa", "ID Order", "Status", "Kategori", "Umur", "Ditugaskan ke", "Dibuat"],
-            all.map((r) => [
+            all.items.map((r) => [
               r.id,
               r.orderId,
               DISPUTE_STATUS_LABEL[r.status] ?? r.status,
@@ -277,8 +283,10 @@ function DisputesListInner() {
     onDone: () => {
       toast.show({
         title: "CSV diunduh",
-        description: "Ekspor sengketa sesuai filter aktif selesai.",
-        tone: "success",
+        description: exportTruncatedRef.current
+          ? "Ekspor sengketa sesuai filter aktif selesai — PERHATIAN: hanya 5.000 baris pertama diekspor (data melebihi batas)."
+          : "Ekspor sengketa sesuai filter aktif selesai.",
+        tone: exportTruncatedRef.current ? "info" : "success",
       })
     },
   })
