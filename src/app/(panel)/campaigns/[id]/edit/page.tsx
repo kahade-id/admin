@@ -99,7 +99,7 @@ function buildDiff(original: AdminCampaignItem, v: EditableValues): DiffRow[] {
   push("Label audiens", base.targetAudience || "—", v.targetAudience.trim() || "—")
   push("Rank minimum", formatRank(base.targetMinRank), formatRank(v.targetMinRank))
   push(
-    "Dormant (hari)",
+    "Tidak aktif (hari)",
     base.targetDormantDays || "—",
     v.targetDormantDays.trim() || "—",
   )
@@ -199,7 +199,7 @@ function CampaignEditContent() {
     const dormant = parseIntInput(v.targetDormantDays)
     if (v.targetDormantDays.trim() !== "") {
       if (dormant === undefined || !Number.isInteger(dormant) || dormant < 0) {
-        return "Dormant (hari) harus bilangan bulat 0 atau lebih."
+        return "Tidak aktif (hari) harus bilangan bulat 0 atau lebih."
       }
     }
     return null
@@ -343,7 +343,7 @@ function CampaignEditContent() {
                 ]}
               />
               <Input
-                label="Dormant (hari)"
+                label="Tidak aktif (hari)"
                 value={values.targetDormantDays}
                 onChange={(e) => set("targetDormantDays", e.target.value)}
                 inputMode="numeric"

@@ -72,7 +72,7 @@ const PAGE_SIZE = 20
 const VOUCHER_TYPES: { value: AdminVoucherType; label: string }[] = [
   { value: "FEE_DISCOUNT_FLAT", label: "Diskon fee (nominal)" },
   { value: "FEE_DISCOUNT_PERCENT", label: "Diskon fee (persen)" },
-  { value: "WALLET_CASHBACK", label: "Cashback wallet" },
+  { value: "WALLET_CASHBACK", label: "Cashback dompet" },
   { value: "TOPUP_BONUS", label: "Bonus top-up" },
 ]
 
@@ -81,7 +81,7 @@ const VOUCHER_APPLICABILITIES: { value: AdminVoucherApplicability; label: string
   { value: "BUYER_ONLY", label: "Pembeli saja" },
   { value: "SELLER_ONLY", label: "Penjual saja" },
   { value: "NEW_USER", label: "Pengguna baru" },
-  { value: "DORMANT_USER", label: "Pengguna dormant" },
+  { value: "DORMANT_USER", label: "Pengguna tidak aktif" },
 ]
 
 function voucherValueLabel(v: AdminVoucherItem): string {
@@ -869,7 +869,7 @@ function CampaignForm({
           value={targetAudience}
           onChange={(e) => setTargetAudience(e.target.value)}
           maxLength={500}
-          placeholder="cth. Pengguna dormant 30 hari"
+          placeholder="cth. Pengguna tidak aktif 30 hari"
         />
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -903,11 +903,11 @@ function CampaignForm({
           ]}
         />
         <Input
-          label="Dormant (hari)"
+          label="Tidak aktif (hari)"
           value={targetDormantDays}
           onChange={(e) => setTargetDormantDays(e.target.value)}
           inputMode="numeric"
-          hint="Target pengguna dormant minimal sekian hari."
+          hint="Target pengguna tidak aktif minimal sekian hari."
         />
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

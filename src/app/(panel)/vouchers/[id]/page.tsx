@@ -37,7 +37,7 @@ import { quotaRatio } from "../../campaigns/lib"
 const VOUCHER_TYPE_LABEL: Record<AdminVoucherType, string> = {
   FEE_DISCOUNT_FLAT: "Diskon fee (nominal)",
   FEE_DISCOUNT_PERCENT: "Diskon fee (persen)",
-  WALLET_CASHBACK: "Cashback wallet",
+  WALLET_CASHBACK: "Cashback dompet",
   TOPUP_BONUS: "Bonus top-up",
 }
 
@@ -46,7 +46,7 @@ const APPLICABILITY_LABEL: Record<string, string> = {
   BUYER_ONLY: "Pembeli saja",
   SELLER_ONLY: "Penjual saja",
   NEW_USER: "Pengguna baru",
-  DORMANT_USER: "Pengguna dormant",
+  DORMANT_USER: "Pengguna tidak aktif",
 }
 
 function KeyValue({ label, value }: { label: string; value: ReactNode }) {
