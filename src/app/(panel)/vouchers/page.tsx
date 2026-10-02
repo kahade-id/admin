@@ -27,7 +27,7 @@ import { Select } from "@/components/admin/select"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { cn } from "@/lib/cn"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR, formatNumber } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import type { Paginated } from "@/lib/api/admin/kyc"
@@ -68,16 +68,6 @@ import {
 } from "../campaigns/lib"
 
 const PAGE_SIZE = 20
-
-const idr = new Intl.NumberFormat("id-ID", {
-  style: "currency",
-  currency: "IDR",
-  maximumFractionDigits: 0,
-})
-
-function formatIDR(value: number | null | undefined): string {
-  return value == null ? "—" : idr.format(value)
-}
 
 const VOUCHER_TYPES: { value: AdminVoucherType; label: string }[] = [
   { value: "FEE_DISCOUNT_FLAT", label: "Diskon fee (nominal)" },
