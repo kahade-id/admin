@@ -1,109 +1,116 @@
 /**
- * H05 — Re-auth untuk tindakan kritis (Batch 139).
+ * SEC-503 — Re-auth untuk tindakan kritis (ditulis ulang).
  *
- * Sesi admin yang masih valid belum cukup untuk aksi berisiko tinggi
- * (finance, RBAC, ops-settings). Pola: minta verifikasi ulang kredensial
- * (kata sandi + TOTP bila MFA aktif) sebelum aksi, lalu buka "jendela
- * konfirmasi" terbatas (default 10 menit, di sessionStorage).
+ * SEBELUMNYA (H05): step-up HANYA client-side — flag
+ * `kahade.admin.reauthUntil` di sessionStorage membuka "jendela konfirmasi"
+ * 10 menit untuk SEMUA aksi. Itu bukan kontrol keamanan: sesi curian
+ * (token bocor / XSS) langsung lolos karena tidak ada yang diverifikasi di
+ * server per aksi.
  *
- * Implementasi: verifikasi memakai endpoint login yang SUDAH ADA
- * (`adminLogin(email, password, totpToken)`) — kredensial benar-benar
- * dicek ke server, bukan sekadar UI. Token sesi di-refresh untuk admin
- * yang sama sehingga sesi berjalan tidak terputus.
+ * SEKARANG: tiap `require()` → dialog kata sandi → server menerbitkan token
+ * sekali pakai (single-use, TTL 2–5 menit, terikat aksi + target) via
+ * `POST /v1/admin/auth/step-up`; token itu yang menjadi GERBANG — server
+ * menolak 403 bila header `X-Step-Up-Token` absen/tidak valid. Tidak ada
+ * lagi konsep jendela waktu: SETIAP aksi sensitif meminta kata sandi baru
+ * (fail-closed, tanpa pengecualian). sessionStorage TIDAK dipakai sama
+ * sekali.
  *
- * STATUS: parsial — ini step-up sisi klien. Enforcement penuh per-aksi di
- * sisi server butuh endpoint/API khusus (belum ada); backend tetap menjadi
- * penegak otorisasi via RBAC yang sudah ada.
+ * Ini mitigasi SESI CURIAN, bukan sekadar anti-salah-klik: penyerang yang
+ * memegang token sesi tetap tidak bisa menjalankan aksi kritis tanpa kata
+ * sandi admin.
  *
- * BAI-115 / BACKLOG: bukti re-auth per-aksi yang diverifikasi server (mis.
- * token step-up berumur pendek yang wajib dilampirkan tiap request kritis).
- * Sampai itu ada, copy UI TIDAK BOLEH mengklaim "setiap aksi diverifikasi
- * ulang" — yang benar: verifikasi membuka jendela konfirmasi 10 menit.
+ * Kompatibilitas: ekspor lama (`useReauthGate`, `ReauthDialog`,
+ * `ReauthRequest`) dipertahankan agar pemanggil lama (finance, ops-settings,
+ * team, emergency-grants) tidak rusak. `action` kini menerima token step-up
+ * server sebagai argumen — fungsi lama tanpa argumen tetap bisa dipakai
+ * (token diabaikan), tetapi aksi tersebut akan ditolak server 403 sampai
+ * pemanggil dimigrasi ke token per-aksi via `useStepUp`.
  *
- * Pemakaian:
- *   const reauth = useReauthGate()
- *   <Button onClick={() => reauth.require(() => doCriticalAction(), "Ubah limit payout")}>
- *     Simpan
- *   </Button>
- *   <ReauthDialog state={reauth.dialog} />
+ * Pemanggil baru sebaiknya memakai `useStepUp` langsung
+ * (`@/components/admin/step-up-gate`) — hook ini hanya untuk kompatibilitas.
  */
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 
-import { Button } from "@/components/ui/button"
-import { Dialog } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { useToast } from "@/components/ui/toast"
-import { adminLogin, adminVerify2fa } from "@/lib/api/admin/auth"
-import { useAuth } from "@/lib/auth-context"
-import { userMessage } from "@/lib/api/response"
+import {
+  StepUpDialog as StepUpPasswordDialog,
+} from "@/components/admin/step-up-gate"
 
-/** Lama jendela konfirmasi setelah re-auth sukses (10 menit). */
-export const REAUTH_WINDOW_MS = 10 * 60 * 1000
-const STORAGE_KEY = "kahade.admin.reauthUntil"
+/**
+ * Aksi step-up default untuk pemanggil lama yang belum dimigrasi ke token
+ * per-aksi. SEMENTARA — pemanggil harus dimigrasi ke `useStepUp` dengan
+ * nama aksi spesifik (mis. "finance.withdrawal.approve") agar token
+ * diterima server.
+ */
+export const LEGACY_STEP_UP_ACTION = "admin.panel-action"
 
-function readWindow(): number {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
-    const ts = raw ? Number.parseInt(raw, 10) : 0
-    return Number.isFinite(ts) ? ts : 0
-  } catch {
-    return 0
-  }
-}
+/**
+ * @deprecated Konsep jendela konfirmasi DIHAPUS (SEC-503) — tidak ada lagi
+ * jendela waktu; tiap aksi sensitif meminta kata sandi baru. Konstanta ini
+ * dipertahankan agar impor lama tidak merusak kompilasi.
+ */
+export const REAUTH_WINDOW_MS = 0
 
 export type ReauthRequest = {
-  /** Aksi yang dijalankan setelah re-auth sukses / dalam jendela. */
-  action: () => void | Promise<void>
-  /** Label aksi untuk ditampilkan di dialog. */
+  /**
+   * Aksi yang dijalankan SETELAH verifikasi sukses, menerima token step-up
+   * sekali pakai dari server. Teruskan token ke fungsi API
+   * (`stepUpToken`) agar server mengizinkan aksi.
+   */
+  action: (stepUpToken: string) => void | Promise<void>
+  /** Label aksi untuk ditampilkan di dialog (Bahasa Indonesia). */
   label: string
+  /** Nama aksi server untuk token step-up, mis. "admin.reset-2fa". */
+  stepUpAction: string
+  /** Id target aksi (mis. id admin target), bila ada. */
+  targetId?: string
+}
+
+export type RequireOpts = {
+  /** Nama aksi server untuk token step-up (default: LEGACY_STEP_UP_ACTION). */
+  stepUpAction?: string
+  /** Id target aksi, bila ada. */
+  targetId?: string
 }
 
 export function useReauthGate() {
-  const { profile } = useAuth()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [pending, setPending] = useState<ReauthRequest | null>(null)
-  const [windowUntil, setWindowUntil] = useState<number>(0)
   const pendingRef = useRef<ReauthRequest | null>(null)
 
-  useEffect(() => {
-    setWindowUntil(readWindow())
-  }, [])
-
-  const windowValid = windowUntil > Date.now()
-
-  const openFor = useCallback((req: ReauthRequest) => {
-    pendingRef.current = req
-    setPending(req)
-    setDialogOpen(true)
-  }, [])
-
-  /** Minta re-auth; jalankan aksi langsung bila masih dalam jendela. */
+  /**
+   * Minta verifikasi ulang lalu jalankan aksi dengan token step-up server.
+   * SELALU menampilkan dialog kata sandi — tidak ada jalan pintas jendela
+   * waktu. Bila pengguna batal / backend belum mendukung step-up, aksi
+   * TIDAK dijalankan (fail-closed).
+   */
   const require = useCallback(
-    (action: () => void | Promise<void>, label: string) => {
-      if (readWindow() > Date.now()) {
-        void action()
-        return
+    (
+      action: (stepUpToken: string) => void | Promise<void>,
+      label: string,
+      opts: RequireOpts = {},
+    ) => {
+      if (pendingRef.current) return // satu dialog dalam satu waktu
+      const req: ReauthRequest = {
+        action,
+        label,
+        stepUpAction: opts.stepUpAction ?? LEGACY_STEP_UP_ACTION,
+        targetId: opts.targetId,
       }
-      openFor({ action, label })
+      pendingRef.current = req
+      setPending(req)
+      setDialogOpen(true)
     },
-    [openFor],
+    [],
   )
 
-  const handleVerified = useCallback(() => {
-    const until = Date.now() + REAUTH_WINDOW_MS
-    try {
-      sessionStorage.setItem(STORAGE_KEY, String(until))
-    } catch {
-      /* abaikan */
-    }
-    setWindowUntil(until)
+  const handleVerified = useCallback((token: string) => {
     setDialogOpen(false)
     const req = pendingRef.current
     pendingRef.current = null
     setPending(null)
-    if (req) void req.action()
+    if (req) void req.action(token)
   }, [])
 
   const close = useCallback(() => {
@@ -114,105 +121,52 @@ export function useReauthGate() {
 
   return {
     require,
-    windowValid,
-    /** Sisa jendela (ms) untuk indikator UI. */
-    windowRemainingMs: Math.max(0, windowUntil - Date.now()),
-    dialog: { open: dialogOpen, request: pending, onVerified: handleVerified, onClose: close },
+    dialog: {
+      open: dialogOpen,
+      request: pending,
+      onVerified: handleVerified,
+      onClose: close,
+    },
+    /**
+     * @deprecated Konsep jendela konfirmasi DIHAPUS (SEC-503). Selalu false —
+     * dipertahankan agar kode lama yang membaca field ini tetap kompilasi.
+     */
+    windowValid: false as boolean,
+    /**
+     * @deprecated Konsep jendela konfirmasi DIHAPUS (SEC-503). Selalu 0.
+     */
+    windowRemainingMs: 0 as number,
   }
 }
 
 export type ReauthDialogProps = {
   open: boolean
   request: ReauthRequest | null
-  onVerified: () => void
+  /** Dipanggil dengan token step-up server bila verifikasi sukses. */
+  onVerified: (stepUpToken: string) => void
   onClose: () => void
 }
 
-/** Dialog verifikasi ulang kredensial + TOTP (bila MFA aktif). */
+/**
+ * Dialog verifikasi ulang kata sandi → token step-up server per aksi.
+ * Dibangun di atas dialog step-up bersama (`StepUpDialog`).
+ */
 export function ReauthDialog({ open, request, onVerified, onClose }: ReauthDialogProps) {
-  const { profile } = useAuth()
-  const toast = useToast()
-  const [password, setPassword] = useState("")
-  const [totp, setTotp] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const mfaEnabled = !!profile?.isMfaEnabled
-
-  useEffect(() => {
-    if (open) {
-      setPassword("")
-      setTotp("")
-      setError(null)
-    }
-  }, [open ])
-
-  const submit = async () => {
-    if (!profile?.email || !password || loading) return
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await adminLogin(profile.email, password, totp.trim() || undefined)
-      if ("requiresMfa" in res && res.requiresMfa) {
-        // Login butuh MFA tapi TOTP belum diberikan / salah.
-        if (!totp.trim()) {
-          setError("Akun ini memakai MFA — masukkan kode TOTP.")
-          return
-        }
-        await adminVerify2fa(res.tempToken, totp.trim())
-      } else if ("requiresMfaSetup" in res && res.requiresMfaSetup) {
-        setError("Akun belum menyelesaikan setup MFA. Selesaikan di Pengaturan terlebih dahulu.")
-        return
-      }
-      // Sukses: kredensial terverifikasi server.
-      onVerified()
-      toast.show({ title: "Identitas terverifikasi", tone: "success" })
-    } catch (e) {
-      setError(userMessage(e) || "Verifikasi gagal — periksa kata sandi / kode MFA.")
-    } finally {
-      setLoading(false)
-    }
-  }
-
   return (
-    <Dialog
+    <StepUpPasswordDialog
       open={open}
-      onClose={onClose}
+      action={request?.stepUpAction ?? LEGACY_STEP_UP_ACTION}
+      targetId={request?.targetId}
       title="Verifikasi ulang identitas"
       description={
         request
-          ? `Aksi "${request.label}" berisiko tinggi. Masukkan ulang kredensial Anda untuk melanjutkan. Jendela konfirmasi berlaku ${REAUTH_WINDOW_MS / 60000} menit.`
-          : "Masukkan ulang kredensial Anda."
+          ? `Aksi "${request.label}" berisiko tinggi. Masukkan ulang kata sandi ` +
+            "Anda — server menerbitkan token sekali pakai khusus untuk aksi ini. " +
+            "Tanpa verifikasi ini aksi tidak dapat dijalankan."
+          : undefined
       }
-      dirty={password.length > 0}
-    >
-      <div className="flex flex-col gap-4">
-        <Input
-          label="Kata sandi admin"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="••••••••"
-          autoComplete="current-password"
-        />
-        {mfaEnabled ? (
-          <Input
-            label="Kode TOTP (MFA aktif)"
-            value={totp}
-            onChange={(e) => setTotp(e.target.value.replace(/\D/g, "").slice(0, 6))}
-            placeholder="123456"
-            inputMode="numeric"
-          />
-        ) : null}
-        {error ? <p className="text-body text-danger-text">{error}</p> : null}
-        <div className="flex flex-col gap-2">
-          <Button loading={loading} disabled={!password} onClick={submit}>
-            Verifikasi & lanjutkan
-          </Button>
-          <Button variant="ghost" disabled={loading} onClick={onClose}>
-            Batal
-          </Button>
-        </div>
-      </div>
-    </Dialog>
+      onToken={onVerified}
+      onCancel={onClose}
+    />
   )
 }

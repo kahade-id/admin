@@ -50,8 +50,16 @@ export function AdminCaptchaSlider({
       setChallengeId(c.challengeId)
       setTargetX(c.targetX)
       setValue(0)
-    } catch {
-      setLoadError("Gagal memuat verifikasi. Coba muat ulang.")
+    } catch (e) {
+      // FAL-026: backend lama tanpa endpoint captcha (404) — tampilkan pesan
+      // eksplisit, jangan lockout diam-diam. Pengguna tidak bisa lanjut
+      // sampai backend mendukung captcha, tapi tahu alasannya.
+      const status = (e as { status?: number } | null)?.status
+      setLoadError(
+        status === 404
+          ? "Captcha belum didukung backend. Hubungi tim teknis untuk mengaktifkan verifikasi ini."
+          : "Gagal memuat verifikasi. Coba muat ulang.",
+      )
     } finally {
       setLoading(false)
     }
