@@ -142,10 +142,14 @@ export type BulkKycResult = {
  * (`{ data, total, page, limit, totalPages }` di root). Wrapper `meta?` /
  * `pagination?` yang lama tidak pernah dikembalikan backend dan sudah dihapus;
  * semua halaman membaca `res.total` / `res.totalPages` langsung.
+ *
+ * SYS-A-010: `total` OPSIONAL — beberapa endpoint tidak mengembalikan total
+ * (mis. kursor/hasNext saja). Titik baca WAJIB guard (`res.total ?? ...`);
+ * fetch-all-pages.ts sudah menangani `total === undefined`.
  */
 export type Paginated<T> = {
   data: T[]
-  total: number
+  total?: number
   page: number
   limit: number
   totalPages: number
