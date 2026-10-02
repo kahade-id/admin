@@ -655,7 +655,7 @@ export default function AnalyticsPage() {
           <Card padded={false}>
             <CardHeader
               title="Pengguna teratas"
-              subtitle="Sepanjang waktu — tidak terpengaruh rentang tanggal"
+              subtitle="Sepanjang waktu (tidak mengikuti rentang tanggal)"
               action={
                 <Select
                   options={METRIC_OPTIONS}
