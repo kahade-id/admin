@@ -132,8 +132,8 @@ export default function KarierPage() {
         limit: PAGE_SIZE,
         active: activeFilter === "" ? undefined : activeFilter === "true",
       })
-      setItems(res.items)
-      setTotal(res.total)
+      setItems(res.data)
+      setTotal(res.total ?? 0)
     } catch (e) {
       setError(userMessage(e))
     } finally {

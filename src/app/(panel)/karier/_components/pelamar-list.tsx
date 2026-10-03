@@ -69,7 +69,7 @@ export function PelamarList({ lockedPostingId }: { lockedPostingId?: string }) {
     let alive = true
     listPostings({ page: 1, limit: 100 })
       .then((res) => {
-        if (alive) setPostings(res.items)
+        if (alive) setPostings(res.data)
       })
       .catch((e) => {
         toast.show({ title: "Gagal memuat daftar lowongan", description: userMessage(e), tone: "danger" })
@@ -102,8 +102,8 @@ export function PelamarList({ lockedPostingId }: { lockedPostingId?: string }) {
         status: status || undefined,
         q: q || undefined,
       })
-      setItems(res.items)
-      setTotal(res.total)
+      setItems(res.data)
+      setTotal(res.total ?? 0)
     } catch (e) {
       setError(userMessage(e))
     } finally {

@@ -1,17 +1,12 @@
 /** Kahade admin — manajemen karier (lowongan + pelamar). */
 import { adminHttp } from "@/lib/api/admin-client"
+import type { Paginated } from "./kyc"
 
 /**
- * AW-019: konvensi paginasi endpoint karier — bentuk `{ items, total }`
- * (lihat §3.4 spec karir). Berbeda dari Paginated<T> KYC (data/total/page/
- * limit/totalPages); titik baca WAJIB pakai `items`, bukan `data`.
+ * AW-019: paginasi mengikuti konvensi repo `{ data, total, page, limit,
+ * totalPages }` (lihat Paginated<T> di kyc.ts) — sama seperti yang
+ * dikembalikan backend /v1/admin/careers/*.
  */
-export type CareersPaginated<T> = {
-  items: T[]
-  total: number
-  page?: number
-  limit?: number
-}
 
 export type JobApplicationStatus =
   | "BARU"
@@ -98,8 +93,8 @@ export function listPostings(params?: {
   page?: number
   limit?: number
   active?: boolean
-}): Promise<CareersPaginated<JobPosting>> {
-  return adminHttp.get<CareersPaginated<JobPosting>>("/v1/admin/careers/postings", {
+}): Promise<Paginated<JobPosting>> {
+  return adminHttp.get<Paginated<JobPosting>>("/v1/admin/careers/postings", {
     query: params,
   })
 }
@@ -137,7 +132,7 @@ export function listApplications(params?: {
   q?: string
   page?: number
   limit?: number
-}): Promise<CareersPaginated<JobApplicationItem>> {
+}): Promise<Paginated<JobApplicationItem>> {
   const query: Record<string, string | number | undefined> = {
     page: params?.page,
     limit: params?.limit,
@@ -145,7 +140,7 @@ export function listApplications(params?: {
   if (params?.postingId) query.postingId = params.postingId
   if (params?.status) query.status = params.status
   if (params?.q?.trim()) query.q = params.q.trim()
-  return adminHttp.get<CareersPaginated<JobApplicationItem>>(
+  return adminHttp.get<Paginated<JobApplicationItem>>(
     "/v1/admin/careers/applications",
     { query },
   )

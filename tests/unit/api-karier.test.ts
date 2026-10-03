@@ -2,11 +2,11 @@
  * F4 — Test API client karier + peta transisi status (§2 spec karir).
  *
  * Kontrak backend (`AdminCareersController`, /v1/admin/careers):
- * - GET    /v1/admin/careers/postings?page=&limit=&active=   → { items, total }
+ * - GET    /v1/admin/careers/postings?page=&limit=&active=   → { data, total, page, limit, totalPages } (AW-019)
  * - POST   /v1/admin/careers/postings                        → posting
  * - PATCH  /v1/admin/careers/postings/:id                   → posting (termasuk toggle isActive)
  * - DELETE /v1/admin/careers/postings/:id                   → 409 DELETE_BLOCKED_HAS_APPLICATIONS bila ada pelamar
- * - GET    /v1/admin/careers/applications?postingId=&status=&q=&page=&limit= → { items, total }
+ * - GET    /v1/admin/careers/applications?postingId=&status=&q=&page=&limit= → { data, total, page, limit, totalPages } (AW-019)
  * - GET    /v1/admin/careers/applications/:id               → detail + cvDownloadUrl + history[]
  * - PATCH  /v1/admin/careers/applications/:id/status         { status, note? }
  * - DELETE /v1/admin/careers/applications/:id
