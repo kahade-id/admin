@@ -111,6 +111,8 @@ export const MENU: MenuItem[] = [
   { label: "Status", href: "/status", roles: ["SUPER_ADMIN"] },
   { label: "Pengaturan Operasional", href: "/ops-settings", roles: ["SUPER_ADMIN"] },
   { label: "Tim Admin", href: "/team", roles: ["SUPER_ADMIN"] },
+  // F4: halaman karier (rekrutmen = keputusan founder).
+  { label: "Karier", href: "/karier", roles: ["SUPER_ADMIN"] },
 ]
 
 function roleAllowed(item: MenuItem, role: AdminRole): boolean {

@@ -394,3 +394,23 @@ export const CHAT_STATUS_TONE: Record<string, StatusTone> = {
   DISMISSED: "neutral",
   ACTIONED: "success",
 }
+
+// ------------------------------------------------------------------
+// Karier — pemetaan status pipeline lamaran (Fase F4).
+// ------------------------------------------------------------------
+
+export const JOB_APPLICATION_STATUS_LABEL: Record<string, string> = {
+  BARU: "Baru",
+  DIREVIEW: "Direview",
+  WAWANCARA: "Wawancara",
+  DITERIMA: "Diterima",
+  DITOLAK: "Ditolak",
+}
+
+export const JOB_APPLICATION_STATUS_TONE: Record<string, StatusTone> = {
+  BARU: "info",
+  DIREVIEW: "warning",
+  WAWANCARA: "accent",
+  DITERIMA: "success",
+  DITOLAK: "danger",
+}
