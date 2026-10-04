@@ -77,7 +77,7 @@ import { Dialog } from "@/components/ui/dialog"
 ```
 Dipakai untuk: konfirmasi approve/reject/revoke KYC & bisnis (dengan form
 alasan wajib), resolve sengketa, ubah status tiket, dismiss/resolve laporan,
-review moderasi chat, award/revoke/hapus badge. Harus bisa memuat form
+review moderasi pesan, award/revoke/hapus badge. Harus bisa memuat form
 (input password dokumen, textarea alasan).
 
 ### `Pagination` — `src/components/ui/pagination.tsx`
@@ -151,7 +151,7 @@ Pemetaan role per halaman (dari kontrak backend):
 | Sengketa `/disputes` | `SUPER_ADMIN`, `DISPUTE_ADMIN` |
 | Tiket `/tickets` | `SUPER_ADMIN`, `CUSTOMER_SUPPORT` |
 | Laporan `/reports` | `SUPER_ADMIN`, `CUSTOMER_SUPPORT` |
-| Moderasi chat `/chat` | `SUPER_ADMIN`, `CUSTOMER_SUPPORT` |
+| Moderasi pesan `/chat` | `SUPER_ADMIN`, `CUSTOMER_SUPPORT` |
 | Badge `/badges` | `SUPER_ADMIN` |
 
 ### Error handling API

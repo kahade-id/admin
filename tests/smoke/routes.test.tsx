@@ -71,7 +71,7 @@ const ROUTES: RouteSpec[] = [
       })
     },
   },
-  { href: "/chat", load: () => import("@/app/(panel)/chat/page"), heading: /Moderasi Chat/ },
+  { href: "/chat", load: () => import("@/app/(panel)/chat/page"), heading: /Moderasi Pesan/ },
   { href: "/badges", load: () => import("@/app/(panel)/badges/page"), heading: /Verifikasi & Badge/ },
   { href: "/finance", load: () => import("@/app/(panel)/finance/page"), heading: /Keuangan/ },
   { href: "/orders", load: () => import("@/app/(panel)/orders/page"), heading: /Order/ },

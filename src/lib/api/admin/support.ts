@@ -11,7 +11,7 @@ export type SupportTicket = {
   message: string
   category?: string
   status: TicketStatus
-  /** Tandai tiket prioritas (dari subscriber Kahade+ aktif). */
+  /** Tandai tiket prioritas (ditandai admin saat membuat tiket dari eskalasi livechat). */
   isPriority?: boolean
   createdAt: string
   updatedAt?: string
@@ -32,7 +32,7 @@ export function listTickets(params?: {
   page?: number
   limit?: number
   status?: string
-  /** true = hanya tiket prioritas dari subscriber Kahade+ aktif. */
+  /** true = hanya tiket bertanda prioritas. */
   priority?: boolean
   /** Cari berdasarkan subjek/pesan/email/username/nama pengguna (didukung backend). */
   search?: string

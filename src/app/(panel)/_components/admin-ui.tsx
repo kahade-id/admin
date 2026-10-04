@@ -356,7 +356,7 @@ export const DISPUTE_STATUS_TONE: Record<string, StatusTone> = {
 export const TICKET_STATUS_LABEL: Record<string, string> = {
   OPEN: "Terbuka",
   IN_PROGRESS: "Ditangani",
-  WAITING_USER: "Menunggu balasan Anda",
+  WAITING_USER: "Menunggu balasan pengguna",
   RESOLVED: "Selesai",
   CLOSED: "Ditutup",
 }
