@@ -93,6 +93,10 @@ export const MENU: MenuItem[] = [
   { label: "Banner & Carousel", href: "/banners", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Patungan Grup", href: "/group-buying", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Jastip", href: "/jastip", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  // POIN 2 (unifikasi transaksi escrow, 2026-10-04): halaman read-only
+  // pemantauan booking jasa (tanpa aksi finansial). Role mengikuti halaman
+  // commerce sejenis (group-buying/jastip).
+  { label: "Booking Jasa", href: "/bookings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Kampanye", href: "/campaigns", roles: ["SUPER_ADMIN"] },
   { label: "Ulasan", href: "/ratings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Referral", href: "/referral", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },

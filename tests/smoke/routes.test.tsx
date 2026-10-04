@@ -82,6 +82,8 @@ const ROUTES: RouteSpec[] = [
   { href: "/seller-vouchers", load: () => import("@/app/(panel)/seller-vouchers/page"), heading: /Voucher Seller/ },
   { href: "/group-buying", load: () => import("@/app/(panel)/group-buying/page"), heading: /Patungan Grup/ },
   { href: "/jastip", load: () => import("@/app/(panel)/jastip/page"), heading: /Jastip/ },
+  // POIN 2 (unifikasi transaksi escrow): halaman booking jasa (read-only).
+  { href: "/bookings", load: () => import("@/app/(panel)/bookings/page"), heading: /Booking Jasa/ },
   { href: "/ratings", load: () => import("@/app/(panel)/ratings/page"), heading: /Rating/ },
   { href: "/referral", load: () => import("@/app/(panel)/referral/page"), heading: /Referral/ },
   {
