@@ -8,7 +8,7 @@
  * - `listTransactions` mewajibkan `startDate` & `endDate` (ISO 8601, rentang
  *   maks 90 hari). Bila tidak diisi, default 30 hari terakhir.
  * - `listTransactions` mendukung pencarian server-side via param `q`
- *   (txId, deskripsi, orderId, midtransOrderId, flashTransactionId,
+ *   (txId, deskripsi, orderId, providerOrderId, flashTransactionId,
  *   irisPayoutId, irisRef).
  * - `approveWithdrawal` / `rejectWithdrawal` mewajibkan header
  *   `Idempotency-Key: <UUID v4>` (interceptor idempotency global) — kunci
@@ -157,7 +157,7 @@ export type AdminTransactionDetail = AdminTransactionItem & {
   }>
   paymentTx?: {
     id?: string
-    midtransOrderId?: string | null
+    providerOrderId?: string | null
     flashTransactionId?: string | null
     vaNumber?: string | null
     vaBank?: string | null
@@ -291,7 +291,7 @@ export type ListTransactionsQuery = {
   endDate?: string
   /**
    * Pencarian server-side (E3): cocok dengan txId, deskripsi, orderId,
-   * midtransOrderId, flashTransactionId, irisPayoutId, atau irisRef.
+   * providerOrderId, flashTransactionId, irisPayoutId, atau irisRef.
    */
   q?: string
 }
@@ -527,6 +527,7 @@ export type TransactionTimeline = {
 }
 
 export type TransactionExternalRefs = {
+  providerOrderId: string | null
   midtransOrderId: string | null
   irisPayoutId: string | null
   irisRef: string | null

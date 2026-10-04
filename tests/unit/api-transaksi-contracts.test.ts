@@ -102,7 +102,7 @@ describe("returns client (ADM-101/105/114)", () => {
   })
 })
 
-describe("chat moderation client (ADM-102/103/115/122)", () => {
+describe("message moderation client (ADM-102/103/115/122)", () => {
   it("reviewModerationEvent mengirim { status, note } — bukan { action, notes }", async () => {
     await reviewModerationEvent("e1", { status: "DISMISSED", note: "bukan pelanggaran" })
     const [path, body] = adminHttpMock.post.mock.calls[0] as [string, Record<string, unknown>]

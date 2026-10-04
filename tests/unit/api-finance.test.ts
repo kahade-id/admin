@@ -74,7 +74,7 @@ describe("listTransactions", () => {
 
   it("q diteruskan server-side sebagai query param (bukan filter client)", async () => {
     // REVISI QA 2026-09-26: backend menambah pencarian server-side
-    // (txId, deskripsi, orderId, midtransOrderId, flashTransactionId,
+    // (txId, deskripsi, orderId, providerOrderId, flashTransactionId,
     //  irisPayoutId, irisRef) — modul tidak lagi memfilter client-side.
     adminHttpMock.get.mockResolvedValue(
       emptyPage<AdminTransactionItem>({

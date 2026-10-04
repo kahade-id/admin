@@ -71,13 +71,16 @@ export const MENU: MenuItem[] = [
   { label: "Sengketa", href: "/disputes", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
   { label: "Retur", href: "/returns", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Kurir & Pengiriman", href: "/courier", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "CUSTOMER_SUPPORT"] },
-  { label: "Produk & Stok", href: "/products", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Tiket Bantuan", href: "/tickets", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  // POIN 5 (2026-10-04): konsol livechat agen. Backend otoritatif:
+  // `admin-support-chat.controller.ts` (@AdminRoles SUPER_ADMIN,
+  // CUSTOMER_SUPPORT, class-level).
+  { label: "Livechat Support", href: "/support-chat", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Masukan", href: "/feedback", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Milestone", href: "/milestones", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Laporan Pengguna", href: "/reports", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Laporan Etalase", href: "/reports/showcase", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
-  { label: "Moderasi Chat", href: "/chat", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
+  { label: "Moderasi Pesan", href: "/chat", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Moderasi Q&A", href: "/qa-moderation", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   // FAL-010 (audit integrasi 2026-10-03): moderasi komentar showcase.
   { label: "Komentar Etalase", href: "/showcase-comments", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
@@ -98,6 +101,10 @@ export const MENU: MenuItem[] = [
   { label: "Banner & Carousel", href: "/banners", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Patungan Grup", href: "/group-buying", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Jastip", href: "/jastip", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  // POIN 2 (unifikasi transaksi escrow, 2026-10-04): halaman read-only
+  // pemantauan booking jasa (tanpa aksi finansial). Role mengikuti halaman
+  // commerce sejenis (group-buying/jastip).
+  { label: "Booking Jasa", href: "/bookings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Kampanye", href: "/campaigns", roles: ["SUPER_ADMIN"] },
   { label: "Ulasan", href: "/ratings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Referral", href: "/referral", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },

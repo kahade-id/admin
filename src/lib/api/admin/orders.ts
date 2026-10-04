@@ -15,6 +15,7 @@
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
+import type { OrderKind } from "@/lib/order-kind"
 
 export type AdminOrderStatus =
   | "WAITING_CONFIRMATION"
@@ -48,6 +49,12 @@ export type AdminOrderItem = {
   completedAt?: string | null
   buyer?: AdminOrderParty | null
   seller?: AdminOrderParty | null
+  /**
+   * POIN 2 (unifikasi transaksi escrow): tipe transaksi order
+   * (DIRECT|JASTIP|PATUNGAN|SERVICE_BOOKING) — dikirim backend bila kolomnya
+   * sudah diimplementasikan (worker backend paralel, 2026-10-04).
+   */
+  orderKind?: OrderKind | string | null
   [key: string]: unknown
 }
 
@@ -163,6 +170,13 @@ export function listAdminOrders(query?: {
   /** ADM-117: sort — createdAt | updatedAt | orderValue | buyerPayAmount | completedAt. */
   sortBy?: "createdAt" | "updatedAt" | "orderValue" | "buyerPayAmount" | "completedAt"
   sortOrder?: "asc" | "desc"
+  /**
+   * POIN 2 (unifikasi transaksi escrow): filter tipe transaksi — diteruskan
+   * sebagai param `kind` (nama yang disepakati; BUKAN `type`) ke
+   * `GET /v1/admin/orders`. Backend mengabaikan param tak dikenal bila
+   * worker backend belum mendaratkan filter ini, sehingga aman dipanggil.
+   */
+  kind?: OrderKind | string
 }): Promise<Paginated<AdminOrderItem>> {
   const { q, ...rest } = query ?? {}
   return adminHttp.get<Paginated<AdminOrderItem>>("/v1/admin/orders", {

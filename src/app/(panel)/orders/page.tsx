@@ -61,6 +61,12 @@ import { fetchAllPages } from "@/lib/fetch-all-pages"
 import { formatDateTimeWIB, formatNumber, messageFallbackLabel } from "@/lib/format"
 // ADM-405: PII pihak transaksi di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail, maskName } from "@/lib/pii"
+// POIN 2 (unifikasi transaksi escrow): tipe transaksi order.
+import {
+  ORDER_KIND_FILTER_OPTIONS,
+  orderKindLabel,
+  type OrderKind,
+} from "@/lib/order-kind"
 
 const PAGE_SIZE = 20
 
@@ -109,6 +115,21 @@ const STATUS_FILTERS: Array<{ value: AdminOrderStatus | ""; label: string }> = [
   { value: "COMPLETED", label: "Selesai" },
   { value: "CANCELLED", label: "Dibatalkan" },
 ]
+
+// POIN 2 (unifikasi transaksi escrow): filter + badge tipe transaksi.
+// Nilai enum asumsi (lihat src/lib/order-kind.ts) — diselaraskan ke kontrak
+// final backend bila berbeda.
+const KIND_FILTERS = [
+  { value: "", label: "Semua tipe" },
+  ...ORDER_KIND_FILTER_OPTIONS.filter((o) => o.value !== "ALL"),
+]
+
+const KIND_TONE: Record<string, BadgeTone> = {
+  DIRECT: "neutral",
+  JASTIP: "info",
+  PATUNGAN: "accent",
+  SERVICE_BOOKING: "warning",
+}
 
 /**
  * Status order yang masih boleh dibatalkan paksa.
@@ -229,6 +250,7 @@ function OrdersPageContent() {
   const { values: f, set: setF } = useUrlFilters({
     search: "",
     status: "",
+    kind: "",
     escrow: "",
     start: "",
     end: "",
@@ -240,6 +262,8 @@ function OrdersPageContent() {
   const debouncedSearch = useDebouncedValue(searchInput, 400)
 
   const statusFilter = (f.status || "") as AdminOrderStatus | ""
+  // POIN 2: filter tipe transaksi → diteruskan sebagai param `kind` backend.
+  const kindFilter = (f.kind || "") as OrderKind | ""
   // AW-016: backend hanya menerapkan filter saat hasEscrow === true
   // (admin-orders.service.ts) — UI berupa pilihan "Dengan escrow" saja.
   const escrowOnly = f.escrow === "yes"
@@ -265,7 +289,7 @@ function OrdersPageContent() {
   const [csvProgress, setCsvProgress] = useState<{ done: number; total: number } | null>(null)
   const FETCH_ALL_MAX_PAGES = 50
 
-  /** Export CSV order sesuai filter aktif (pencarian/status/escrow/tanggal/urut). */
+  /** Export CSV order sesuai filter aktif (pencarian/status/tipe/escrow/tanggal/urut). */
   const handleExportCsv = async () => {
     setCsvLoading(true)
     setCsvProgress(null)
@@ -278,6 +302,7 @@ function OrdersPageContent() {
             page,
             limit,
             status: statusFilter || undefined,
+            kind: kindFilter || undefined,
             q: f.search.trim() || undefined,
             hasEscrow: escrowOnly || undefined,
             startDate: startDate || undefined,
@@ -295,10 +320,11 @@ function OrdersPageContent() {
       const stamp = new Date().toISOString().slice(0, 10)
       downloadCsv(
         `order-${stamp}.csv`,
-        ["ID Order", "Judul", "Status", "Pembeli", "Penjual", "Nilai", "Dibayar pembeli", "Diterima penjual", "Dibuat"],
+        ["ID Order", "Judul", "Tipe", "Status", "Pembeli", "Penjual", "Nilai", "Dibayar pembeli", "Diterima penjual", "Dibuat"],
         all.items.map((r) => [
           r.orderId,
           r.title ?? "",
+          orderKindLabel(r.orderKind),
           STATUS_LABEL[String(r.status)] ?? String(r.status),
           partyName(r.buyer),
           partyName(r.seller),
@@ -336,6 +362,7 @@ function OrdersPageContent() {
           page: targetPage,
           limit: PAGE_SIZE,
           status: statusFilter || undefined,
+          kind: kindFilter || undefined,
           // H01: pakai nilai pencarian yang sudah terkomit ke URL.
           q: f.search.trim() || undefined,
           hasEscrow: escrowOnly || undefined,
@@ -358,7 +385,7 @@ function OrdersPageContent() {
         setLoading(false)
       }
     },
-    [statusFilter, f.search, escrowOnly, startDate, endDate, sortBy, sortOrder, toast],
+    [statusFilter, kindFilter, f.search, escrowOnly, startDate, endDate, sortBy, sortOrder, toast],
   )
 
   useEffect(() => {
@@ -368,6 +395,11 @@ function OrdersPageContent() {
   const handleStatusChange = (value: string) => {
     // H01: filter status tersimpan di URL.
     setF({ status: value, page: "1" })
+  }
+
+  // POIN 2: filter tipe transaksi tersimpan di URL (diteruskan sebagai `kind`).
+  const handleKindChange = (value: string) => {
+    setF({ kind: value, page: "1" })
   }
 
   const handleEscrowChange = (value: string) => {
@@ -602,6 +634,21 @@ function OrdersPageContent() {
           </Badge>
         ),
       },
+      // POIN 2 (unifikasi transaksi escrow): badge tipe transaksi dari
+      // `orderKind` respons backend (tampil "—" sampai backend mengirimnya).
+      {
+        key: "kind",
+        header: "Tipe",
+        defaultVisible: true,
+        render: (r) => {
+          const k = typeof r.orderKind === "string" ? r.orderKind : ""
+          return k ? (
+            <Badge tone={KIND_TONE[k] ?? "neutral"}>{orderKindLabel(k)}</Badge>
+          ) : (
+            <span className="text-caption text-text-secondary">—</span>
+          )
+        },
+      },
       {
         key: "createdAt",
         header: "Dibuat",
@@ -678,7 +725,7 @@ function OrdersPageContent() {
           }
         />
         <CardBody>
-          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
             <Input
               label="Cari"
               placeholder="Cari orderId / judul / nomor resi…"
@@ -690,6 +737,13 @@ function OrdersPageContent() {
               value={statusFilter}
               onChange={(e) => handleStatusChange(e.target.value)}
               options={STATUS_FILTERS}
+            />
+            {/* POIN 2: filter tipe transaksi → param `kind` backend. */}
+            <Select
+              label="Tipe transaksi"
+              value={kindFilter}
+              onChange={(e) => handleKindChange(e.target.value)}
+              options={KIND_FILTERS}
             />
             <Select
               label="Escrow"

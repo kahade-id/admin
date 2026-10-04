@@ -71,7 +71,7 @@ const ROUTES: RouteSpec[] = [
       })
     },
   },
-  { href: "/chat", load: () => import("@/app/(panel)/chat/page"), heading: /Moderasi Chat/ },
+  { href: "/chat", load: () => import("@/app/(panel)/chat/page"), heading: /Moderasi Pesan/ },
   { href: "/badges", load: () => import("@/app/(panel)/badges/page"), heading: /Verifikasi & Badge/ },
   { href: "/finance", load: () => import("@/app/(panel)/finance/page"), heading: /Keuangan/ },
   { href: "/orders", load: () => import("@/app/(panel)/orders/page"), heading: /Order/ },
@@ -82,6 +82,8 @@ const ROUTES: RouteSpec[] = [
   { href: "/seller-vouchers", load: () => import("@/app/(panel)/seller-vouchers/page"), heading: /Voucher Seller/ },
   { href: "/group-buying", load: () => import("@/app/(panel)/group-buying/page"), heading: /Patungan Grup/ },
   { href: "/jastip", load: () => import("@/app/(panel)/jastip/page"), heading: /Jastip/ },
+  // POIN 2 (unifikasi transaksi escrow): halaman booking jasa (read-only).
+  { href: "/bookings", load: () => import("@/app/(panel)/bookings/page"), heading: /Booking Jasa/ },
   { href: "/ratings", load: () => import("@/app/(panel)/ratings/page"), heading: /Rating/ },
   { href: "/referral", load: () => import("@/app/(panel)/referral/page"), heading: /Referral/ },
   {
@@ -114,7 +116,6 @@ const ROUTES: RouteSpec[] = [
   { href: "/team", load: () => import("@/app/(panel)/team/page"), heading: /Tim/ },
   { href: "/returns", load: () => import("@/app/(panel)/returns/page"), heading: /Retur/ },
   { href: "/courier", load: () => import("@/app/(panel)/courier/page"), heading: /Kurir/ },
-  { href: "/products", load: () => import("@/app/(panel)/products/page"), heading: /Produk/ },
   {
     href: "/qa-moderation",
     load: () => import("@/app/(panel)/qa-moderation/page"),

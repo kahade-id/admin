@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * Admin — Moderasi chat (Trust & Safety).
+ * Admin — Moderasi pesan antar-user (Trust & Safety).
  *
  * - Kartu statistik: getModerationStats() (pasangan kunci–nilai dari backend).
  * - Daftar event moderasi (listModerationEvents) dengan filter status
@@ -714,7 +714,7 @@ export default function ChatModerationPage() {
     <RoleGate href="/chat">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-h2 font-bold text-text-primary">Moderasi Chat</h1>
+          <h1 className="text-h2 font-bold text-text-primary">Moderasi Pesan</h1>
           <p className="mt-1 text-body text-text-secondary">
             Pantau dan tinjau percakapan pengguna (Trust & Safety).
           </p>

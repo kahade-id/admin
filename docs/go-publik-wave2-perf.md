@@ -7,7 +7,7 @@ Tanggal: 2026-09-28. Branch: `go-publik/admin-wave2`. Scope: polish ringan + per
 | Area | Hasil |
 |---|---|
 | Dasbor (`(panel)/page.tsx`) | **Diperbaiki**: `getFinancialSummary()` dipanggil sekuensial setelah 3 request paralel → kini ikut dalam `Promise.all` yang sama (`.catch(() => null)` menjaga semantik fail-soft: gagal = tampil "—"). |
-| Pengguna, Sengketa, Moderasi chat, Pesanan | Semua tabel pakai pagination server-side (limit 20) + debounce pencarian + `Promise.all` untuk fetch paralel. Tidak ada N+1 per-baris di sisi klien. |
+| Pengguna, Sengketa, Moderasi pesan, Pesanan | Semua tabel pakai pagination server-side (limit 20) + debounce pencarian + `Promise.all` untuk fetch paralel. Tidak ada N+1 per-baris di sisi klien. |
 | Keuangan (`finance/page.tsx`) | Agregat masuk/keluar dihitung **client-side** dari hasil `listTransactions` dengan cap `AGGREGATE_CAP = 3000` baris (`Math.min(total, 3000)`). Sudah diberi label "(dibatasi 3.000 pertama)" di UI. |
 | Detail pengguna (`users/[id]`) | 5 fetch paralel via `Promise.allSettled` — OK. |
 | Detail sengketa / order | Fetch paralel (`Promise.all`) — OK. |

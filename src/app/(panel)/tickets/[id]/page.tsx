@@ -2,7 +2,8 @@
 
 /**
  * Admin — Detail tiket bantuan: pesan awal + riwayat balasan, form balas,
- * dan ubah status via Select.
+ * dan ubah status via Select. Tiket dibuat admin dari eskalasi livechat
+ * (kolom "Pengguna" = pengguna yang terkait tiket, bukan pembuat tiket).
  *
  * Port dari frontend/app/admin/(panel)/tickets/[id].tsx → web desktop.
  */

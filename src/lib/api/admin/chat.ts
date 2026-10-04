@@ -1,4 +1,4 @@
-/** Kahade admin — moderasi chat (Trust & Safety). */
+/** Kahade admin — moderasi pesan antar-user (Trust & Safety). */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import { stepUpHeaders } from "@/lib/api/admin/step-up"

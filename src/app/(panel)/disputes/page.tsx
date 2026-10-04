@@ -47,6 +47,12 @@ import {
 import { ExportJobPanel, useExportJob } from "@/components/admin/batch139/export-job"
 
 import { DISPUTE_CATEGORY_LABEL, DISPUTE_STATUS_LABEL, DISPUTE_STATUS_TONE } from "./maps"
+// POIN 2 (unifikasi transaksi escrow): filter tipe transaksi (client-side —
+// backend endpoint sengketa belum mendukung filter server-side `kind`).
+import {
+  ORDER_KIND_FILTER_OPTIONS,
+  rowOrderKind,
+} from "@/lib/order-kind"
 
 const PAGE_SIZE = 20
 /** Maksimum halaman yang diambil untuk export CSV / filter unassigned (100 baris per halaman). */
@@ -124,11 +130,15 @@ function DisputesListInner() {
   const { values: f, set: setF } = useUrlFilters({
     status: "ALL",
     category: "ALL",
+    kind: "ALL",
     search: "",
     page: "1",
   })
   const filter = f.status as Filter
   const categoryFilter = f.category as CategoryFilter
+  // POIN 2: filter tipe transaksi — client-side dari field `orderKind`
+  // respons (backend /v1/admin/disputes belum mendukung filter `kind`).
+  const kindFilter = f.kind
   const search = f.search
   const page = parsePage(f.page)
   const [searchInput, setSearchInput] = useState(f.search)
@@ -149,18 +159,30 @@ function DisputesListInner() {
   useEffect(() => {
     bulk.clear()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [f.page, f.status, f.category, f.search])
+  }, [f.page, f.status, f.category, f.kind, f.search])
+
+  /**
+   * POIN 2: predikat filter tipe transaksi — client-side dari `orderKind`
+   * respons. Baris tanpa `orderKind` (backend lama / tipe belum diisi)
+   * hanya tampil bila filter = "Semua tipe".
+   */
+  const kindMatches = useCallback(
+    (r: AdminDisputeItem) => kindFilter === "ALL" || rowOrderKind(r) === kindFilter,
+    [kindFilter],
+  )
 
   /**
    * Ambil SEMUA baris yang cocok dengan filter aktif (untuk export CSV).
    * AW-001 (perf-fix): filter "belum ditugaskan" sekarang server-side via
    * param `unassigned` — tidak lagi fetch-all lalu saring client-side.
+   * POIN 2: filter tipe tetap client-side (backend belum mendukung `kind`).
    */
   const fetchAllMatching = useCallback(
     async (
       targetFilter: Filter,
       targetSearch: string,
       targetCategory: CategoryFilter,
+      targetKind: string,
     ): Promise<{ items: AdminDisputeItem[]; truncated: boolean }> => {
       const unassignedOnly = targetFilter === "UNASSIGNED"
       const out: AdminDisputeItem[] = []
@@ -180,7 +202,9 @@ function DisputesListInner() {
         // BAD-032: cap tercapai tetapi backend masih punya halaman berikut.
         if (p === FETCH_ALL_MAX_PAGES) truncated = true
       }
-      return { items: out, truncated }
+      const filtered =
+        targetKind === "ALL" ? out : out.filter((r) => rowOrderKind(r) === targetKind)
+      return { items: filtered, truncated }
     },
     [],
   )
@@ -208,7 +232,9 @@ function DisputesListInner() {
           search: targetSearch.trim() || undefined,
           unassigned: unassignedOnly || undefined,
         })
-        setRows(res.data ?? [])
+        // POIN 2: filter tipe diterapkan client-side pada halaman ini —
+        // backend /v1/admin/disputes belum mendukung filter `kind`.
+        setRows((res.data ?? []).filter(kindMatches))
         const t = res.total ?? res.data?.length ?? 0
         setTotal(t)
         setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
@@ -221,7 +247,7 @@ function DisputesListInner() {
         setRefreshing(false)
       }
     },
-    [page, filter, categoryFilter, search, toast],
+    [page, filter, categoryFilter, kindMatches, search, toast],
   )
 
   useEffect(() => {
@@ -235,6 +261,12 @@ function DisputesListInner() {
 
   const handleCategoryChange = (value: CategoryFilter) => {
     setF({ category: value, page: "1" })
+    setActiveIndex(0)
+  }
+
+  // POIN 2: filter tipe transaksi tersimpan di URL (client-side).
+  const handleKindChange = (value: string) => {
+    setF({ kind: value, page: "1" })
     setActiveIndex(0)
   }
 
@@ -254,7 +286,7 @@ function DisputesListInner() {
   const exportTruncatedRef = useRef(false)
   const exportJob = useExportJob({
     request: async () => {
-      const all = await fetchAllMatching(filter, search, categoryFilter)
+      const all = await fetchAllMatching(filter, search, categoryFilter, kindFilter)
       exportTruncatedRef.current = all.truncated
       const stamp = new Date().toISOString().slice(0, 10)
       return {
@@ -534,6 +566,14 @@ function DisputesListInner() {
           onChange={(e) => handleCategoryChange(e.target.value as CategoryFilter)}
           className="w-52"
         />
+        {/* POIN 2: filter tipe transaksi — client-side (backend belum mendukung `kind`). */}
+        <Select
+          label="Tipe transaksi"
+          options={ORDER_KIND_FILTER_OPTIONS}
+          value={kindFilter}
+          onChange={(e) => handleKindChange(e.target.value)}
+          className="w-52"
+        />
         <form
           className="flex flex-1 flex-wrap items-end gap-2"
           onSubmit={(e) => {
@@ -554,6 +594,12 @@ function DisputesListInner() {
           </Button>
         </form>
       </div>
+      {kindFilter !== "ALL" ? (
+        <p className="mb-4 -mt-2 text-caption text-text-secondary">
+          Filter tipe diterapkan pada data halaman ini — backend sengketa belum
+          mendukung filter tipe server-side.
+        </p>
+      ) : null}
       <p className="mb-4 text-caption text-text-secondary">
         Shortcut: <kbd className="rounded-sm border border-border bg-surface px-1">/</kbd> cari ·{" "}
         <kbd className="rounded-sm border border-border bg-surface px-1">j</kbd>/

@@ -46,6 +46,13 @@ import {
 import { userMessage } from "@/lib/api/response"
 import { downloadCsv } from "@/lib/csv"
 import { formatDateTimeWIB, formatIdrSen } from "@/lib/format"
+// POIN 2 (unifikasi transaksi escrow): filter tipe transaksi (client-side —
+// backend antrean retur belum mendukung filter server-side `kind`).
+import {
+  ORDER_KIND_FILTER_OPTIONS,
+  orderKindLabel,
+  rowOrderKind,
+} from "@/lib/order-kind"
 
 const PAGE_SIZE = 20
 
@@ -92,6 +99,9 @@ export default function ReturnsListPage() {
   const canMoneyAction = role === "SUPER_ADMIN" || role === "DISPUTE_ADMIN"
   const [statusFilter, setStatusFilter] = useState("ALL")
   const [ageFilter, setAgeFilter] = useState("0")
+  // POIN 2: filter tipe transaksi — client-side dari field `orderKind`
+  // respons (backend /v1/admin/returns belum mendukung filter `kind`).
+  const [kindFilter, setKindFilter] = useState("ALL")
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
@@ -107,7 +117,7 @@ export default function ReturnsListPage() {
   const [confirming, setConfirming] = useState(false)
 
   const load = useCallback(
-    async (targetPage = page, targetStatus = statusFilter, targetAge = ageFilter, targetSearch = search) => {
+    async (targetPage = page, targetStatus = statusFilter, targetAge = ageFilter, targetSearch = search, targetKind = kindFilter) => {
       setLoading(true)
       setError(null)
       try {
@@ -118,7 +128,12 @@ export default function ReturnsListPage() {
           minAgeHours: Number(targetAge) > 0 ? Number(targetAge) : undefined,
           search: targetSearch.trim() || undefined,
         })
-        setRows(res.data ?? [])
+        // POIN 2: filter tipe diterapkan client-side pada halaman ini —
+        // backend /v1/admin/returns belum mendukung filter `kind`.
+        const items = (res.data ?? []).filter(
+          (r) => targetKind === "ALL" || rowOrderKind(r) === targetKind,
+        )
+        setRows(items)
         const t = res.total ?? res.data?.length ?? 0
         setTotal(t)
         setTotalPages(res.totalPages ?? Math.max(1, Math.ceil(t / PAGE_SIZE)))
@@ -130,7 +145,7 @@ export default function ReturnsListPage() {
         setLoading(false)
       }
     },
-    [page, statusFilter, ageFilter, search, toast],
+    [page, statusFilter, ageFilter, kindFilter, search, toast],
   )
 
   useEffect(() => {
@@ -193,10 +208,11 @@ export default function ReturnsListPage() {
     if (rows.length === 0) return
     downloadCsv(
       `retur-antrean-${new Date().toISOString().slice(0, 10)}.csv`,
-      ["ID Retur", "ID Order", "Status", "Alasan", "Refund (sen)", "Umur (jam)", "Diajukan"],
+      ["ID Retur", "ID Order", "Tipe", "Status", "Alasan", "Refund (sen)", "Umur (jam)", "Diajukan"],
       rows.map((r) => [
         String(r.returnId ?? r.id),
         String(r.orderId ?? ""),
+        orderKindLabel(rowOrderKind(r)),
         ADMIN_RETURN_STATUS_LABEL[r.status as AdminReturnStatus] ?? String(r.status),
         String(r.reasonCode ?? ""),
         r.refundAmount != null ? String(r.refundAmount) : "",
@@ -228,14 +244,22 @@ export default function ReturnsListPage() {
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <Select label="Status" options={STATUS_OPTIONS} value={statusFilter}
-          onChange={(e) => { setStatusFilter(e.target.value); setPage(1); void load(1, e.target.value, ageFilter, search) }} className="w-52" />
+          onChange={(e) => { setStatusFilter(e.target.value); setPage(1); void load(1, e.target.value, ageFilter, search, kindFilter) }} className="w-52" />
         <Select label="Umur pengajuan" options={AGE_OPTIONS} value={ageFilter}
-          onChange={(e) => { setAgeFilter(e.target.value); setPage(1); void load(1, statusFilter, e.target.value, search) }} className="w-52" />
-        <form className="flex flex-1 flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); const q = searchInput.trim(); setSearch(q); setPage(1); void load(1, statusFilter, ageFilter, q) }}>
+          onChange={(e) => { setAgeFilter(e.target.value); setPage(1); void load(1, statusFilter, e.target.value, search, kindFilter) }} className="w-52" />
+        {/* POIN 2: filter tipe transaksi — client-side (backend belum mendukung `kind`). */}
+        <Select label="Tipe transaksi" options={ORDER_KIND_FILTER_OPTIONS} value={kindFilter}
+          onChange={(e) => { setKindFilter(e.target.value); setPage(1); void load(1, statusFilter, ageFilter, search, e.target.value) }} className="w-52" />
+        <form className="flex flex-1 flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); const q = searchInput.trim(); setSearch(q); setPage(1); void load(1, statusFilter, ageFilter, q, kindFilter) }}>
           <Input label="Cari retur / order" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="ID retur atau ID order…" className="min-w-52 flex-1" />
           <Button type="submit" variant="secondary" size="md" fullWidth={false}>Cari</Button>
         </form>
       </div>
+      {kindFilter !== "ALL" ? (
+        <p className="mb-4 -mt-2 text-caption text-text-secondary">
+          Filter tipe diterapkan pada data halaman ini — backend retur belum mendukung filter tipe server-side.
+        </p>
+      ) : null}
 
       {loading ? (
         <div className="flex min-h-[40vh] items-center justify-center gap-2">

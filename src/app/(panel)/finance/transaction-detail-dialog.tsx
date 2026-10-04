@@ -3,7 +3,7 @@
  *
  * E3 (G326–G350):
  * - Detail diperkaya: pemilik wallet, order, referensi eksternal provider
- *   (midtransOrderId, flashTransactionId, irisPayoutId/ref), status
+ *   (providerOrderId, flashTransactionId, irisPayoutId/ref), status
  *   provider, webhook terkait, dan reversal. Metadata & payload webhook
  *   sudah di-mask dari secret oleh backend.
  * - Timeline kronologis: event LEDGER (mutasi wallet), PROVIDER (status

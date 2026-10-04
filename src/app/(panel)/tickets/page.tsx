@@ -1,11 +1,11 @@
 "use client"
 
 /**
- * Admin — Daftar tiket bantuan pengguna.
+ * Admin — Daftar tiket bantuan.
  *
- * Filter 4 status, tabel dengan paginasi bernomor, klik "Tinjau" → detail.
- *
- * Port dari frontend/app/admin/(panel)/tickets/index.tsx → web desktop.
+ * Tiket HANYA dibuat admin dari eskalasi livechat; user tidak membuat tiket
+ * lagi. Prioritas kini ditandai admin saat membuat tiket (bukan otomatis dari
+ * langganan Kahade+ pengguna).
  */
 
 import Link from "next/link"
@@ -53,12 +53,12 @@ const QUEUE_TABS: { value: QueueTab; label: string; hint: string }[] = [
   {
     value: "general",
     label: "Umum",
-    hint: "Semua tiket bantuan pengguna.",
+    hint: "Semua tiket bantuan.",
   },
   {
     value: "priority",
     label: "Prioritas",
-    hint: "Tiket dari subscriber Kahade+ aktif — jalur terpisah, tangani lebih dulu.",
+    hint: "Tiket bertanda prioritas — jalur terpisah, tangani lebih dulu.",
   },
 ]
 
@@ -325,7 +325,7 @@ function TicketsListInner() {
         <div className="min-w-0">
           <h1 className="text-h2 font-bold text-text-primary">Tiket Bantuan</h1>
           <p className="mt-1 text-body text-text-secondary">
-            Tiket dukungan pengguna yang perlu ditangani.
+            Tiket dibuat admin dari eskalasi livechat — pantau dan tangani di sini.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
