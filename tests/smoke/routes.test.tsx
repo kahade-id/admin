@@ -114,7 +114,6 @@ const ROUTES: RouteSpec[] = [
   { href: "/team", load: () => import("@/app/(panel)/team/page"), heading: /Tim/ },
   { href: "/returns", load: () => import("@/app/(panel)/returns/page"), heading: /Retur/ },
   { href: "/courier", load: () => import("@/app/(panel)/courier/page"), heading: /Kurir/ },
-  { href: "/products", load: () => import("@/app/(panel)/products/page"), heading: /Produk/ },
   {
     href: "/qa-moderation",
     load: () => import("@/app/(panel)/qa-moderation/page"),

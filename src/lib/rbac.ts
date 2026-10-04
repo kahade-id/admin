@@ -69,7 +69,6 @@ export const MENU: MenuItem[] = [
   { label: "Sengketa", href: "/disputes", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN"] },
   { label: "Retur", href: "/returns", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Kurir & Pengiriman", href: "/courier", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "CUSTOMER_SUPPORT"] },
-  { label: "Produk & Stok", href: "/products", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Tiket Bantuan", href: "/tickets", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Masukan", href: "/feedback", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Milestone", href: "/milestones", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
