@@ -70,6 +70,10 @@ export const MENU: MenuItem[] = [
   { label: "Retur", href: "/returns", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Kurir & Pengiriman", href: "/courier", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Tiket Bantuan", href: "/tickets", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  // POIN 5 (2026-10-04): konsol livechat agen. Backend otoritatif:
+  // `admin-support-chat.controller.ts` (@AdminRoles SUPER_ADMIN,
+  // CUSTOMER_SUPPORT, class-level).
+  { label: "Livechat Support", href: "/support-chat", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Masukan", href: "/feedback", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Milestone", href: "/milestones", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Laporan Pengguna", href: "/reports", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
