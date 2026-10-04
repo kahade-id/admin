@@ -38,6 +38,7 @@ export type AdminUserSummary = {
   email: string
   fullName: string | null
   username: string | null
+  accountType: string | null
   kycStatus: KycStatus
   isBanned: boolean
   banReason: string | null
@@ -186,6 +187,8 @@ export type ListAdminUsersQuery = {
   /** Istilah pencarian (nama, email, username, userId, atau nomor HP). */
   q?: string
   status?: AdminUserStatusFilter
+  /** Poin 3: filter tipe akun (backend GET /v1/admin/users?accountType=…). */
+  accountType?: "PERSONAL" | "BUSINESS"
   page?: number
   limit?: number
   /** ADM-014: sortir (backend me-whitelist sortBy). */
@@ -196,9 +199,9 @@ export type ListAdminUsersQuery = {
 export function listAdminUsers(
   query: ListAdminUsersQuery = {},
 ): Promise<AdminPaginated<AdminUserSummary>> {
-  const { q, status, page, limit, sortBy, sortOrder } = query
+  const { q, status, accountType, page, limit, sortBy, sortOrder } = query
   return adminHttp.get<AdminPaginated<AdminUserSummary>>("/v1/admin/users", {
-    query: { search: q?.trim() || undefined, status, page, limit, sortBy, sortOrder },
+    query: { search: q?.trim() || undefined, status, accountType, page, limit, sortBy, sortOrder },
   })
 }
 
@@ -272,30 +275,6 @@ export function banUser(userId: string, reason: string): Promise<BanUserResult> 
 export function unbanUser(userId: string): Promise<BanUserResult> {
   return adminHttp.post<BanUserResult>(
     `/v1/admin/users/${encodeURIComponent(userId)}/unban`,
-  )
-}
-
-/* ----------------- BAI-071: update terbatas profil user ----------------- */
-
-/** Field yang boleh diubah via PATCH /v1/admin/users/:userId (whitelist backend). */
-export type UpdateUserInput = {
-  accountType?: "PERSONAL" | "BUSINESS"
-}
-
-export type UpdateUserResult = {
-  userId: string
-  accountType: "PERSONAL" | "BUSINESS"
-}
-
-/**
- * BAI-071 — update terbatas data user.
- * SENSITIF: SUPER_ADMIN saja + audit wajib di backend; pipe global menolak
- * field di luar whitelist (422). Jalur koreksi operasional untuk BAI-064.
- */
-export function updateUser(userId: string, input: UpdateUserInput): Promise<UpdateUserResult> {
-  return adminHttp.patch<UpdateUserResult>(
-    `/v1/admin/users/${encodeURIComponent(userId)}`,
-    input,
   )
 }
 

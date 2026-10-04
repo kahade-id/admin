@@ -523,6 +523,7 @@ export type TransactionTimeline = {
 
 export type TransactionExternalRefs = {
   providerOrderId: string | null
+  midtransOrderId: string | null
   irisPayoutId: string | null
   irisRef: string | null
   flashTransactionId: string | null

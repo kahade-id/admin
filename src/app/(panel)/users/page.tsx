@@ -44,6 +44,14 @@ const DEBOUNCE_MS = 400
 
 type StatusFilter = "all" | AdminUserStatusFilter
 
+/** Poin 3: filter tipe akun (diteruskan ke ?accountType= backend). */
+type AccountTypeFilter = "all" | "PERSONAL" | "BUSINESS"
+const ACCOUNT_TYPE_OPTIONS: Array<{ value: AccountTypeFilter; label: string }> = [
+  { value: "all", label: "Semua" },
+  { value: "PERSONAL", label: "Personal" },
+  { value: "BUSINESS", label: "Bisnis" },
+]
+
 const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
   { value: "all", label: "Semua" },
   { value: "active", label: "Aktif" },
@@ -117,12 +125,16 @@ function UsersListInner() {
   const { values: f, set: setF } = useUrlFilters({
     q: "",
     status: "all",
+    accountType: "all",
     sort: "createdAt-desc",
     page: "1",
   })
   const [query, setQuery] = useState(f.q)
   const debouncedQuery = useDebouncedValue(query, DEBOUNCE_MS)
   const filter = (STATUS_OPTIONS.some((o) => o.value === f.status) ? f.status : "all") as StatusFilter
+  const accountType = (ACCOUNT_TYPE_OPTIONS.some((o) => o.value === f.accountType)
+    ? f.accountType
+    : "all") as AccountTypeFilter
   const sort = (SORT_OPTIONS.some((o) => o.value === f.sort) ? f.sort : "createdAt-desc") as SortOption
   const page = parsePage(f.page)
 
@@ -141,6 +153,7 @@ function UsersListInner() {
       targetFilter: StatusFilter,
       targetQuery: string,
       targetSort: SortOption,
+      targetAccountType: AccountTypeFilter,
     ) => {
       if (mode === "initial") setLoading(true)
       else setRefreshing(true)
@@ -153,6 +166,7 @@ function UsersListInner() {
         const res = await listAdminUsers({
           q: targetQuery || undefined,
           status: targetFilter === "all" ? undefined : targetFilter,
+          accountType: targetAccountType === "all" ? undefined : targetAccountType,
           page: targetPage,
           limit: PAGE_SIZE,
           sortBy,
@@ -177,9 +191,9 @@ function UsersListInner() {
   // Muat ulang saat pencarian (debounce) / filter / sortir / page berubah.
   // Perubahan via URL (tombol back/forward, tautan berbagi) ikut ter-refresh.
   useEffect(() => {
-    void load("initial", page, filter, debouncedQuery, sort)
+    void load("initial", page, filter, debouncedQuery, sort, accountType)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedQuery, filter, sort])
+  }, [page, debouncedQuery, filter, sort, accountType])
 
   // H01: sinkronkan pencarian (sudah debounce) ke URL; reset ke hal. 1
   // hanya bila query benar-benar berubah (jaga tautan ?page=3).
@@ -194,6 +208,10 @@ function UsersListInner() {
 
   const handleFilterChange = (value: StatusFilter) => {
     setF({ status: value, page: "1" })
+  }
+
+  const handleAccountTypeChange = (value: AccountTypeFilter) => {
+    setF({ accountType: value, page: "1" })
   }
 
   const handleSortChange = (value: SortOption) => {
@@ -228,6 +246,15 @@ function UsersListInner() {
             </div>
           )
         },
+      },
+      {
+        key: "accountType",
+        header: "Tipe akun",
+        render: (r) => (
+          <Badge tone={r.accountType === "BUSINESS" ? "info" : "neutral"}>
+            {r.accountType === "BUSINESS" ? "Bisnis" : "Personal"}
+          </Badge>
+        ),
       },
       {
         key: "status",
@@ -277,7 +304,7 @@ function UsersListInner() {
     <RoleGate href="/users">
       <PageHeader
         title="Pengguna"
-        description="Kelola akun pengguna Kahade: cari, filter status, dan tinjau detail."
+        description="Kelola akun pengguna Kahade: cari, filter status & tipe akun, dan tinjau detail."
         actions={
           <>
             <Button
@@ -299,7 +326,7 @@ function UsersListInner() {
           </>
         }
         onRefresh={() => {
-          void load("refresh", page, filter, debouncedQuery, sort)
+          void load("refresh", page, filter, debouncedQuery, sort, accountType)
         }}
         refreshing={refreshing}
       />
@@ -323,6 +350,14 @@ function UsersListInner() {
         </div>
         <div className="w-52">
           <Select
+            label="Tipe akun"
+            options={ACCOUNT_TYPE_OPTIONS}
+            value={accountType}
+            onChange={(e) => handleAccountTypeChange(e.target.value as AccountTypeFilter)}
+          />
+        </div>
+        <div className="w-52">
+          <Select
             label="Urutan"
             options={SORT_OPTIONS}
             value={sort}
@@ -337,7 +372,7 @@ function UsersListInner() {
         <ErrorBlock
           title="Gagal memuat pengguna"
           message={error}
-          onRetry={() => load("initial", page, filter, debouncedQuery, sort)}
+          onRetry={() => load("initial", page, filter, debouncedQuery, sort, accountType)}
         />
       ) : (
         <>

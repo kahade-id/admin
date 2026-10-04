@@ -39,7 +39,6 @@ import {
   resetUserPassword,
   revokeUserSession,
   unbanUser,
-  updateUser,
   suspendUser,
   unsuspendUser,
   type AdminUserAuditEntry,
@@ -291,9 +290,6 @@ export default function UserDetailPage() {
   const [banReason, setBanReason] = useState("")
   const [banReasonError, setBanReasonError] = useState<string | null>(null)
   const [unbanOpen, setUnbanOpen] = useState(false)
-  // BAI-071: editor tipe akun (whitelist backend: accountType).
-  const [accountTypeOpen, setAccountTypeOpen] = useState(false)
-  const [accountTypeDraft, setAccountTypeDraft] = useState("PERSONAL")
   // BAI-074: suspend ringan berbatas waktu.
   const [suspendOpen, setSuspendOpen] = useState(false)
   const [suspendReason, setSuspendReason] = useState("")
@@ -416,18 +412,6 @@ export default function UserDetailPage() {
     setBanOpen(false)
     await runAction("ban", () => banUser(userId, reason), "Pengguna diblokir", reason)
     setBanReason("")
-  }
-
-  // BAI-071: ubah tipe akun (SUPER_ADMIN + audit di backend).
-  const handleAccountTypeConfirm = async () => {
-    const next = accountTypeDraft === "BUSINESS" ? "BUSINESS" : "PERSONAL"
-    setAccountTypeOpen(false)
-    await runAction(
-      "account-type",
-      () => updateUser(userId, { accountType: next }),
-      "Tipe akun diperbarui",
-      `accountType → ${next}. Perubahan tercatat di audit log.`,
-    )
   }
 
   // BAI-074: suspend ringan — alasan wajib min 10, durasi 1–720 jam.
@@ -706,7 +690,7 @@ export default function UserDetailPage() {
                 <KeyValue label="Peringkat" value={user.membershipRank} />
               ) : null}
               <KeyValue label="Terdaftar" value={formatDateTimeWIB(user.createdAt)} />
-              {/* BAI-071: tipe akun + editor koreksi operasional (SUPER_ADMIN). */}
+              {/* Tipe akun read-only — hanya berubah via verifikasi bisnis yang disetujui. */}
               <KeyValue
                 label="Tipe akun"
                 value={
@@ -714,19 +698,9 @@ export default function UserDetailPage() {
                     <Badge tone={user.accountType === "BUSINESS" ? "info" : "neutral"}>
                       {user.accountType === "BUSINESS" ? "Bisnis" : "Personal"}
                     </Badge>
-                    {isSuperAdmin ? (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        fullWidth={false}
-                        onClick={() => {
-                          setAccountTypeDraft(user.accountType === "BUSINESS" ? "BUSINESS" : "PERSONAL")
-                          setAccountTypeOpen(true)
-                        }}
-                      >
-                        Ubah
-                      </Button>
-                    ) : null}
+                    <span className="block w-full text-right text-caption text-text-tertiary">
+                      Tipe akun hanya berubah via verifikasi bisnis yang disetujui
+                    </span>
                   </span>
                 }
               />
@@ -1369,42 +1343,6 @@ export default function UserDetailPage() {
           )}
         </>
       ) : null}
-
-      {/* ---- BAI-071: ubah tipe akun (whitelist backend) ---- */}
-      <Dialog
-        open={accountTypeOpen}
-        onClose={() => setAccountTypeOpen(false)}
-        title="Ubah tipe akun"
-        description="Koreksi operasional tipe akun pengguna. Perubahan tercatat di audit log dan badge publik disinkronkan ulang."
-        footer={
-          <div className="flex flex-col gap-2">
-            <Button
-              variant="primary"
-              loading={acting === "account-type"}
-              onClick={handleAccountTypeConfirm}
-            >
-              Simpan
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={acting === "account-type"}
-              onClick={() => setAccountTypeOpen(false)}
-            >
-              Batal
-            </Button>
-          </div>
-        }
-      >
-        <Select
-          label="Tipe akun"
-          options={[
-            { value: "PERSONAL", label: "Personal" },
-            { value: "BUSINESS", label: "Bisnis" },
-          ]}
-          value={accountTypeDraft}
-          onChange={(e) => setAccountTypeDraft(e.target.value)}
-        />
-      </Dialog>
 
       {/* ---- BAI-074: tangguhkan (suspend ringan) ---- */}
       <Dialog
