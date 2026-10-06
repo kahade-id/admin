@@ -11,6 +11,10 @@ import {
 } from "@/lib/api/admin-client"
 import { API_BASE_URL } from "@/lib/api/config"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
+
+/** Opsi step-up untuk mutasi user — backend mewajibkan @RequireStepUp. */
+export type UserStepUpOpts = { stepUpToken?: string }
 
 /** Nilai `status` yang diterima `GET /v1/admin/users?status=…`. */
 export type AdminUserStatusFilter =
@@ -361,10 +365,20 @@ export type WalletAdjustResult = {
  * Penyesuaian manual saldo (SUPER_ADMIN saja). `amount` dalam Rupiah bilangan
  * bulat (>= 1, maks 50 jt per backend). Kunci idempotensi dibuat per panggilan
  * supaya klik ganda tidak menggandakan mutasi.
+ *
+ * Backend: @RequireStepUp('wallet.adjust','userId') + `reauthPassword` wajib
+ * di body (WalletAdjustDto @IsNotEmpty) (P0-6).
  */
 export function adjustWallet(
   userId: string,
-  input: { amount: number; type: WalletAdjustType; reason: string },
+  input: {
+    amount: number
+    type: WalletAdjustType
+    reason: string
+    /** Kata sandi admin — DIVERIFIKASI server-side. Wajib. */
+    reauthPassword: string
+  },
+  opts?: UserStepUpOpts,
 ): Promise<WalletAdjustResult> {
   const idempotencyKey =
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -372,11 +386,22 @@ export function adjustWallet(
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return adminHttp.post<WalletAdjustResult>(
     `/v1/admin/users/${encodeURIComponent(userId)}/wallet/adjust`,
-    { amount: input.amount, type: input.type, reason: input.reason, idempotencyKey },
-    // Backend hanya membaca header `Idempotency-Key` (interceptor menolak
-    // 400 IDEMPOTENCY_KEY_REQUIRED bila absen); field body dipertahankan
-    // untuk kompatibilitas DTO.
-    { headers: { "Idempotency-Key": idempotencyKey } },
+    {
+      amount: input.amount,
+      type: input.type,
+      reason: input.reason,
+      idempotencyKey,
+      reauthPassword: input.reauthPassword,
+    },
+    {
+      // Backend hanya membaca header `Idempotency-Key` (interceptor menolak
+      // 400 IDEMPOTENCY_KEY_REQUIRED bila absen); field body dipertahankan
+      // untuk kompatibilitas DTO.
+      headers: {
+        "Idempotency-Key": idempotencyKey,
+        ...(opts?.stepUpToken ? { [STEP_UP_HEADER]: opts.stepUpToken } : {}),
+      },
+    },
   )
 }
 

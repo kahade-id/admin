@@ -199,7 +199,7 @@ export default function OpsSettingsPage() {
   const doApprove = async (a: PendingApproval) => {
     if (isOwnProposal(a) || approvalBusyId) return
     const token = await stepUp.requestStepUp({
-      action: "ops-setting.approve",
+      action: "opsSetting.update",
       targetId: a.id,
       title: "Setujui perubahan setting",
       description: `Menyetujui perubahan ${a.key} yang diusulkan ${a.proposedBy ?? "admin lain"}. Aksi ini dicatat di audit.`,
@@ -222,7 +222,7 @@ export default function OpsSettingsPage() {
   const doReject = async (a: PendingApproval) => {
     if (approvalBusyId) return
     const token = await stepUp.requestStepUp({
-      action: "ops-setting.reject",
+      action: "opsSetting.update",
       targetId: a.id,
       title: "Tolak perubahan setting",
       description: `Menolak perubahan ${a.key} yang diusulkan ${a.proposedBy ?? "admin lain"}. Aksi ini dicatat di audit.`,
@@ -281,8 +281,15 @@ export default function OpsSettingsPage() {
     }
     setSaving(true)
     try {
+      const token = await stepUp.requestStepUp({
+        action: "opsSetting.update",
+        targetId: editing.key,
+        title: "Ubah pengaturan operasional",
+        description: `Ubah ${editing.key}. Aksi ini dicatat di audit.`,
+      })
+      if (!token) return
       // BAI-118: kirim versi yang ditampilkan saat dialog dibuka.
-      const result = await updateOpsSetting(editing.key, newValue.trim(), editing.version)
+      const result = await updateOpsSetting(editing.key, newValue.trim(), editing.version, token)
       // SEC-506: backend menjawab 202 + pendingApproval (two-person rule) —
       // perubahan BELUM berlaku; jangan anggap sukses.
       if (isUpdatePending(result)) {
@@ -320,7 +327,14 @@ export default function OpsSettingsPage() {
   const doResetSetting = async (s: OpsSettingView) => {
     setResettingKey(s.key)
     try {
-      const updated = await deleteOpsSetting(s.key)
+      const token = await stepUp.requestStepUp({
+        action: "opsSetting.update",
+        targetId: s.key,
+        title: "Hapus override setting",
+        description: `Hapus override ${s.key} — kembali ke default. Aksi ini dicatat di audit.`,
+      })
+      if (!token) return
+      const updated = await deleteOpsSetting(s.key, token)
       setSettings((prev) => prev.map((x) => (x.key === updated.key ? updated : x)))
       toast.show({ title: s.label, description: "Override panel dihapus — kembali ke default.", tone: "success" })
     } catch (e) {

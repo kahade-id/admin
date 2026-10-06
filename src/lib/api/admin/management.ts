@@ -404,8 +404,8 @@ export function certifyAccessReview(
 
 /* ------------------------- Handoff kasus ------------------------- */
 
-/** Jenis kasus yang bisa di-handoff; diperluas backend bila perlu. */
-export type HandoffCaseType = "USER" | "DISPUTE" | "KYC" | "TICKET" | string
+/** Jenis kasus yang bisa di-handoff. Backend hanya menerima lowercase: 'kyc'|'dispute'|'report'. */
+export type HandoffCaseType = "kyc" | "dispute" | "report" | "user" | string
 
 export type Handoff = {
   id: string
@@ -422,6 +422,8 @@ export type Handoff = {
 export type CreateHandoffInput = {
   caseType: HandoffCaseType
   caseId: string
+  /** ID admin pemberi — WAJIB oleh backend (CreateHandoffDto). Diisi dari sesi admin. */
+  fromAdminId: string
   toAdminId: string
   note: string
 }
@@ -436,10 +438,19 @@ export function listHandoffs(
 }
 
 /** POST /v1/admin/handoffs — catat handoff kasus ke petugas lain. */
+/**
+ * POST /v1/admin/handoffs — catat handoff kasus antar petugas.
+ * Backend (CreateHandoffDto): `caseType` lowercase @IsIn(['kyc','dispute','report']),
+ * `fromAdminId` WAJIB (P0-10).
+ */
 export function createHandoff(input: CreateHandoffInput): Promise<Handoff> {
-  return adminHttp.post<Handoff>("/v1/admin/handoffs", input, {
-    headers: idempotencyHeaders(),
-  })
+  return adminHttp.post<Handoff>(
+    "/v1/admin/handoffs",
+    { ...input, caseType: input.caseType.toLowerCase() },
+    {
+      headers: idempotencyHeaders(),
+    },
+  )
 }
 
 /** Beban kasus terbuka per petugas (angka sederhana untuk UI handoff). */

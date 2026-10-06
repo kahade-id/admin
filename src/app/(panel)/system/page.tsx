@@ -27,6 +27,7 @@ import { useToast } from "@/components/ui/toast"
 import { Select } from "@/components/admin/select"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
 // Batch 139 — H: fondasi admin web.
 import { AuditDiffPanel, type AuditEntryLike } from "@/components/admin/batch139/audit-diff"
 import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
@@ -130,6 +131,7 @@ function CheckRow({
 
 function ConfigSection({ reloadSignal }: { reloadSignal: number }) {
   const toast = useToast()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const [configs, setConfigs] = useState<AdminSystemConfig[]>([])
   const [pendingKeys, setPendingKeys] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
@@ -179,10 +181,18 @@ function ConfigSection({ reloadSignal }: { reloadSignal: number }) {
     }
     setSaving(true)
     try {
+      const token = await requestStepUp({
+        action: "systemConfig.update",
+        targetId: editing.key,
+        title: "Ubah config sistem",
+        description: `Ubah config "${editing.key}".`,
+      })
+      if (!token) return
       const res = await updateConfig(
         editing.key,
         value.trim(),
         description.trim() ? description.trim() : undefined,
+        { stepUpToken: token },
       )
       setEditing(null)
       if ("proposedValue" in res) {
@@ -305,6 +315,7 @@ function ConfigSection({ reloadSignal }: { reloadSignal: number }) {
           </Button>
         </div>
       </Dialog>
+      {stepUpDialog}
     </Section>
   )
 }
@@ -320,6 +331,7 @@ function PendingApprovalsSection({
   onChanged: () => void
 }) {
   const toast = useToast()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const [items, setItems] = useState<PendingConfigChange[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -352,7 +364,14 @@ function PendingApprovalsSection({
     if (!approving) return
     setApprovingNow(true)
     try {
-      await approveConfigChange(approving.key)
+      const token = await requestStepUp({
+        action: "systemConfig.update",
+        targetId: approving.key,
+        title: "Setujui perubahan config",
+        description: `Setujui perubahan config "${approving.key}".`,
+      })
+      if (!token) return
+      await approveConfigChange(approving.key, { stepUpToken: token })
       setApproving(null)
       toast.show({ title: "Perubahan disetujui dan diterapkan.", tone: "success" })
       void load()
@@ -522,6 +541,7 @@ function PendingApprovalsSection({
           </Button>
         </div>
       </Dialog>
+      {stepUpDialog}
     </Section>
   )
 }

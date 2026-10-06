@@ -20,6 +20,7 @@ import { EmptyState } from "@/components/ui/empty-state"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { userMessage } from "@/lib/api/response"
 import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import { formatDateTimeWIB, formatIDR, formatNumber } from "@/lib/format"
@@ -69,6 +70,7 @@ function VoucherDetailContent() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const toast = useToast()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const id = params.id
 
   const [detail, setDetail] = useState<AdminVoucherDetail | null>(null)
@@ -100,7 +102,16 @@ function VoucherDetailContent() {
   async function handleReactivate() {
     setReactivating(true)
     try {
-      const updated = await reactivateVoucher(id, reactivateKey ?? undefined)
+      const token = await requestStepUp({
+        action: "voucher.reactivate",
+        targetId: id,
+        title: "Aktifkan kembali voucher",
+        description: `Aktifkan kembali voucher "${detail?.code ?? id}".`,
+      })
+      if (!token) return
+      const updated = await reactivateVoucher(id, reactivateKey ?? undefined, {
+        stepUpToken: token,
+      })
       setDetail((prev) => (prev ? { ...prev, ...updated, isActive: true } : prev))
       setReactivateOpen(false)
       setReactivateKey(null)
@@ -115,7 +126,16 @@ function VoucherDetailContent() {
   async function handleDeactivate() {
     setDeactivating(true)
     try {
-      const updated = await deactivateVoucher(id, deactivateKey ?? undefined)
+      const token = await requestStepUp({
+        action: "voucher.deactivate",
+        targetId: id,
+        title: "Nonaktifkan voucher",
+        description: `Nonaktifkan voucher "${detail?.code ?? id}".`,
+      })
+      if (!token) return
+      const updated = await deactivateVoucher(id, deactivateKey ?? undefined, {
+        stepUpToken: token,
+      })
       setDetail((prev) => (prev ? { ...prev, ...updated, isActive: false } : prev))
       setDeactivateOpen(false)
       toast.show({ title: "Voucher dinonaktifkan.", tone: "success" })
@@ -360,6 +380,7 @@ function VoucherDetailContent() {
           </ul>
         </div>
       </Dialog>
+      {stepUpDialog}
     </div>
   )
 }

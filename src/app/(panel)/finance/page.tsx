@@ -34,6 +34,7 @@ import { useAuth } from "@/lib/auth-context"
 
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { Select } from "@/components/admin/select"
 // SEC-503: step-up server-side per aksi sebelum approve/tolak penarikan —
 // tiap aksi meminta kata sandi baru; server menerbitkan token sekali pakai
@@ -231,6 +232,7 @@ export default function FinancePage() {
 function FinancePageInner() {
   const toast = useToast()
   const { role } = useAuth()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   // BAD-018: tab "Jejak Audit" & "Rekonsiliasi" backend-nya SUPER_ADMIN-only
   // (403 untuk FINANCE_ADMIN) — sembunyikan dari role lain agar tidak ada
   // tombol yang selalu gagal.
@@ -378,7 +380,16 @@ function FinancePageInner() {
           tone: "success",
         })
       } else {
-        await rejectWithdrawal(actionTx.txId, trimmed, actionKeyFor(actionTx.txId, actionKind))
+        const token = await requestStepUp({
+          action: "withdrawal.reject",
+          targetId: actionTx.txId,
+          title: "Tolak penarikan",
+          description: `Tolak penarikan ${formatRupiah(actionTx.amount)} dan kembalikan saldo ke wallet pengguna.`,
+        })
+        if (!token) return
+        await rejectWithdrawal(actionTx.txId, trimmed, actionKeyFor(actionTx.txId, actionKind), {
+          stepUpToken: token,
+        })
         toast.show({
           title: "Penarikan ditolak, saldo dikembalikan",
           description: formatRupiah(actionTx.amount),
@@ -1248,6 +1259,7 @@ function FinancePageInner() {
       {/* H02: dialog kustomisasi kolom */}
       <ColumnCustomizer prefs={pendingCols} />
       <ColumnCustomizer prefs={txCols} />
+      {stepUpDialog}
     </RoleGate>
   )
 }

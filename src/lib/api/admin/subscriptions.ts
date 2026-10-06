@@ -21,6 +21,14 @@
  */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
+
+/** Opsi step-up untuk mutasi subscription — backend mewajibkan @RequireStepUp. */
+export type SubscriptionStepUpOpts = { stepUpToken?: string }
+
+function stepUpHeader(opts?: SubscriptionStepUpOpts): Record<string, string> {
+  return opts?.stepUpToken ? { [STEP_UP_HEADER]: opts.stepUpToken } : {}
+}
 
 export type SubscriptionStatus =
   | "ACTIVE"
@@ -176,6 +184,7 @@ export function cancelSubscription(
  */
 export function grantSubscription(
   input: GrantSubscriptionInput,
+  opts?: SubscriptionStepUpOpts,
 ): Promise<GrantSubscriptionResult> {
   return adminHttp.post<GrantSubscriptionResult>(
     "/v1/admin/subscriptions/grant",
@@ -185,6 +194,7 @@ export function grantSubscription(
       durationDays: input.durationDays,
       reason: input.reason.trim(),
     },
+    { headers: stepUpHeader(opts) },
   )
 }
 
@@ -241,9 +251,10 @@ export function listPromoCodes(
   )
 }
 
-/** Buat kode promo baru. */
+/** Buat kode promo baru. Backend: @RequireStepUp('subscription.promoCode.create'). */
 export function createPromoCode(
   input: CreatePromoCodeInput,
+  opts?: SubscriptionStepUpOpts,
 ): Promise<PromoCode> {
   const body: Record<string, unknown> = {
     code: input.code.trim(),
@@ -253,21 +264,37 @@ export function createPromoCode(
   if (input.assignedUserId?.trim()) body.assignedUserId = input.assignedUserId.trim()
   if (input.expiresAt) body.expiresAt = input.expiresAt
   if (input.note?.trim()) body.note = input.note.trim()
-  return adminHttp.post<PromoCode>("/v1/admin/subscriptions/promo-codes", body)
+  return adminHttp.post<PromoCode>("/v1/admin/subscriptions/promo-codes", body, {
+    headers: stepUpHeader(opts),
+  })
 }
 
-/** Nonaktifkan kode promo (status → DISABLED). */
-export function disablePromoCode(id: string): Promise<PromoCode> {
+/**
+ * Nonaktifkan kode promo (status → DISABLED).
+ * Backend: @RequireStepUp('subscription.promoCode.toggle','id').
+ */
+export function disablePromoCode(
+  id: string,
+  opts?: SubscriptionStepUpOpts,
+): Promise<PromoCode> {
   return adminHttp.post<PromoCode>(
     `/v1/admin/subscriptions/promo-codes/${encodeURIComponent(id)}/disable`,
     {},
+    { headers: stepUpHeader(opts) },
   )
 }
 
-/** Aktifkan kembali kode promo (status → ACTIVE). */
-export function enablePromoCode(id: string): Promise<PromoCode> {
+/**
+ * Aktifkan kembali kode promo (status → ACTIVE).
+ * Backend: @RequireStepUp('subscription.promoCode.toggle','id').
+ */
+export function enablePromoCode(
+  id: string,
+  opts?: SubscriptionStepUpOpts,
+): Promise<PromoCode> {
   return adminHttp.post<PromoCode>(
     `/v1/admin/subscriptions/promo-codes/${encodeURIComponent(id)}/enable`,
     {},
+    { headers: stepUpHeader(opts) },
   )
 }

@@ -26,6 +26,7 @@ import { useToast } from "@/components/ui/toast"
 import { Select } from "@/components/admin/select"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { cn } from "@/lib/cn"
 import { formatDateTimeWIB, formatIDR, formatNumber } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
@@ -327,6 +328,7 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
 
 function VouchersTab() {
   const toast = useToast()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<"all" | "true" | "false">("all")
   const [search, setSearch] = useState("")
@@ -410,8 +412,14 @@ function VouchersTab() {
   async function handleCreate(input: CreateVoucherInput) {
     setCreating(true)
     try {
+      const token = await requestStepUp({
+        action: "voucher.create",
+        title: "Buat voucher",
+        description: `Buat voucher "${input.code}".`,
+      })
+      if (!token) return
       // ADM-219: satu kunci per sesi buat; retry dialog memakai kunci yang sama.
-      await createVoucher(input, createKey ?? undefined)
+      await createVoucher(input, createKey ?? undefined, { stepUpToken: token })
       setCreateOpen(false)
       toast.show({ title: "Voucher dibuat.", tone: "success" })
       void load(1, statusFilter, search)
@@ -424,10 +432,17 @@ function VouchersTab() {
     if (!reactivating) return
     setReactivatingNow(true)
     try {
-      await reactivateVoucher(
-        reactivating.voucherId ?? reactivating.id,
-        reactivateKey ?? undefined,
-      )
+      const voucherId = reactivating.voucherId ?? reactivating.id
+      const token = await requestStepUp({
+        action: "voucher.reactivate",
+        targetId: voucherId,
+        title: "Aktifkan kembali voucher",
+        description: `Aktifkan kembali voucher "${reactivating.code}".`,
+      })
+      if (!token) return
+      await reactivateVoucher(voucherId, reactivateKey ?? undefined, {
+        stepUpToken: token,
+      })
       setReactivating(null)
       setReactivateKey(null)
       toast.show({ title: "Voucher diaktifkan kembali.", tone: "success" })
@@ -443,10 +458,17 @@ function VouchersTab() {
     if (!deactivating) return
     setDeactivatingNow(true)
     try {
-      await deactivateVoucher(
-        deactivating.voucherId ?? deactivating.id,
-        deactivateKey ?? undefined,
-      )
+      const voucherId = deactivating.voucherId ?? deactivating.id
+      const token = await requestStepUp({
+        action: "voucher.deactivate",
+        targetId: voucherId,
+        title: "Nonaktifkan voucher",
+        description: `Nonaktifkan voucher "${deactivating.code}".`,
+      })
+      if (!token) return
+      await deactivateVoucher(voucherId, deactivateKey ?? undefined, {
+        stepUpToken: token,
+      })
       setDeactivating(null)
       setDeactivateKey(null)
       toast.show({ title: "Voucher dinonaktifkan.", tone: "success" })
@@ -734,6 +756,7 @@ function VouchersTab() {
         onConfirm={handleReactivate}
         loading={reactivatingNow}
       />
+      {stepUpDialog}
     </div>
   )
 }
@@ -949,6 +972,7 @@ function CampaignForm({
 export function CampaignsTab() {
   const toast = useToast()
   const router = useRouter()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<"" | AdminCampaignStatus>("")
   const [creatorFilter, setCreatorFilter] = useState("")
@@ -1045,7 +1069,13 @@ export function CampaignsTab() {
   async function handleCreate(input: CreateCampaignInput) {
     setCreating(true)
     try {
-      await createCampaign(input)
+      const token = await requestStepUp({
+        action: "campaign.create",
+        title: "Buat kampanye",
+        description: `Buat kampanye "${input.name}".`,
+      })
+      if (!token) return
+      await createCampaign(input, { stepUpToken: token })
       setCreateOpen(false)
       toast.show({ title: "Kampanye dibuat.", tone: "success" })
       void load(1, filters)
@@ -1059,7 +1089,14 @@ export function CampaignsTab() {
     const id = campaignKey(duplicateTarget)
     setDuplicating(true)
     try {
-      const dup = await duplicateCampaign(id)
+      const token = await requestStepUp({
+        action: "campaign.duplicate",
+        targetId: id,
+        title: "Duplikasi kampanye",
+        description: `Duplikasi kampanye "${duplicateTarget.name}" ke draf baru.`,
+      })
+      if (!token) return
+      const dup = await duplicateCampaign(id, { stepUpToken: token })
       setDuplicateTarget(null)
       toast.show({ title: "Kampanye diduplikasi ke draf.", tone: "success" })
       void load(1, filters)
@@ -1340,6 +1377,7 @@ export function CampaignsTab() {
         onConfirm={handleDuplicate}
         loading={duplicating}
       />
+      {stepUpDialog}
     </div>
   )
 }

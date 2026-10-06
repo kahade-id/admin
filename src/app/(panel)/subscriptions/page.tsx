@@ -32,6 +32,7 @@ import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { Select } from "@/components/admin/select"
 import {
   cancelSubscription,
@@ -536,6 +537,7 @@ function grantUserLabel(u: AdminUserSummary): string {
 
 function GrantForm({ onDone }: { onDone: () => void }) {
   const toast = useToast()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const [query, setQuery] = useState("")
   const debouncedQuery = useDebouncedValue(query, USER_SEARCH_DEBOUNCE_MS)
   const [searching, setSearching] = useState(false)
@@ -591,12 +593,21 @@ function GrantForm({ onDone }: { onDone: () => void }) {
     setConfirmOpen(false)
     setSubmitting(true)
     try {
-      await grantSubscription({
-        userId: userId.trim(),
-        plan,
-        durationDays: duration,
-        reason: reason.trim(),
+      const token = await requestStepUp({
+        action: "subscription.grant",
+        title: "Beri subscription manual",
+        description: `Beri plan ${PLAN_LABEL[plan]} selama ${duration} hari ke user.`,
       })
+      if (!token) return
+      await grantSubscription(
+        {
+          userId: userId.trim(),
+          plan,
+          durationDays: duration,
+          reason: reason.trim(),
+        },
+        { stepUpToken: token },
+      )
       toast.show({
         title: "Subscription diberikan",
         description: `Plan ${PLAN_LABEL[plan]} selama ${duration} hari.`,
@@ -713,6 +724,7 @@ function GrantForm({ onDone }: { onDone: () => void }) {
         loading={submitting}
         onConfirm={() => void handleSubmit()}
       />
+      {stepUpDialog}
     </div>
   )
 }
@@ -733,6 +745,7 @@ function promoRedemptions(p: PromoCode): string {
 
 function PromoCodesPanel() {
   const toast = useToast()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const [rows, setRows] = useState<PromoCode[]>([])
   const [loading, setLoading] = useState(true)
   const [actingId, setActingId] = useState<string | null>(null)
@@ -778,14 +791,23 @@ function PromoCodesPanel() {
     if (!formValid || creating) return
     setCreating(true)
     try {
-      await createPromoCode({
-        code: code.trim().toUpperCase(),
-        durationDays: Number(durationDays),
-        maxRedemptions:
-          maxRedemptions.trim() === "" ? null : Number(maxRedemptions),
-        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
-        note: note.trim() || undefined,
+      const token = await requestStepUp({
+        action: "subscription.promoCode.create",
+        title: "Buat kode promo",
+        description: `Buat kode promo "${code.trim().toUpperCase()}".`,
       })
+      if (!token) return
+      await createPromoCode(
+        {
+          code: code.trim().toUpperCase(),
+          durationDays: Number(durationDays),
+          maxRedemptions:
+            maxRedemptions.trim() === "" ? null : Number(maxRedemptions),
+          expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+          note: note.trim() || undefined,
+        },
+        { stepUpToken: token },
+      )
       toast.show({
         title: "Kode promo dibuat",
         description: code.trim().toUpperCase(),
@@ -812,8 +834,15 @@ function PromoCodesPanel() {
     if (actingId) return
     setActingId(p.id)
     try {
-      if (String(p.status) === "ACTIVE") await disablePromoCode(p.id)
-      else await enablePromoCode(p.id)
+      const token = await requestStepUp({
+        action: "subscription.promoCode.toggle",
+        targetId: p.id,
+        title: String(p.status) === "ACTIVE" ? "Nonaktifkan kode promo" : "Aktifkan kode promo",
+        description: `Ubah status kode promo "${p.code}".`,
+      })
+      if (!token) return
+      if (String(p.status) === "ACTIVE") await disablePromoCode(p.id, { stepUpToken: token })
+      else await enablePromoCode(p.id, { stepUpToken: token })
       toast.show({
         title: String(p.status) === "ACTIVE" ? "Kode dinonaktifkan" : "Kode diaktifkan",
         description: p.code,
@@ -972,6 +1001,7 @@ function PromoCodesPanel() {
           />
         )}
       </div>
+      {stepUpDialog}
     </div>
   )
 }

@@ -2,10 +2,22 @@
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import { newIdempotencyKey } from "@/lib/api/admin/finance"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
+
+/** Opsi step-up untuk mutasi voucher — backend mewajibkan @RequireStepUp. */
+export type VoucherStepUpOpts = { stepUpToken?: string }
+
+function stepUpHeader(opts?: VoucherStepUpOpts): Record<string, string> {
+  return opts?.stepUpToken ? { [STEP_UP_HEADER]: opts.stepUpToken } : {}
+}
 
 /** Header idempotency untuk aksi voucher: satu kunci stabil per sesi aksi. */
-const idemHeaders = (key?: string): Record<string, string> => ({
+const idemHeaders = (
+  key?: string,
+  opts?: VoucherStepUpOpts,
+): Record<string, string> => ({
   "Idempotency-Key": key ?? newIdempotencyKey(),
+  ...stepUpHeader(opts),
 })
 
 export type AdminVoucherType =
@@ -97,13 +109,17 @@ export function listVouchers(
   })
 }
 
-/** POST /v1/admin/vouchers — buat voucher baru (idempoten, ADM-219). */
+/**
+ * POST /v1/admin/vouchers — buat voucher baru (idempoten, ADM-219).
+ * Backend: @RequireStepUp('voucher.create').
+ */
 export function createVoucher(
   input: CreateVoucherInput,
   idempotencyKey?: string,
+  opts?: VoucherStepUpOpts,
 ): Promise<AdminVoucherItem> {
   return adminHttp.post<AdminVoucherItem>("/v1/admin/vouchers", input, {
-    headers: idemHeaders(idempotencyKey),
+    headers: idemHeaders(idempotencyKey, opts),
   })
 }
 
@@ -114,15 +130,19 @@ export function getVoucherDetail(voucherId: string): Promise<AdminVoucherDetail>
   )
 }
 
-/** POST /v1/admin/vouchers/:voucherId/deactivate — nonaktifkan voucher (idempoten, ADM-219). */
+/**
+ * POST /v1/admin/vouchers/:voucherId/deactivate — nonaktifkan voucher (idempoten, ADM-219).
+ * Backend: @RequireStepUp('voucher.deactivate','voucherId').
+ */
 export function deactivateVoucher(
   voucherId: string,
   idempotencyKey?: string,
+  opts?: VoucherStepUpOpts,
 ): Promise<AdminVoucherItem> {
   return adminHttp.post<AdminVoucherItem>(
     `/v1/admin/vouchers/${encodeURIComponent(voucherId)}/deactivate`,
     {},
-    { headers: idemHeaders(idempotencyKey) },
+    { headers: idemHeaders(idempotencyKey, opts) },
   )
 }
 
@@ -130,14 +150,16 @@ export function deactivateVoucher(
  * POST /v1/admin/vouchers/:voucherId/reactivate — aktifkan kembali voucher
  * yang dinonaktifkan (ADM-218). Hanya untuk voucher nonaktif yang belum
  * kedaluwarsa; fail-closed di backend. Idempoten (ADM-219).
+ * Backend: @RequireStepUp('voucher.reactivate','voucherId').
  */
 export function reactivateVoucher(
   voucherId: string,
   idempotencyKey?: string,
+  opts?: VoucherStepUpOpts,
 ): Promise<AdminVoucherItem> {
   return adminHttp.post<AdminVoucherItem>(
     `/v1/admin/vouchers/${encodeURIComponent(voucherId)}/reactivate`,
     {},
-    { headers: idemHeaders(idempotencyKey) },
+    { headers: idemHeaders(idempotencyKey, opts) },
   )
 }

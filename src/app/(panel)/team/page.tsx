@@ -287,7 +287,7 @@ function TeamPageContent() {
   function stepUpActionFor(): { action: string; targetId: string } | null {
     if (!confirm) return null
     const { kind, admin } = confirm
-    if (kind === "reset-2fa") return { action: "admin.reset-2fa", targetId: admin.id }
+    if (kind === "reset-2fa") return { action: "admin.reset2fa", targetId: admin.id }
     if (kind === "delete") return { action: "admin.delete", targetId: admin.id }
     return {
       action: isLocked(admin) ? "admin.unlock" : "admin.lock",

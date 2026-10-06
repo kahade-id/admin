@@ -1,6 +1,15 @@
 /** Kahade admin — manajemen kampanye voucher (CRUD + aktivasi/jeda). */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { newIdempotencyKey } from "@/lib/api/admin/finance"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
+
+/** Opsi step-up untuk mutasi kampanye — backend mewajibkan @RequireStepUp. */
+export type CampaignStepUpOpts = { stepUpToken?: string }
+
+function stepUpHeader(opts?: CampaignStepUpOpts): Record<string, string> {
+  return opts?.stepUpToken ? { [STEP_UP_HEADER]: opts.stepUpToken } : {}
+}
 
 export type AdminCampaignType = "FEE_PROMO" | "SUBSCRIPTION_DISCOUNT" | "CASHBACK"
 
@@ -122,11 +131,14 @@ export function listCampaigns(params?: {
   })
 }
 
-/** POST /v1/admin/campaigns — buat kampanye baru. */
+/** POST /v1/admin/campaigns — buat kampanye baru. Backend: @RequireStepUp('campaign.create'). */
 export function createCampaign(
   input: CreateCampaignInput,
+  opts?: CampaignStepUpOpts,
 ): Promise<AdminCampaignItem> {
-  return adminHttp.post<AdminCampaignItem>("/v1/admin/campaigns", input)
+  return adminHttp.post<AdminCampaignItem>("/v1/admin/campaigns", input, {
+    headers: stepUpHeader(opts),
+  })
 }
 
 /** GET /v1/admin/campaigns/:campaignId — detail kampanye. */
@@ -136,21 +148,30 @@ export function getCampaign(campaignId: string): Promise<AdminCampaignItem> {
   )
 }
 
-/** PUT /v1/admin/campaigns/:campaignId — ubah kampanye. */
+/**
+ * PUT /v1/admin/campaigns/:campaignId — ubah kampanye.
+ * Backend: @RequireStepUp('campaign.update','campaignId'); { changeReason } min 5 (P1-8).
+ */
 export function updateCampaign(
   campaignId: string,
-  input: UpdateCampaignInput,
+  input: UpdateCampaignInput & { changeReason: string },
+  opts?: CampaignStepUpOpts,
 ): Promise<AdminCampaignItem> {
   return adminHttp.put<AdminCampaignItem>(
     `/v1/admin/campaigns/${encodeURIComponent(campaignId)}`,
     input,
+    { headers: stepUpHeader(opts) },
   )
 }
 
-/** DELETE /v1/admin/campaigns/:campaignId — hapus kampanye. */
-export function deleteCampaign(campaignId: string): Promise<{ message: string }> {
+/** DELETE /v1/admin/campaigns/:campaignId — hapus kampanye. Backend: @RequireStepUp('campaign.delete','campaignId'). */
+export function deleteCampaign(
+  campaignId: string,
+  opts?: CampaignStepUpOpts,
+): Promise<{ message: string }> {
   return adminHttp.delete<{ message: string }>(
     `/v1/admin/campaigns/${encodeURIComponent(campaignId)}`,
+    { headers: stepUpHeader(opts) },
   )
 }
 
@@ -158,40 +179,56 @@ export function deleteCampaign(campaignId: string): Promise<{ message: string }>
  * POST /v1/admin/campaigns/:campaignId/activate — aktifkan kampanye dan
  * terbitkan voucher personal untuk pengguna yang memenuhi syarat.
  * BAI-007: backend mewajibkan { reason } (min 5 karakter).
+ * Backend: @RequireStepUp('campaign.activate','campaignId') + @Idempotency() (P1-7).
  */
 export function activateCampaign(
   campaignId: string,
   reason: string,
+  idempotencyKey?: string,
+  opts?: CampaignStepUpOpts,
 ): Promise<CampaignActivationResult> {
   return adminHttp.post<CampaignActivationResult>(
     `/v1/admin/campaigns/${encodeURIComponent(campaignId)}/activate`,
     { reason },
+    {
+      headers: {
+        "Idempotency-Key": idempotencyKey ?? newIdempotencyKey(),
+        ...stepUpHeader(opts),
+      },
+    },
   )
 }
 
 /**
  * POST /v1/admin/campaigns/:campaignId/pause — jeda kampanye.
  * BAI-007: backend mewajibkan { reason } (min 5 karakter).
+ * Backend: @RequireStepUp('campaign.pause','campaignId').
  */
 export function pauseCampaign(
   campaignId: string,
   reason: string,
+  opts?: CampaignStepUpOpts,
 ): Promise<AdminCampaignItem> {
   return adminHttp.post<AdminCampaignItem>(
     `/v1/admin/campaigns/${encodeURIComponent(campaignId)}/pause`,
     { reason },
+    { headers: stepUpHeader(opts) },
   )
 }
 
 /**
  * POST /v1/admin/campaigns/:campaignId/duplicate — duplikasi kampanye ke
  * draf baru. Backend mengembalikan kampanye draf hasil duplikasi.
+ * Backend: @RequireStepUp('campaign.duplicate','campaignId').
  */
 export function duplicateCampaign(
   campaignId: string,
+  opts?: CampaignStepUpOpts,
 ): Promise<AdminCampaignItem> {
   return adminHttp.post<AdminCampaignItem>(
     `/v1/admin/campaigns/${encodeURIComponent(campaignId)}/duplicate`,
+    {},
+    { headers: stepUpHeader(opts) },
   )
 }
 

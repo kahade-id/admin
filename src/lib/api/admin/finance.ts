@@ -26,6 +26,14 @@ import {
 } from "@/lib/api/admin-client"
 import { API_BASE_URL } from "@/lib/api/config"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
+
+/** Opsi step-up untuk mutasi finance — backend mewajibkan @RequireStepUp. */
+export type FinanceStepUpOpts = { stepUpToken?: string }
+
+function stepUpHeader(opts?: FinanceStepUpOpts): Record<string, string> {
+  return opts?.stepUpToken ? { [STEP_UP_HEADER]: opts.stepUpToken } : {}
+}
 
 export type WalletTransactionType =
   | "TOP_UP"
@@ -422,16 +430,23 @@ export function approveWithdrawal(
 /**
  * Tolak penarikan pending dan refund saldo (idempoten).
  * `reason` wajib (min 5 karakter, maks 1000) sesuai WithdrawalRejectDto.
+ * Backend: @RequireStepUp('withdrawal.reject','txId') (P0-4).
  */
 export function rejectWithdrawal(
   txId: string,
   reason: string,
   idempotencyKey?: string,
+  opts?: FinanceStepUpOpts,
 ): Promise<WithdrawalActionResult> {
   return adminHttp.post<WithdrawalActionResult>(
     `/v1/admin/finance/withdrawals/${encodeURIComponent(txId)}/reject`,
     { adminNote: reason },
-    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
+    {
+      headers: {
+        "Idempotency-Key": idempotencyKey ?? newIdempotencyKey(),
+        ...stepUpHeader(opts),
+      },
+    },
   )
 }
 
@@ -682,9 +697,13 @@ export type RequestCorrectionInput = {
  */
 export function requestCorrection(
   input: RequestCorrectionInput,
+  opts?: FinanceStepUpOpts,
 ): Promise<LedgerCorrection> {
   return adminHttp.post<LedgerCorrection>("/v1/admin/finance/corrections", input, {
-    headers: { "Idempotency-Key": input.idempotencyKey },
+    headers: {
+      "Idempotency-Key": input.idempotencyKey,
+      ...stepUpHeader(opts),
+    },
   })
 }
 
@@ -713,11 +732,17 @@ export function decideCorrection(
   id: string,
   body: { decision: CorrectionDecision; notes?: string; reauthPassword: string },
   idempotencyKey?: string,
+  opts?: FinanceStepUpOpts,
 ): Promise<LedgerCorrection> {
   return adminHttp.post<LedgerCorrection>(
     `/v1/admin/finance/corrections/${encodeURIComponent(id)}/approve`,
     body,
-    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
+    {
+      headers: {
+        "Idempotency-Key": idempotencyKey ?? newIdempotencyKey(),
+        ...stepUpHeader(opts),
+      },
+    },
   )
 }
 

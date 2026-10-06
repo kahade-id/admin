@@ -101,15 +101,25 @@ export function isFinancialKey(key: string): boolean {
   return /fee|limit|dana|disburs|wallet|withdraw|payout/i.test(key)
 }
 
+/**
+ * PUT /v1/admin/ops-settings/:key — ubah nilai setting operasional.
+ * Backend: @RequireStepUp('opsSetting.update','key') (P0-9).
+ */
 export async function updateOpsSetting(
   key: string,
   value: string,
   expectedVersion?: number,
+  stepUpToken?: string,
 ): Promise<OpsSettingView | UpdateOpsSettingResult> {
-  const res = await adminHttp.put(`/v1/admin/ops-settings/${encodeURIComponent(key)}`, {
-    value,
-    ...(expectedVersion !== undefined ? { expectedVersion } : {}),
-  })
+  const headers = stepUpToken ? stepUpHeaders(stepUpToken) : {}
+  const res = await adminHttp.put(
+    `/v1/admin/ops-settings/${encodeURIComponent(key)}`,
+    {
+      value,
+      ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+    },
+    { headers },
+  )
   // SEC-506: backend bisa menjawab 202 + { pendingApproval } (two-person
   // rule) alih-alih { setting }. adminHttp meng-unwrap envelope backend.
   const body = res as { pendingApproval?: PendingApproval; setting?: OpsSettingView }
@@ -122,9 +132,17 @@ export async function updateOpsSetting(
 /**
  * BAI-104: hapus override panel — nilai kembali ke default/.env.
  * Diaudit sebagai DELETE di backend (SUPER_ADMIN).
+ * Backend: @RequireStepUp('opsSetting.update','key') (P0-9).
  */
-export async function deleteOpsSetting(key: string): Promise<OpsSettingView> {
-  const res = await adminHttp.delete(`/v1/admin/ops-settings/${encodeURIComponent(key)}`)
+export async function deleteOpsSetting(
+  key: string,
+  stepUpToken?: string,
+): Promise<OpsSettingView> {
+  const headers = stepUpToken ? stepUpHeaders(stepUpToken) : {}
+  const res = await adminHttp.delete(
+    `/v1/admin/ops-settings/${encodeURIComponent(key)}`,
+    { headers },
+  )
   return (res as { setting: OpsSettingView }).setting
 }
 

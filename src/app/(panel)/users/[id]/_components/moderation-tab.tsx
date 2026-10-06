@@ -339,6 +339,7 @@ function ModerationTimeline({ userId }: { userId: string }) {
 
 function HandoffSection({ userId }: { userId: string }) {
   const toast = useToast()
+  const { profile } = useAuth()
   const [admins, setAdmins] = useState<AdminUserItem[]>([])
   const [toAdminId, setToAdminId] = useState("")
   const [note, setNote] = useState("")
@@ -355,7 +356,7 @@ function HandoffSection({ userId }: { userId: string }) {
     try {
       const [a, h, w] = await Promise.all([
         listAdmins({ limit: 100 }),
-        listHandoffs({ caseType: "USER", caseId: userId, limit: 50 }),
+        listHandoffs({ caseType: "user", caseId: userId, limit: 50 }),
         getHandoffWorkload(),
       ])
       setAdmins((a.data ?? []).filter((x) => x.isActive))
@@ -385,7 +386,18 @@ function HandoffSection({ userId }: { userId: string }) {
     setNoteError(null)
     setSubmitting(true)
     try {
-      await createHandoff({ caseType: "USER", caseId: userId, toAdminId, note: n })
+      const fromAdminId = profile?.id
+      if (!fromAdminId) {
+        setNoteError("Sesi admin tidak valid — muat ulang halaman.")
+        return
+      }
+      await createHandoff({
+        caseType: "user",
+        caseId: userId,
+        fromAdminId,
+        toAdminId,
+        note: n,
+      })
       toast.show({ title: "Handoff dicatat.", tone: "success" })
       setNote("")
       setToAdminId("")

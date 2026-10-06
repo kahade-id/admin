@@ -24,6 +24,7 @@ import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
 import { Select } from "@/components/admin/select"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { ActionLocationHistory } from "@/components/admin/action-location-view"
 import { useAuth } from "@/lib/auth-context"
 import {
@@ -315,7 +316,10 @@ export default function UserDetailPage() {
   const [adjustType, setAdjustType] = useState<WalletAdjustType>("CREDIT")
   const [adjustAmount, setAdjustAmount] = useState("")
   const [adjustReason, setAdjustReason] = useState("")
+  // Backend mewajibkan reauthPassword di body (WalletAdjustDto @IsNotEmpty, P0-6).
+  const [adjustPassword, setAdjustPassword] = useState("")
   const [adjustError, setAdjustError] = useState<string | null>(null)
+  const { requestStepUp, stepUpDialog } = useStepUp()
 
   const loadAll = useCallback(async () => {
     if (!userId) return
@@ -457,10 +461,25 @@ export default function UserDetailPage() {
   const handleAdjustConfirm = async () => {
     const amount = Number(adjustAmount.replace(/[^0-9]/g, ""))
     const reason = adjustReason.trim()
+    if (!adjustPassword) {
+      setAdjustError("Masukkan kata sandi Anda untuk verifikasi.")
+      return
+    }
     setAdjustConfirmOpen(false)
     setActing("adjust")
     try {
-      const res = await adjustWallet(userId, { amount, type: adjustType, reason })
+      const token = await requestStepUp({
+        action: "wallet.adjust",
+        targetId: userId,
+        title: "Sesuaikan saldo",
+        description: `${adjustType === "CREDIT" ? "Menambah" : "Mengurangi"} saldo ${displayName} sebesar ${rp(adjustAmountNum)}.`,
+      })
+      if (!token) return
+      const res = await adjustWallet(
+        userId,
+        { amount, type: adjustType, reason, reauthPassword: adjustPassword },
+        { stepUpToken: token },
+      )
       await loadAll()
       toast.show({
         title: "Saldo disesuaikan",
@@ -469,6 +488,7 @@ export default function UserDetailPage() {
       })
       setAdjustAmount("")
       setAdjustReason("")
+      setAdjustPassword("")
     } catch (e) {
       fail("Penyesuaian saldo gagal", e)
     } finally {
@@ -1598,6 +1618,18 @@ export default function UserDetailPage() {
             }}
             maxLength={1000}
           />
+          <Input
+            label="Kata sandi Anda (verifikasi)"
+            type="password"
+            required
+            placeholder="Wajib — diverifikasi server"
+            value={adjustPassword}
+            onChange={(e) => {
+              setAdjustPassword(e.target.value)
+              setAdjustError(null)
+            }}
+            autoComplete="current-password"
+          />
         </div>
       </Dialog>
 
@@ -1676,6 +1708,7 @@ export default function UserDetailPage() {
         loading={acting === "gray-restore"}
         onConfirm={handleGrayRestoreConfirm}
       />
+      {stepUpDialog}
     </RoleGate>
   )
 }

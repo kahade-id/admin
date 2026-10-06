@@ -1,6 +1,14 @@
 /** Kahade admin — sistem: config, approval config finansial, broadcast, webhook dead-letter, audit log. */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
+
+/** Opsi step-up untuk mutasi config — backend mewajibkan @RequireStepUp. */
+export type SystemStepUpOpts = { stepUpToken?: string }
+
+function stepUpHeader(opts?: SystemStepUpOpts): Record<string, string> {
+  return opts?.stepUpToken ? { [STEP_UP_HEADER]: opts.stepUpToken } : {}
+}
 
 export type SystemConfigDataType = "STRING" | "NUMBER" | "BOOLEAN" | "JSON"
 
@@ -122,16 +130,23 @@ const idempotencyHeaders = (): Record<string, string> => ({
  * PUT /v1/admin/system/configs/:key — ubah nilai config.
  * Untuk config finansial, perubahan disimpan sebagai pending dan butuh
  * persetujuan admin lain sebelum berlaku.
+ * Backend: @RequireStepUp('systemConfig.update','key') (P0-8).
  */
 export function updateConfig(
   key: string,
   value: string,
   description?: string,
+  opts?: SystemStepUpOpts,
 ): Promise<AdminSystemConfig | PendingConfigChange> {
   return adminHttp.put<AdminSystemConfig | PendingConfigChange>(
     `/v1/admin/system/configs/${encodeURIComponent(key)}`,
     description !== undefined ? { value, description } : { value },
-    { headers: idempotencyHeaders() },
+    {
+      headers: {
+        ...idempotencyHeaders(),
+        ...stepUpHeader(opts),
+      },
+    },
   )
 }
 
@@ -142,14 +157,24 @@ export function listPendingConfigChanges(): Promise<PendingConfigChange[]> {
   )
 }
 
-/** POST /v1/admin/system/configs/:key/approve — setujui perubahan config (harus admin berbeda dari pengusul). */
+/**
+ * POST /v1/admin/system/configs/:key/approve — setujui perubahan config
+ * (harus admin berbeda dari pengusul).
+ * Backend: @RequireStepUp('systemConfig.update','key') (P0-8).
+ */
 export function approveConfigChange(
   key: string,
+  opts?: SystemStepUpOpts,
 ): Promise<AdminSystemConfig | { message: string }> {
   return adminHttp.post<AdminSystemConfig | { message: string }>(
     `/v1/admin/system/configs/${encodeURIComponent(key)}/approve`,
     undefined,
-    { headers: idempotencyHeaders() },
+    {
+      headers: {
+        ...idempotencyHeaders(),
+        ...stepUpHeader(opts),
+      },
+    },
   )
 }
 

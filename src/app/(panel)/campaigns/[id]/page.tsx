@@ -23,6 +23,7 @@ import { TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { userMessage, ApiError } from "@/lib/api/response"
 import { formatDateTimeWIB, formatIDR, formatNumber } from "@/lib/format"
 import {
@@ -113,6 +114,7 @@ function CampaignDetailContent() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
   const toast = useToast()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const id = params.id
 
   const [campaign, setCampaign] = useState<AdminCampaignItem | null>(null)
@@ -160,7 +162,14 @@ function CampaignDetailContent() {
     setDeleting(true)
     setDeleteError(null)
     try {
-      await deleteCampaign(id)
+      const token = await requestStepUp({
+        action: "campaign.delete",
+        targetId: id,
+        title: "Hapus kampanye",
+        description: `Hapus draf kampanye "${campaign?.name ?? id}". Aksi ini tidak bisa dibatalkan.`,
+      })
+      if (!token) return
+      await deleteCampaign(id, { stepUpToken: token })
       toast.show({ title: "Draf kampanye dihapus.", tone: "success" })
       router.push("/campaigns")
     } catch (e) {
@@ -174,7 +183,14 @@ function CampaignDetailContent() {
   async function handleDuplicate() {
     setDuplicating(true)
     try {
-      const dup = await duplicateCampaign(id)
+      const token = await requestStepUp({
+        action: "campaign.duplicate",
+        targetId: id,
+        title: "Duplikasi kampanye",
+        description: `Duplikasi kampanye "${campaign?.name ?? id}" ke draf baru.`,
+      })
+      if (!token) return
+      const dup = await duplicateCampaign(id, { stepUpToken: token })
       toast.show({ title: "Kampanye diduplikasi ke draf.", tone: "success" })
       router.push(`/campaigns/${encodeURIComponent(campaignKey(dup))}`)
     } catch (e) {
@@ -195,10 +211,24 @@ function CampaignDetailContent() {
     setToggling(true)
     try {
       if (toggleOpen === "pause") {
-        await pauseCampaign(id, reason)
+        const token = await requestStepUp({
+          action: "campaign.pause",
+          targetId: id,
+          title: "Jeda kampanye",
+          description: `Jeda kampanye "${campaign.name}".`,
+        })
+        if (!token) return
+        await pauseCampaign(id, reason, { stepUpToken: token })
         toast.show({ title: "Kampanye dijeda.", tone: "success" })
       } else {
-        const res = await activateCampaign(id, reason)
+        const token = await requestStepUp({
+          action: "campaign.activate",
+          targetId: id,
+          title: "Aktifkan kampanye",
+          description: `Aktifkan kampanye "${campaign.name}" dan terbitkan voucher personal.`,
+        })
+        if (!token) return
+        const res = await activateCampaign(id, reason, undefined, { stepUpToken: token })
         const issued = res.voucherIssuance?.issued
         toast.show({
           title: "Kampanye diaktifkan.",
@@ -578,6 +608,7 @@ function CampaignDetailContent() {
           }
         />
       </Dialog>
+      {stepUpDialog}
     </div>
   )
 }

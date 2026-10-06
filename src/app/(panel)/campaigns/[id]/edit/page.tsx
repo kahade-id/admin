@@ -24,6 +24,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
 import {
@@ -154,6 +155,9 @@ function CampaignEditContent() {
   const [formError, setFormError] = useState<string | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const [saving, setSaving] = useState(false)
+  // Backend mewajibkan changeReason (min 5 char) untuk setiap update (P1-8).
+  const [changeReason, setChangeReason] = useState("")
+  const { requestStepUp, stepUpDialog } = useStepUp()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -220,10 +224,22 @@ function CampaignEditContent() {
       setShowPreview(false)
       return
     }
+    const reason = changeReason.trim()
+    if (reason.length < 5) {
+      setFormError("Alasan perubahan wajib diisi (minimal 5 karakter).")
+      return
+    }
     const input = buildInput(original, values)
     setSaving(true)
     try {
-      await updateCampaign(id, input)
+      const token = await requestStepUp({
+        action: "campaign.update",
+        targetId: id,
+        title: "Ubah kampanye",
+        description: `Ubah kampanye "${original.name}".`,
+      })
+      if (!token) return
+      await updateCampaign(id, { ...input, changeReason: reason }, { stepUpToken: token })
       toast.show({ title: "Kampanye diperbarui.", tone: "success" })
       router.push(`/campaigns/${encodeURIComponent(campaignKey(original))}`)
     } catch (e) {
@@ -469,6 +485,32 @@ function CampaignEditContent() {
           </Button>
         </Link>
       </div>
+
+      {showPreview ? (
+        <Card>
+          <CardHeader>
+            <h2 className="text-h3 font-semibold text-text-primary">Alasan perubahan</h2>
+            <p className="mt-1 text-caption text-text-secondary">
+              Wajib diisi (minimal 5 karakter) — dicatat di riwayat audit kampanye.
+            </p>
+          </CardHeader>
+          <CardBody>
+            <TextArea
+              label="Alasan perubahan"
+              value={changeReason}
+              onChange={(e) => setChangeReason(e.target.value)}
+              maxLength={1000}
+              rows={2}
+              error={
+                changeReason.length > 0 && changeReason.trim().length < 5
+                  ? "Minimal 5 karakter"
+                  : undefined
+              }
+            />
+          </CardBody>
+        </Card>
+      ) : null}
+      {stepUpDialog}
     </div>
   )
 }

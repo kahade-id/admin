@@ -26,6 +26,7 @@ import { useToast } from "@/components/ui/toast"
 
 import { Pagination } from "@/components/admin/pagination"
 import { Select } from "@/components/admin/select"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { useAuth } from "@/lib/auth-context"
 
 import {
@@ -579,6 +580,7 @@ function CorrectionRequestDialog({
   onCreated: () => void
 }) {
   const { show } = useToast()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const [userId, setUserId] = useState("")
   const [amount, setAmount] = useState("")
   const [type, setType] = useState<"CREDIT" | "DEBIT">("CREDIT")
@@ -614,16 +616,25 @@ function CorrectionRequestDialog({
     setError(null)
     setBusy(true)
     try {
-      await requestCorrection({
-        userId: userId.trim(),
-        amountIdr,
-        type,
-        reason: reason.trim(),
-        ticketRef: ticketRef.trim(),
-        idempotencyKey: newIdempotencyKey(),
-        // ADM-206: kata sandi asli — diverifikasi server-side (bcrypt + rate limit).
-        reauthPassword: password,
+      const token = await requestStepUp({
+        action: "ledgerCorrection.request",
+        title: "Ajukan koreksi ledger",
+        description: `Koreksi ${type} ${formatNumber(amountIdr)} untuk user ${userId.trim()}.`,
       })
+      if (!token) return
+      await requestCorrection(
+        {
+          userId: userId.trim(),
+          amountIdr,
+          type,
+          reason: reason.trim(),
+          ticketRef: ticketRef.trim(),
+          idempotencyKey: newIdempotencyKey(),
+          // ADM-206: kata sandi asli — diverifikasi server-side (bcrypt + rate limit).
+          reauthPassword: password,
+        },
+        { stepUpToken: token },
+      )
       show({ tone: "success", title: "Pengajuan koreksi dibuat — menunggu persetujuan admin lain." })
       reset()
       onClose()
@@ -636,12 +647,13 @@ function CorrectionRequestDialog({
   }
 
   return (
-    <Dialog
-      open={open}
-      onClose={() => {
-        reset()
-        onClose()
-      }}
+    <>
+      <Dialog
+        open={open}
+        onClose={() => {
+          reset()
+          onClose()
+        }}
       title={preview ? "Pratinjau pengajuan koreksi" : "Pengajuan koreksi ledger"}
       description={
         preview
@@ -746,13 +758,16 @@ function CorrectionRequestDialog({
           {error ? <p className="text-body text-danger-text">{error}</p> : null}
         </div>
       )}
-    </Dialog>
+      </Dialog>
+      {stepUpDialog}
+    </>
   )
 }
 
 function CorrectionsSection() {
   const { show } = useToast()
   const { profile } = useAuth()
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const [rows, setRows] = useState<LedgerCorrection[]>([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -807,6 +822,13 @@ function CorrectionsSection() {
     }
     setDecideBusy(true)
     try {
+      const token = await requestStepUp({
+        action: "ledgerCorrection.approve",
+        targetId: decideTarget.id,
+        title: decision === "APPROVE" ? "Setujui koreksi ledger" : "Tolak koreksi ledger",
+        description: `Keputusan ${decision} untuk koreksi ${formatNumber(decideTarget.amountIdr)}.`,
+      })
+      if (!token) return
       await decideCorrection(
         decideTarget.id,
         {
@@ -816,6 +838,7 @@ function CorrectionsSection() {
           reauthPassword: decidePassword,
         },
         newIdempotencyKey(),
+        { stepUpToken: token },
       )
       show({
         tone: "success",
@@ -1003,6 +1026,7 @@ function CorrectionsSection() {
           </p>
         </div>
       </Dialog>
+      {stepUpDialog}
     </section>
   )
 }
