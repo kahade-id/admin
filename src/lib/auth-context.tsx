@@ -13,6 +13,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -28,6 +29,8 @@ import {
   type AdminProfile,
 } from "@/lib/api/admin/auth"
 import type { AdminRole } from "@/lib/rbac"
+import { Button } from "@/components/ui/button"
+import { Dialog } from "@/components/ui/dialog"
 
 type AuthState =
   | { status: "loading" }
@@ -79,6 +82,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void refresh()
   }, [refresh])
 
+  /**
+   * P2 (audit integrasi 2026-10-06): idle session timeout.
+   * 15 menit tanpa aktivitas (mouse/keyboard/sentuh/scroll) → dialog
+   * peringatan dengan hitung mundur 60 detik → auto-logout. Aktivitas
+   * apa pun me-reset timer. Mitigasi: browser idle yang terbuka tidak
+   * bisa dipakai untuk approve disbursement/force-cancel tanpa batas.
+   */
+  const [idleWarnOpen, setIdleWarnOpen] = useState(false)
+  const [idleSecondsLeft, setIdleSecondsLeft] = useState(0)
+  const rearmIdleRef = useRef<() => void>(() => {})
+
+  useEffect(() => {
+    if (state.status !== "authed") {
+      setIdleWarnOpen(false)
+      return
+    }
+    const IDLE_LIMIT_MS = 15 * 60 * 1000
+    const IDLE_WARN_MS = 60 * 1000
+    let warnTimer: ReturnType<typeof setTimeout> | null = null
+    let logoutTimer: ReturnType<typeof setTimeout> | null = null
+    let countdownTimer: ReturnType<typeof setInterval> | null = null
+
+    const clearTimers = () => {
+      if (warnTimer) clearTimeout(warnTimer)
+      if (logoutTimer) clearTimeout(logoutTimer)
+      if (countdownTimer) clearInterval(countdownTimer)
+      warnTimer = logoutTimer = countdownTimer = null
+    }
+
+    const startWarning = () => {
+      const deadline = Date.now() + IDLE_WARN_MS
+      setIdleWarnOpen(true)
+      setIdleSecondsLeft(Math.ceil(IDLE_WARN_MS / 1000))
+      countdownTimer = setInterval(() => {
+        setIdleSecondsLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)))
+      }, 1000)
+      logoutTimer = setTimeout(() => {
+        clearTimers()
+        setIdleWarnOpen(false)
+        void logout()
+      }, IDLE_WARN_MS)
+    }
+
+    const arm = () => {
+      clearTimers()
+      setIdleWarnOpen(false)
+      warnTimer = setTimeout(startWarning, IDLE_LIMIT_MS - IDLE_WARN_MS)
+    }
+    rearmIdleRef.current = arm
+
+    const onActivity = () => arm()
+    const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "wheel"] as const
+    events.forEach((e) => window.addEventListener(e, onActivity, { passive: true }))
+    arm()
+
+    return () => {
+      clearTimers()
+      events.forEach((e) => window.removeEventListener(e, onActivity))
+    }
+  }, [state.status, logout])
+
   const value = useMemo<AuthContextValue>(() => {
     const profile = state.status === "authed" ? state.profile : null
     return {
@@ -90,7 +154,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [state, refresh, logout])
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      <Dialog
+        open={idleWarnOpen}
+        onClose={() => rearmIdleRef.current()}
+        title="Sesi akan berakhir"
+        description={`Tidak ada aktivitas selama 14 menit. Anda akan keluar otomatis dalam ${idleSecondsLeft} detik.`}
+        footer={
+          <Button onClick={() => rearmIdleRef.current()}>Tetap masuk</Button>
+        }
+      >
+        <p className="text-sm text-text-secondary">
+          Klik “Tetap masuk” atau lakukan aktivitas apa pun untuk melanjutkan sesi.
+        </p>
+      </Dialog>
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth(): AuthContextValue {

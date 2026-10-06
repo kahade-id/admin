@@ -28,7 +28,7 @@ import {
   type TimelineEventKind,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR, formatNumber } from "@/lib/format"
 // SEC-505: identitas + nomor VA di-mask (mask-only, tanpa unmask).
 import { maskAccountNumber, maskEmail, maskName } from "@/lib/pii"
 
@@ -37,11 +37,6 @@ const KIND_META: Record<TimelineEventKind, { label: string; tone: BadgeTone }> =
   PROVIDER: { label: "Provider", tone: "info" },
   WEBHOOK: { label: "Webhook", tone: "warning" },
   REVERSAL: { label: "Reversal", tone: "danger" },
-}
-
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${formatNumber(n)}`
 }
 
 /** Label Indonesia untuk status transaksi — jangan tampilkan enum mentah (DSC-015). */
@@ -114,7 +109,7 @@ export function TransactionDetailDialog({
       ) : detail ? (
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
-            <Field label="Nominal">{formatRupiah(detail.amount)}</Field>
+            <Field label="Nominal">{formatIDR(detail.amount)}</Field>
             <Field label="Tipe">{String(detail.type)}</Field>
             <Field label="Status">
               <Badge tone={String(detail.status) === "SUCCESS" ? "success" : String(detail.status) === "FAILED" ? "danger" : "warning"}>

@@ -26,7 +26,7 @@ import {
   type SubscriptionDetail,
 } from "@/lib/api/admin/subscriptions"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR } from "@/lib/format"
 // ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail } from "@/lib/pii"
 
@@ -55,11 +55,6 @@ const PLAN_LABEL: Record<string, string> = {
 }
 
 const CANCELLABLE: string[] = ["ACTIVE", "PENDING"]
-
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${Math.trunc(n).toLocaleString("id-ID")}`
-}
 
 function KeyValue({
   label,
@@ -262,7 +257,7 @@ export default function SubscriptionDetailPage() {
                 {detail.user?.email ? (
                   <KeyValue label="Email" value={maskEmail(detail.user.email)} />
                 ) : null}
-                <KeyValue label="Harga" value={formatRupiah(detail.price)} />
+                <KeyValue label="Harga" value={formatIDR(detail.price)} />
                 <KeyValue
                   label="Periode mulai"
                   value={formatDateTimeWIB(detail.currentPeriodStart)}
@@ -330,13 +325,13 @@ export default function SubscriptionDetailPage() {
                     </div>
                   ) : null}
                   <dl>
-                    <KeyValue label="Terpakai" value={formatRupiah(usage.used)} />
-                    <KeyValue label="Kuota periode" value={formatRupiah(usage.limit)} />
+                    <KeyValue label="Terpakai" value={formatIDR(usage.used)} />
+                    <KeyValue label="Kuota periode" value={formatIDR(usage.limit)} />
                     <KeyValue
                       label="Sisa kuota"
                       value={
                         <span className="font-semibold text-success-text">
-                          {formatRupiah(usage.remaining)}
+                          {formatIDR(usage.remaining)}
                         </span>
                       }
                     />
@@ -366,7 +361,7 @@ export default function SubscriptionDetailPage() {
                     />
                     <KeyValue
                       label="Nominal"
-                      value={formatRupiah(detail.paymentTx.amount)}
+                      value={formatIDR(detail.paymentTx.amount)}
                     />
                     <KeyValue
                       label="Waktu"

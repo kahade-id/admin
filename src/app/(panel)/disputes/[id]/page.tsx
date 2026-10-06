@@ -1353,7 +1353,7 @@ export default function DisputeDetailPage() {
   // H04: dampak keputusan — ditampilkan sebelum eksekusi.
   const resolveImpact = useMemo(() => {
     const items: string[] = []
-    if (resolution === "FULL_BUYER") items.push("Seluruh dana escrow dikembalikan ke pembeli")
+    if (resolution === "FULL_BUYER") items.push("Dana escrow dikembalikan ke pembeli (tidak termasuk biaya platform)")
     else if (resolution === "FULL_SELLER") items.push("Seluruh dana escrow dicairkan ke penjual")
     else items.push(`Dana escrow dibagi: ${buyerPercent || "?"}% pembeli / ${sellerPercent || "?"}% penjual`)
     if (preview) {

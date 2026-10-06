@@ -58,7 +58,7 @@ import { getRoomIdByOrder, getRoomMessages } from "@/lib/api/admin/chat"
 import { userMessage } from "@/lib/api/response"
 import { downloadCsv } from "@/lib/csv"
 import { fetchAllPages } from "@/lib/fetch-all-pages"
-import { formatDateTimeWIB, formatNumber, messageFallbackLabel } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR, formatNumber, messageFallbackLabel } from "@/lib/format"
 // ADM-405: PII pihak transaksi di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail, maskName } from "@/lib/pii"
 // POIN 2 (unifikasi transaksi escrow): tipe transaksi order.
@@ -78,11 +78,6 @@ import {
 const PAGE_SIZE = 20
 
 /** "Rp1.234.567" — non-finite → "—". */
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${formatNumber(n)}`
-}
-
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -662,7 +657,7 @@ function OrdersPageContent() {
         defaultVisible: true,
         align: "right",
         render: (r) => (
-          <span className="font-semibold">{formatRupiah(r.orderValue)}</span>
+          <span className="font-semibold">{formatIDR(r.orderValue)}</span>
         ),
       },
       {
@@ -933,12 +928,12 @@ function OrdersPageContent() {
 
             <div>
               <p className="text-h3 font-semibold text-text-primary">
-                {formatRupiah(detail.orderValue)}
+                {formatIDR(detail.orderValue)}
               </p>
               <p className="mt-1 text-caption text-text-secondary">
-                Bayar pembeli: {formatRupiah(detail.buyerPayAmount)} · Terima
-                penjual: {formatRupiah(detail.sellerReceiveAmount)} · Fee:{" "}
-                {formatRupiah(detail.feeAmount)}
+                Bayar pembeli: {formatIDR(detail.buyerPayAmount)} · Terima
+                penjual: {formatIDR(detail.sellerReceiveAmount)} · Fee:{" "}
+                {formatIDR(detail.feeAmount)}
               </p>
             </div>
 
@@ -1007,14 +1002,14 @@ function OrdersPageContent() {
                       {p.danaReferenceNo ? (
                         <KeyValue label="Referensi DANA" value={p.danaReferenceNo} />
                       ) : null}
-                      <KeyValue label="Escrow" value={formatRupiah(p.amount)} />
-                      <KeyValue label="Fee provider" value={formatRupiah(p.providerFee)} />
-                      <KeyValue label="Total tagihan" value={formatRupiah(p.grossAmount)} />
+                      <KeyValue label="Escrow" value={formatIDR(p.amount)} />
+                      <KeyValue label="Fee provider" value={formatIDR(p.providerFee)} />
+                      <KeyValue label="Total tagihan" value={formatIDR(p.grossAmount)} />
                       {p.refundedAmount > 0 ? (
                         <>
                           <KeyValue
                             label="Dana dikembalikan"
-                            value={formatRupiah(p.refundedAmount)}
+                            value={formatIDR(p.refundedAmount)}
                           />
                           {p.refundReference ? (
                             <KeyValue label="Referensi refund" value={p.refundReference} />

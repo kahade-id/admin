@@ -9,10 +9,23 @@
  *
  * FAL-021 (audit integrasi 2026-10-03): samakan ke format FE (titik-dua,
  * bukan titik) — "14.30" → "14:30".
+ *
+ * P2-F3 (audit integrasi 2026-10-06): string kalender "YYYY-MM-DD" dijangkar
+ * ke WIB seperti `formatDateWIB` — sebelumnya `new Date("2026-09-30")`
+ * (UTC midnight) diformat dengan jam tampil "07:00 WIB" yang fiktif.
  */
 export function formatDateTimeWIB(d: Date | number | string | null | undefined): string {
   if (d == null || d === "") return "—"
-  const date = d instanceof Date ? d : new Date(d)
+  let date: Date
+  if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    // Tanggal kalender WIB: jangkar ke tengah hari UTC (= 19.00 WIB hari yang
+    // sama) agar aman di zona waktu browser mana pun. Jam tampil 12:00 WIB
+    // untuk input tanpa jam — eksplisit bukan 00:00 maupun 07:00 fiktif.
+    const [y, m, day] = d.split("-").map(Number)
+    date = new Date(Date.UTC(y, m - 1, day, 12, 0, 0))
+  } else {
+    date = d instanceof Date ? d : new Date(d)
+  }
   if (Number.isNaN(date.getTime())) return "—"
   const parts = new Intl.DateTimeFormat("id-ID", {
     timeZone: "Asia/Jakarta",
@@ -71,6 +84,26 @@ export function endOfMonthDateString(isoDate: string): string {
   // Hari 0 bulan berikutnya = hari terakhir bulan ini (UTC-aman).
   const d = new Date(Date.UTC(y, m, 0, 12, 0, 0))
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`
+}
+
+/**
+ * Rentang kalender "YYYY-MM-DD" → ISO 8601 UTC untuk awal/akhir hari WIB.
+ *
+ * P2-F4 (audit integrasi 2026-10-06) / BAI-129: JANGAN
+ * `new Date("2026-10-06T00:00:00").toISOString()` — itu di-parse sebagai
+ * waktu LOKAL perangkat, sehingga browser di luar WIB menggeser query
+ * ±7 jam di jalur audit keuangan. Jangkar eksplisit ke WIB (UTC+7).
+ */
+export function wibDayRangeToIso(start: string, end: string): { start: string; end: string } {
+  const [sy, sm, sd] = start.split("-").map(Number)
+  const [ey, em, ed] = end.split("-").map(Number)
+  const WIB_OFFSET_MS = 7 * 3600_000
+  return {
+    // 00:00:00 WIB = 17:00:00 UTC hari sebelumnya
+    start: new Date(Date.UTC(sy, sm - 1, sd, 0, 0, 0) - WIB_OFFSET_MS).toISOString(),
+    // 23:59:59 WIB = 16:59:59 UTC hari yang sama
+    end: new Date(Date.UTC(ey, em - 1, ed, 23, 59, 59) - WIB_OFFSET_MS).toISOString(),
+  }
 }
 
 /**

@@ -31,7 +31,7 @@ import { useStepUp } from "@/components/admin/step-up-gate"
 // Batch 139 — H: fondasi admin web.
 import { AuditDiffPanel, type AuditEntryLike } from "@/components/admin/batch139/audit-diff"
 import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatNumber, wibDayRangeToIso } from "@/lib/format"
 import { userMessage } from "@/lib/api/response"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import {
@@ -979,10 +979,10 @@ function AuditLogSection() {
           action: filters.action.trim() || undefined,
           targetType: filters.targetType.trim() || undefined,
           startDate: filters.startDate
-            ? new Date(`${filters.startDate}T00:00:00`).toISOString()
+            ? wibDayRangeToIso(filters.startDate, filters.startDate).start
             : undefined,
           endDate: filters.endDate
-            ? new Date(`${filters.endDate}T23:59:59`).toISOString()
+            ? wibDayRangeToIso(filters.endDate, filters.endDate).end
             : undefined,
         })
         setRows(res.data ?? [])

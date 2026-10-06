@@ -29,7 +29,7 @@ import {
   type ReferralStats,
 } from "@/lib/api/admin/referral"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatNumber, num } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR, formatNumber, num } from "@/lib/format"
 // ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail } from "@/lib/pii"
 
@@ -54,11 +54,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 /** "Rp1.234.567" — non-finite → "—". */
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${Math.trunc(n).toLocaleString("id-ID")}`
-}
-
 function ownerName(c: ReferralCodeItem): string {
   return c.user?.fullName ?? c.user?.username ?? "—"
 }
@@ -233,7 +228,7 @@ export default function ReferralPage() {
               />
               <StatCard
                 label="Komisi dibayar"
-                value={formatRupiah(stats.totalRewardsPaid)}
+                value={formatIDR(stats.totalRewardsPaid)}
               />
             </div>
           ) : null}
@@ -302,7 +297,7 @@ export default function ReferralPage() {
                 align: "right",
                 render: (c) => (
                   <span className="whitespace-nowrap font-semibold">
-                    {formatRupiah(c.totalRewardEarned)}
+                    {formatIDR(c.totalRewardEarned)}
                   </span>
                 ),
               },

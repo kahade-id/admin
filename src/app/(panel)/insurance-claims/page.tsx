@@ -39,7 +39,7 @@ import { StepUpNotSupportedError } from "@/lib/api/admin/step-up"
 import { useAuth } from "@/lib/auth-context"
 import { newIdempotencyKey } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR } from "@/lib/format"
 // ADM-405 / SEC-505: identitas pengguna di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail, maskName } from "@/lib/pii"
 
@@ -102,11 +102,6 @@ function claimUser(c: InsuranceClaim): string {
 
 function claimOrder(c: InsuranceClaim): string {
   return String(c.order?.orderNumber ?? c.order?.id ?? c.orderId ?? "—")
-}
-
-function formatRupiah(n: number | null): string {
-  if (n == null) return "—"
-  return `Rp${Math.trunc(n).toLocaleString("id-ID")}`
 }
 
 function KeyValue({ label, value }: { label: string; value: ReactNode }) {
@@ -255,7 +250,7 @@ export default function InsuranceClaimsPage() {
           targetId: selected.id,
           title: "Verifikasi ulang",
           description:
-            `Membayar klaim sebesar ${formatRupiah(claimAmount(selected))} ` +
+            `Membayar klaim sebesar ${formatIDR(claimAmount(selected))} ` +
             "bersifat final dan tidak bisa dibatalkan.",
         })
         if (token === null) return // user membatalkan verifikasi
@@ -424,7 +419,7 @@ export default function InsuranceClaimsPage() {
                 align: "right",
                 render: (c) => (
                   <span className="whitespace-nowrap font-semibold">
-                    {formatRupiah(claimAmount(c))}
+                    {formatIDR(claimAmount(c))}
                   </span>
                 ),
               },
@@ -434,7 +429,7 @@ export default function InsuranceClaimsPage() {
                 align: "right",
                 render: (c) => (
                   <span className="whitespace-nowrap">
-                    {formatRupiah(claimCap(c))}
+                    {formatIDR(claimCap(c))}
                   </span>
                 ),
               },
@@ -502,8 +497,8 @@ export default function InsuranceClaimsPage() {
               ) : null}
               <KeyValue label="Order terkait" value={claimOrder(selected)} />
               <KeyValue label="Tipe klaim" value={claimType(selected)} />
-              <KeyValue label="Nominal" value={formatRupiah(claimAmount(selected))} />
-              <KeyValue label="Cap pertanggungan" value={formatRupiah(claimCap(selected))} />
+              <KeyValue label="Nominal" value={formatIDR(claimAmount(selected))} />
+              <KeyValue label="Cap pertanggungan" value={formatIDR(claimCap(selected))} />
               <KeyValue label="Diajukan" value={formatDateTimeWIB(selected.createdAt)} />
             </dl>
 
@@ -584,14 +579,14 @@ export default function InsuranceClaimsPage() {
           title="Bayar klaim — eksekusi payout?"
           description={
             `Tindakan ini MENGKREDIT wallet ${claimUser(selected)} sebesar ` +
-            `${formatRupiah(claimAmount(selected))} (cap pertanggungan ${formatRupiah(claimCap(selected))}). ` +
+            `${formatIDR(claimAmount(selected))} (cap pertanggungan ${formatIDR(claimCap(selected))}). ` +
             `Payout bersifat final dan tidak bisa dibatalkan. Pastikan nominal dan penerima sudah benar.` +
             // SEC-502: peringatan nominal besar — dibutuhkan persetujuan admin kedua.
             ((claimAmount(selected) ?? 0) > 1_000_000
               ? " Nominal di atas Rp1.000.000 — dibutuhkan persetujuan admin kedua."
               : "")
           }
-          confirmLabel={`Ya, bayar ${formatRupiah(claimAmount(selected))}`}
+          confirmLabel={`Ya, bayar ${formatIDR(claimAmount(selected))}`}
           cancelLabel="Batal"
           loading={acting === "PAID"}
           onConfirm={() => {

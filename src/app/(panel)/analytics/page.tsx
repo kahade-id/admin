@@ -39,6 +39,7 @@ import {
   addDaysToDateString,
   endOfMonthDateString,
   formatDateWIB,
+  formatIDR,
   formatNumber,
   num,
 } from "@/lib/format"
@@ -69,11 +70,6 @@ const METRIC_OPTIONS = [
 ]
 
 /** "Rp1.234.567" — non-finite → "—". */
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${Math.trunc(n).toLocaleString("id-ID")}`
-}
-
 function toISODate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 }
@@ -174,7 +170,7 @@ function StatCard({
 
 function topUserMetricLabel(metric: TopUserMetric, u: TopUser): string {
   if (metric === "orders") return `${formatNumber(num(u.totalOrders))} order`
-  if (metric === "volume") return formatRupiah(u.totalVolume)
+  if (metric === "volume") return formatIDR(u.totalVolume)
   return `${num(u.avgRating).toFixed(1)} (${formatNumber(num(u.ratingCount))})`
 }
 
@@ -551,11 +547,11 @@ export default function AnalyticsPage() {
               />
               <StatCard
                 label="GMV"
-                value={formatRupiah(overview.financial?.gmv)}
+                value={formatIDR(overview.financial?.gmv)}
               />
               <StatCard
                 label="Revenue"
-                value={formatRupiah(overview.financial?.revenue)}
+                value={formatIDR(overview.financial?.revenue)}
               />
             </div>
           </section>
@@ -621,7 +617,7 @@ export default function AnalyticsPage() {
                     align: "right",
                     render: (r) => (
                       <span className="whitespace-nowrap">
-                        {formatRupiah(r.gmv)}
+                        {formatIDR(r.gmv)}
                       </span>
                     ),
                   },
@@ -631,7 +627,7 @@ export default function AnalyticsPage() {
                     align: "right",
                     render: (r) => (
                       <span className="whitespace-nowrap">
-                        {formatRupiah(r.revenue)}
+                        {formatIDR(r.revenue)}
                       </span>
                     ),
                   },

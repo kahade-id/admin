@@ -52,14 +52,9 @@ import {
   type ReconcileResult,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR, formatNumber } from "@/lib/format"
 
 const PAGE_SIZE = 20
-
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${formatNumber(n)}`
-}
 
 const FINDING_STATUS_META: Record<FindingStatus, { label: string; tone: BadgeTone }> = {
   NEW: { label: "Baru", tone: "danger" },
@@ -249,7 +244,7 @@ function FindingsSection() {
                 render: (r) => (
                   <span className={r.differenceIdr !== 0 ? "font-semibold text-danger-text" : ""}>
                     {r.differenceIdr < 0 ? "−" : ""}
-                    {formatRupiah(Math.abs(r.differenceIdr))}
+                    {formatIDR(Math.abs(r.differenceIdr))}
                     {r.urgent ? <Badge tone="danger">Mendesak</Badge> : null}
                   </span>
                 ),
@@ -311,7 +306,7 @@ function FindingsSection() {
         title={ackTarget && isReopenTarget(ackTarget) ? "Buka kembali temuan" : "Tindak lanjuti temuan"}
         description={
           ackTarget
-            ? `Selisih ${formatRupiah(Math.abs(ackTarget.differenceIdr))} • invariant: ${ackTarget.violatedInvariants.join(", ") || "—"}${
+            ? `Selisih ${formatIDR(Math.abs(ackTarget.differenceIdr))} • invariant: ${ackTarget.violatedInvariants.join(", ") || "—"}${
                 isReopenTarget(ackTarget)
                   ? " • Temuan yang dibuka kembali wajib diberi catatan alasan."
                   : ""
@@ -432,17 +427,17 @@ function ReconcileUserSection() {
                     <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
                       <div>
                         <dt className="text-caption text-text-secondary">Saldo tercatat</dt>
-                        <dd className="text-body font-semibold">{formatRupiah(d.actualTotal)}</dd>
+                        <dd className="text-body font-semibold">{formatIDR(d.actualTotal)}</dd>
                       </div>
                       <div>
                         <dt className="text-caption text-text-secondary">Saldo hasil hitung</dt>
-                        <dd className="text-body font-semibold">{formatRupiah(d.expectedTotal)}</dd>
+                        <dd className="text-body font-semibold">{formatIDR(d.expectedTotal)}</dd>
                       </div>
                       <div>
                         <dt className="text-caption text-text-secondary">Selisih</dt>
                         <dd className="text-body font-semibold text-danger-text">
                           {d.discrepancy < 0 ? "−" : ""}
-                          {formatRupiah(Math.abs(d.discrepancy))}
+                          {formatIDR(Math.abs(d.discrepancy))}
                         </dd>
                       </div>
                       <div>
@@ -698,7 +693,7 @@ function CorrectionRequestDialog({
           </div>
           <div className="flex justify-between gap-4">
             <dt className="text-caption text-text-secondary">Nominal</dt>
-            <dd className="text-body font-semibold">{formatRupiah(amountIdr)}</dd>
+            <dd className="text-body font-semibold">{formatIDR(amountIdr)}</dd>
           </div>
           <div>
             <dt className="text-caption text-text-secondary">Alasan</dt>
@@ -894,7 +889,7 @@ function CorrectionsSection() {
                   <span>
                     {/* ADM-230: label Indonesia, bukan raw enum */}
                     <Badge tone={r.type === "CREDIT" ? "success" : "danger"}>{r.type === "CREDIT" ? "Kredit" : r.type === "DEBIT" ? "Debit" : String(r.type)}</Badge>{" "}
-                    <span className="font-semibold">{formatRupiah(r.amountIdr)}</span>
+                    <span className="font-semibold">{formatIDR(r.amountIdr)}</span>
                   </span>
                 ),
               },
@@ -976,7 +971,7 @@ function CorrectionsSection() {
         title={decision === "APPROVE" ? "Setujui koreksi" : "Tolak koreksi"}
         description={
           decideTarget
-            ? `${decideTarget.type === "CREDIT" ? "Kredit" : decideTarget.type === "DEBIT" ? "Debit" : decideTarget.type} ${formatRupiah(decideTarget.amountIdr)} untuk ${decideTarget.userId}`
+            ? `${decideTarget.type === "CREDIT" ? "Kredit" : decideTarget.type === "DEBIT" ? "Debit" : decideTarget.type} ${formatIDR(decideTarget.amountIdr)} untuk ${decideTarget.userId}`
             : undefined
         }
         footer={
@@ -1184,7 +1179,7 @@ function BatchesSection() {
               render: (r) => (
                 <span className="font-semibold text-danger-text">
                   {r.differenceIdr < 0 ? "−" : ""}
-                  {formatRupiah(Math.abs(r.differenceIdr))}
+                  {formatIDR(Math.abs(r.differenceIdr))}
                 </span>
               ),
             },

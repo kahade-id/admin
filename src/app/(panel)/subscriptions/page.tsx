@@ -49,7 +49,7 @@ import {
 import { listAdminUsers, type AdminUserSummary } from "@/lib/api/admin/users"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR } from "@/lib/format"
 // ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail } from "@/lib/pii"
 
@@ -115,11 +115,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 /** "Rp1.234.567" — non-finite → "—". */
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${Math.trunc(n).toLocaleString("id-ID")}`
-}
-
 function userDisplay(s: SubscriptionItem): string {
   return s.user?.fullName ?? s.user?.username ?? "—"
 }
@@ -389,7 +384,7 @@ export default function SubscriptionsPage() {
                 align: "right",
                 render: (s) => (
                   <span className="whitespace-nowrap font-semibold">
-                    {formatRupiah(s.price)}
+                    {formatIDR(s.price)}
                   </span>
                 ),
               },

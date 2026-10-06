@@ -73,7 +73,7 @@ import {
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
 import { TX_META, txLabel } from "@/lib/tx-labels"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR, formatNumber, wibDayRangeToIso } from "@/lib/format"
 // ADM-405: PII (nama, email, rekening) di-mask secara default — mask-only, tanpa unmask.
 import { maskAccountNumber, maskEmail, maskName } from "@/lib/pii"
 
@@ -83,11 +83,6 @@ const MAX_RANGE_DAYS = 90
 const DEFAULT_RANGE_DAYS = 30
 
 /** "Rp1.234.567" — non-finite → "—". */
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${formatNumber(n)}`
-}
-
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -162,12 +157,9 @@ function defaultDateInputs(): { start: string; end: string } {
   return { start: dateInputOf(start), end: dateInputOf(end) }
 }
 
-/** Input "YYYY-MM-DD" → ISO 8601 (awal/akhir hari waktu lokal). */
+/** Input "YYYY-MM-DD" → ISO 8601 (awal/akhir hari WIB — P2-F4, bukan zona perangkat). */
 function rangeToIso(start: string, end: string): { start: string; end: string } {
-  return {
-    start: new Date(`${start}T00:00:00`).toISOString(),
-    end: new Date(`${end}T23:59:59`).toISOString(),
-  }
+  return wibDayRangeToIso(start, end)
 }
 
 function daysBetween(a: string, b: string): number {
@@ -376,7 +368,7 @@ function FinancePageInner() {
         await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
         toast.show({
           title: "Penarikan disetujui",
-          description: formatRupiah(actionTx.amount),
+          description: formatIDR(actionTx.amount),
           tone: "success",
         })
       } else {
@@ -384,7 +376,7 @@ function FinancePageInner() {
           action: "withdrawal.reject",
           targetId: actionTx.txId,
           title: "Tolak penarikan",
-          description: `Tolak penarikan ${formatRupiah(actionTx.amount)} dan kembalikan saldo ke wallet pengguna.`,
+          description: `Tolak penarikan ${formatIDR(actionTx.amount)} dan kembalikan saldo ke wallet pengguna.`,
         })
         if (!token) return
         await rejectWithdrawal(actionTx.txId, trimmed, actionKeyFor(actionTx.txId, actionKind), {
@@ -392,7 +384,7 @@ function FinancePageInner() {
         })
         toast.show({
           title: "Penarikan ditolak, saldo dikembalikan",
-          description: formatRupiah(actionTx.amount),
+          description: formatIDR(actionTx.amount),
           tone: "success",
         })
       }
@@ -625,7 +617,7 @@ function FinancePageInner() {
                   align: "right",
                   render: (r) => (
                     <span className="font-semibold">
-                      {formatRupiah(r.amount)}
+                      {formatIDR(r.amount)}
                     </span>
                   ),
                 },
@@ -779,7 +771,7 @@ function FinancePageInner() {
                         }
                       >
                         {meta.sign}
-                        {formatRupiah(r.amount)}
+                        {formatIDR(r.amount)}
                       </span>
                     )
                   },
@@ -877,7 +869,7 @@ function FinancePageInner() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard
               label="Escrow aktif"
-              value={formatRupiah(escrow?.totalEscrowBalance)}
+              value={formatIDR(escrow?.totalEscrowBalance)}
               hint={
                 escrow?.source === "ORDER_BASED"
                   ? `${formatNumber(escrow?.activeEscrowOrders ?? 0)} order aktif — dihitung dari order (dana dipegang DANA)`
@@ -889,7 +881,7 @@ function FinancePageInner() {
                 wallet.escrowBalance sehingga selalu Rp0 tanpa wallet. */}
             <StatCard
               label="Escrow DANA aktif"
-              value={formatRupiah(escrow?.danaEscrowBalance ?? 0)}
+              value={formatIDR(escrow?.danaEscrowBalance ?? 0)}
               hint={`${formatNumber(escrow?.danaEscrowPayments ?? 0)} pembayaran DANA · ${formatNumber(
                 escrow?.danaDisbursementsPending ?? 0,
               )} pencairan tertunda`}
@@ -898,17 +890,17 @@ function FinancePageInner() {
                 lama hanya menampilkan fee platform sehingga pendapatan mengecil. */}
             <StatCard
               label="Revenue hari ini"
-              value={formatRupiah(summary?.totalRevenueToday)}
-              hint={`Fee ${formatRupiah(summary?.totalPlatformFeeToday)} + langganan ${formatRupiah(summary?.totalSubscriptionRevenueToday)}`}
+              value={formatIDR(summary?.totalRevenueToday)}
+              hint={`Fee ${formatIDR(summary?.totalPlatformFeeToday)} + langganan ${formatIDR(summary?.totalSubscriptionRevenueToday)}`}
             />
             <StatCard
               label="Revenue bulan ini"
-              value={formatRupiah(summary?.totalRevenueThisMonth)}
-              hint={`Fee ${formatRupiah(summary?.totalPlatformFeeThisMonth)} + langganan ${formatRupiah(summary?.totalSubscriptionRevenueThisMonth)}`}
+              value={formatIDR(summary?.totalRevenueThisMonth)}
+              hint={`Fee ${formatIDR(summary?.totalPlatformFeeThisMonth)} + langganan ${formatIDR(summary?.totalSubscriptionRevenueThisMonth)}`}
             />
             <StatCard
               label="Antrean penarikan"
-              value={formatRupiah(summary?.pendingWithdrawalsAmount)}
+              value={formatIDR(summary?.pendingWithdrawalsAmount)}
               hint={`${formatNumber(summary?.pendingWithdrawals ?? 0)} menunggu persetujuan`}
             />
           </div>
@@ -928,17 +920,17 @@ function FinancePageInner() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <StatCard
                 label="Total revenue"
-                value={formatRupiah(revenue.totalRevenue)}
+                value={formatIDR(revenue.totalRevenue)}
                 hint="Fee transaksi + subscription"
               />
               <StatCard
                 label="Fee transaksi"
-                value={formatRupiah(revenue.breakdown?.transactionFees?.total)}
+                value={formatIDR(revenue.breakdown?.transactionFees?.total)}
                 hint={`${formatNumber(revenue.breakdown?.transactionFees?.count ?? 0)} order selesai`}
               />
               <StatCard
                 label="Pembayaran subscription"
-                value={formatRupiah(revenue.breakdown?.subscriptionPayments?.total)}
+                value={formatIDR(revenue.breakdown?.subscriptionPayments?.total)}
                 hint={`${formatNumber(revenue.breakdown?.subscriptionPayments?.count ?? 0)} pembayaran`}
               />
             </div>
@@ -958,7 +950,7 @@ function FinancePageInner() {
                         header: "Total",
                         align: "right",
                         render: (r) => (
-                          <span className="font-semibold">{formatRupiah(r.total)}</span>
+                          <span className="font-semibold">{formatIDR(r.total)}</span>
                         ),
                       },
                       {
@@ -1131,19 +1123,19 @@ function FinancePageInner() {
                   <p className="text-body">
                     <span className="text-text-secondary">Masuk: </span>
                     <span className="font-semibold text-success-text">
-                      {formatRupiah(txAggregate.masuk)}
+                      {formatIDR(txAggregate.masuk)}
                     </span>
                   </p>
                   <p className="text-body">
                     <span className="text-text-secondary">Keluar: </span>
                     <span className="font-semibold text-danger-text">
-                      {formatRupiah(txAggregate.keluar)}
+                      {formatIDR(txAggregate.keluar)}
                     </span>
                   </p>
                   <p className="text-body">
                     <span className="text-text-secondary">Bersih: </span>
                     <span className="font-semibold text-text-primary">
-                      {formatRupiah(txAggregate.masuk - txAggregate.keluar)}
+                      {formatIDR(txAggregate.masuk - txAggregate.keluar)}
                     </span>
                   </p>
                   <p className="text-caption text-text-secondary">
@@ -1192,7 +1184,7 @@ function FinancePageInner() {
         title={actionTitle}
         description={
           actionTx
-            ? `${withdrawUserName(actionTx)} • ${formatRupiah(actionTx.amount)}`
+            ? `${withdrawUserName(actionTx)} • ${formatIDR(actionTx.amount)}`
             : undefined
         }
         dirty={note.trim().length > 0}
@@ -1214,8 +1206,8 @@ function FinancePageInner() {
                 reauth.require(
                   () => void handleSubmitAction(),
                   actionKind === "reject"
-                    ? `Tolak penarikan ${actionTx ? formatRupiah(actionTx.amount) : ""}`
-                    : `Setujui penarikan ${actionTx ? formatRupiah(actionTx.amount) : ""}`,
+                    ? `Tolak penarikan ${actionTx ? formatIDR(actionTx.amount) : ""}`
+                    : `Setujui penarikan ${actionTx ? formatIDR(actionTx.amount) : ""}`,
                 )
               }
             >

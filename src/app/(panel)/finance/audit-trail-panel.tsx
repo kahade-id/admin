@@ -24,17 +24,12 @@ import {
   type AuditTrailRow,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatNumber } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR, formatNumber, wibDayRangeToIso } from "@/lib/format"
 import { txLabel } from "@/lib/tx-labels"
 
 /** Rentang maksimum yang diizinkan backend (hari). */
 const MAX_RANGE_DAYS = 365
 const DEFAULT_RANGE_DAYS = 30
-
-function formatRupiah(n: unknown): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—"
-  return `Rp${formatNumber(n)}`
-}
 
 /** "YYYY-MM-DD" lokal dari Date. */
 function dateInputOf(d: Date): string {
@@ -50,12 +45,9 @@ function defaultDateInputs(): { start: string; end: string } {
   return { start: dateInputOf(start), end: dateInputOf(end) }
 }
 
-/** Input "YYYY-MM-DD" → ISO 8601 (awal/akhir hari waktu lokal). */
+/** Input "YYYY-MM-DD" → ISO 8601 (awal/akhir hari WIB — P2-F4, bukan zona perangkat). */
 function rangeToIso(start: string, end: string): { start: string; end: string } {
-  return {
-    start: new Date(`${start}T00:00:00`).toISOString(),
-    end: new Date(`${end}T23:59:59`).toISOString(),
-  }
+  return wibDayRangeToIso(start, end)
 }
 
 function daysBetween(a: string, b: string): number {
@@ -166,13 +158,13 @@ export function AuditTrailPanel() {
                 <div className="rounded-lg border border-border p-3">
                   <p className="text-caption text-text-secondary">Saldo awal</p>
                   <p className="mt-1 font-semibold text-text-primary">
-                    {formatRupiah(trail.openingTotalBalance)}
+                    {formatIDR(trail.openingTotalBalance)}
                   </p>
                 </div>
                 <div className="rounded-lg border border-border p-3">
                   <p className="text-caption text-text-secondary">Saldo akhir</p>
                   <p className="mt-1 font-semibold text-text-primary">
-                    {formatRupiah(trail.closingTotalBalance)}
+                    {formatIDR(trail.closingTotalBalance)}
                   </p>
                 </div>
                 <div className="rounded-lg border border-border p-3">
@@ -219,7 +211,7 @@ export function AuditTrailPanel() {
                     render: (r) => (
                       <span className="font-semibold">
                         {r.totalBalanceDelta >= 0 ? "+" : "−"}
-                        {formatRupiah(Math.abs(r.amount))}
+                        {formatIDR(Math.abs(r.amount))}
                       </span>
                     ),
                   },
@@ -227,7 +219,7 @@ export function AuditTrailPanel() {
                     key: "runningTotalBalance",
                     header: "Saldo berjalan",
                     align: "right",
-                    render: (r) => formatRupiah(r.runningTotalBalance),
+                    render: (r) => formatIDR(r.runningTotalBalance),
                   },
                   {
                     key: "status",
