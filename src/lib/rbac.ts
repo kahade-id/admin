@@ -99,12 +99,8 @@ export const MENU: MenuItem[] = [
   // jastip semuanya SUPER_ADMIN, CUSTOMER_SUPPORT di backend.
   { label: "Voucher Seller", href: "/seller-vouchers", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Banner & Carousel", href: "/banners", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
-  { label: "Patungan Grup", href: "/group-buying", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
-  { label: "Jastip", href: "/jastip", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
-  // POIN 2 (unifikasi transaksi escrow, 2026-10-04): halaman read-only
-  // pemantauan booking jasa (tanpa aksi finansial). Role mengikuti halaman
-  // commerce sejenis (group-buying/jastip).
-  { label: "Booking Jasa", href: "/bookings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  // TX-UNIFIED-V2 (2026-10-06): entri Patungan Grup / Jastip / Booking Jasa
+  // dihapus — pemantauan via /orders + filter tipe transaksi.
   { label: "Kampanye", href: "/campaigns", roles: ["SUPER_ADMIN"] },
   { label: "Ulasan", href: "/ratings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Referral", href: "/referral", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },

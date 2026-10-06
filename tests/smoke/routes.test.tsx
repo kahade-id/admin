@@ -80,10 +80,8 @@ const ROUTES: RouteSpec[] = [
   // Batch 43 (AD-43): halaman baru — mock paginasi default sudah cukup.
   { href: "/banners", load: () => import("@/app/(panel)/banners/page"), heading: /Banner & Carousel/ },
   { href: "/seller-vouchers", load: () => import("@/app/(panel)/seller-vouchers/page"), heading: /Voucher Seller/ },
-  { href: "/group-buying", load: () => import("@/app/(panel)/group-buying/page"), heading: /Patungan Grup/ },
-  { href: "/jastip", load: () => import("@/app/(panel)/jastip/page"), heading: /Jastip/ },
-  // POIN 2 (unifikasi transaksi escrow): halaman booking jasa (read-only).
-  { href: "/bookings", load: () => import("@/app/(panel)/bookings/page"), heading: /Booking Jasa/ },
+  // TX-UNIFIED-V2 (2026-10-06): /group-buying, /jastip, /bookings dihapus —
+  // pemantauan via /orders + filter tipe transaksi.
   { href: "/ratings", load: () => import("@/app/(panel)/ratings/page"), heading: /Rating/ },
   { href: "/referral", load: () => import("@/app/(panel)/referral/page"), heading: /Referral/ },
   {
