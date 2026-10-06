@@ -3,7 +3,7 @@
  * KONTRAK (asumsi sementara; endpoint backend sedang dibangun worker lain —
  * sesuaikan bila final berbeda):
  * - GET /v1/admin/milestones?status&page&limit → Paginated<MilestoneAdminItem>
- * - GET /v1/admin/milestones/reconcile
+ * - GET /v1/admin/milestones/reconcile/recent
  *   → { orders: MilestoneReconcileRow[] } — satu baris per order yang punya
  *   milestone, berisi invariant check dengan status LULUS/GAGAL.
  *

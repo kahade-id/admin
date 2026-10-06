@@ -444,7 +444,7 @@ export type AdminDisputeEvidenceResult = {
 
 export function adminSubmitDisputeEvidence(
   disputeId: string,
-  input: { title: string; description: string; fileUrls: string[]; fileTypes: string[]; tags?: string[] },
+  input: { title: string; description: string; fileUrls: string[]; fileTypes: string[] },
 ): Promise<AdminDisputeEvidenceResult> {
   return adminHttp.post<AdminDisputeEvidenceResult>(
     `/v1/admin/disputes/${encodeURIComponent(disputeId)}/evidence`,

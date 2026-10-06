@@ -81,8 +81,12 @@ export type UpdateInsuranceClaimInput = {
 }
 
 export type UpdateInsuranceClaimResult = {
-  message: string
-  claimId: string
+  /** Pesan hasil (ada untuk PAID via dual control; tidak ada untuk APPROVED/REJECTED). */
+  message?: string
+  /** ID klaim (ada untuk PAID; APPROVED/REJECTED kembalikan objek klaim dengan `id`). */
+  claimId?: string
+  /** ID klaim dari objek klaim (APPROVED/REJECTED). */
+  id?: string
   status: string
   /**
    * SEC-502: backend untuk PAID SELALU via dual control — endpoint hanya

@@ -149,9 +149,9 @@ export type GrantSubscriptionResult = {
   userId: string
   plan: string
   status: string
-  price: string
-  feeSavingsUsed: string
-  feeSavingsLimit: string
+  price: number
+  feeSavingsUsed: number
+  feeSavingsLimit: number
   startDate?: string | null
   endDate?: string | null
   [key: string]: unknown

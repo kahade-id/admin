@@ -10,7 +10,8 @@
  *   (+ re-auth password, AUT-013)
  *   ("Tindakan ini tidak bisa dibatalkan"). Tombol hanya aktif untuk status
  *   yang valid (batal: WAITING_CONFIRMATION / WAITING_PAYMENT / PROCESSING /
- *   IN_DELIVERY / DISPUTED; selesai: PROCESSING / IN_DELIVERY).
+ *   IN_DELIVERY; selesai: PROCESSING / IN_DELIVERY). DISPUTED tidak bisa
+ *   dibatalkan paksa — wajib lewat alur sengketa (ADM-107).
  * - forceCancelOrder / forceCompleteOrder sudah menyertakan header
  *   `Idempotency-Key` per panggilan (lihat src/lib/api/admin/orders.ts).
  */

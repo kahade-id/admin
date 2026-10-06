@@ -214,21 +214,23 @@ export function listWebhookLogs(
   )
 }
 
-/** POST /v1/admin/system/webhook-logs/:id/retry — antre ulang webhook dead-letter. */
-export function retryWebhook(id: string): Promise<AdminWebhookLogItem> {
-  return adminHttp.post<AdminWebhookLogItem>(
+/** POST /v1/admin/system/webhook-logs/:id/retry — antre ulang webhook dead-letter.
+ * Backend kembalikan { id, status, message } (bukan AdminWebhookLogItem). */
+export function retryWebhook(id: string): Promise<{ id: string; status: string; message: string }> {
+  return adminHttp.post<{ id: string; status: string; message: string }>(
     `/v1/admin/system/webhook-logs/${encodeURIComponent(id)}/retry`,
     undefined,
     { headers: idempotencyHeaders() },
   )
 }
 
-/** POST /v1/admin/system/webhook-logs/:id/resolve — tandai dead-letter sebagai diselesaikan manual. */
+/** POST /v1/admin/system/webhook-logs/:id/resolve — tandai dead-letter sebagai diselesaikan manual.
+ * Backend kembalikan { id, status, message } (bukan AdminWebhookLogItem). */
 export function resolveWebhook(
   id: string,
   resolution: string,
-): Promise<AdminWebhookLogItem> {
-  return adminHttp.post<AdminWebhookLogItem>(
+): Promise<{ id: string; status: string; message: string }> {
+  return adminHttp.post<{ id: string; status: string; message: string }>(
     `/v1/admin/system/webhook-logs/${encodeURIComponent(id)}/resolve`,
     { resolution },
     { headers: idempotencyHeaders() },
