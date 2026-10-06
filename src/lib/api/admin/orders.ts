@@ -51,10 +51,17 @@ export type AdminOrderItem = {
   seller?: AdminOrderParty | null
   /**
    * POIN 2 (unifikasi transaksi escrow): tipe transaksi order
-   * (DIRECT|JASTIP|PATUNGAN|SERVICE_BOOKING) — dikirim backend bila kolomnya
-   * sudah diimplementasikan (worker backend paralel, 2026-10-04).
+   * (DIRECT|JASTIP|PATUNGAN|SERVICE_BOOKING) — deprecated, dipertahankan
+   * untuk kompatibilitas.
    */
   orderKind?: OrderKind | string | null
+  /**
+   * TX-UNIFIED-V2: 3 dimensi independen pengganti orderKind flat.
+   * Dikirim backend bila kolomnya sudah diimplementasikan.
+   */
+  fulfillment?: string | null
+  participantMode?: string | null
+  category?: string | null
   [key: string]: unknown
 }
 
@@ -175,8 +182,16 @@ export function listAdminOrders(query?: {
    * sebagai param `kind` (nama yang disepakati; BUKAN `type`) ke
    * `GET /v1/admin/orders`. Backend mengabaikan param tak dikenal bila
    * worker backend belum mendaratkan filter ini, sehingga aman dipanggil.
+   * DEPRECATED: gunakan fulfillment/participantMode/category.
    */
   kind?: OrderKind | string
+  /**
+   * TX-UNIFIED-V2: filter 3 dimensi — diteruskan sebagai param
+   * `fulfillment`, `participantMode`, `category` ke `GET /v1/admin/orders`.
+   */
+  fulfillment?: string
+  participantMode?: string
+  category?: string
 }): Promise<Paginated<AdminOrderItem>> {
   const { q, ...rest } = query ?? {}
   return adminHttp.get<Paginated<AdminOrderItem>>("/v1/admin/orders", {

@@ -66,6 +66,13 @@ import {
   ORDER_KIND_FILTER_OPTIONS,
   orderKindLabel,
   type OrderKind,
+  // TX-UNIFIED-V2: 3 dimensi independen.
+  FULFILLMENT_FILTER_OPTIONS,
+  ORDER_CATEGORY_FILTER_OPTIONS,
+  PARTICIPANT_MODE_FILTER_OPTIONS,
+  fulfillmentLabel,
+  orderCategoryLabel,
+  participantModeLabel,
 } from "@/lib/order-kind"
 
 const PAGE_SIZE = 20
@@ -251,6 +258,10 @@ function OrdersPageContent() {
     search: "",
     status: "",
     kind: "",
+    // TX-UNIFIED-V2: filter 3 dimensi (nilai "" = semua).
+    fulfillment: "",
+    participantMode: "",
+    category: "",
     escrow: "",
     start: "",
     end: "",
@@ -263,7 +274,12 @@ function OrdersPageContent() {
 
   const statusFilter = (f.status || "") as AdminOrderStatus | ""
   // POIN 2: filter tipe transaksi → diteruskan sebagai param `kind` backend.
+  // DEPRECATED: dipertahankan untuk kompatibilitas; gunakan 3 dimensi di bawah.
   const kindFilter = (f.kind || "") as OrderKind | ""
+  // TX-UNIFIED-V2: filter 3 dimensi independen.
+  const fulfillmentFilter = f.fulfillment || ""
+  const participantModeFilter = f.participantMode || ""
+  const categoryFilter = f.category || ""
   // AW-016: backend hanya menerapkan filter saat hasEscrow === true
   // (admin-orders.service.ts) — UI berupa pilihan "Dengan escrow" saja.
   const escrowOnly = f.escrow === "yes"
@@ -303,6 +319,9 @@ function OrdersPageContent() {
             limit,
             status: statusFilter || undefined,
             kind: kindFilter || undefined,
+            fulfillment: fulfillmentFilter || undefined,
+            participantMode: participantModeFilter || undefined,
+            category: categoryFilter || undefined,
             q: f.search.trim() || undefined,
             hasEscrow: escrowOnly || undefined,
             startDate: startDate || undefined,
@@ -320,10 +339,14 @@ function OrdersPageContent() {
       const stamp = new Date().toISOString().slice(0, 10)
       downloadCsv(
         `order-${stamp}.csv`,
-        ["ID Order", "Judul", "Tipe", "Status", "Pembeli", "Penjual", "Nilai", "Dibayar pembeli", "Diterima penjual", "Dibuat"],
+        ["ID Order", "Judul", "Kategori", "Sistem", "Peserta", "Tipe (lama)", "Status", "Pembeli", "Penjual", "Nilai", "Dibayar pembeli", "Diterima penjual", "Dibuat"],
         all.items.map((r) => [
           r.orderId,
           r.title ?? "",
+          // TX-UNIFIED-V2: 3 dimensi; fallback ke orderKind lama.
+          typeof r.category === "string" && r.category ? orderCategoryLabel(r.category) : "",
+          typeof r.fulfillment === "string" && r.fulfillment ? fulfillmentLabel(r.fulfillment) : "",
+          typeof r.participantMode === "string" && r.participantMode ? participantModeLabel(r.participantMode) : "",
           orderKindLabel(r.orderKind),
           STATUS_LABEL[String(r.status)] ?? String(r.status),
           partyName(r.buyer),
@@ -363,6 +386,10 @@ function OrdersPageContent() {
           limit: PAGE_SIZE,
           status: statusFilter || undefined,
           kind: kindFilter || undefined,
+          // TX-UNIFIED-V2: filter 3 dimensi.
+          fulfillment: fulfillmentFilter || undefined,
+          participantMode: participantModeFilter || undefined,
+          category: categoryFilter || undefined,
           // H01: pakai nilai pencarian yang sudah terkomit ke URL.
           q: f.search.trim() || undefined,
           hasEscrow: escrowOnly || undefined,
@@ -385,7 +412,7 @@ function OrdersPageContent() {
         setLoading(false)
       }
     },
-    [statusFilter, kindFilter, f.search, escrowOnly, startDate, endDate, sortBy, sortOrder, toast],
+    [statusFilter, kindFilter, fulfillmentFilter, participantModeFilter, categoryFilter, f.search, escrowOnly, startDate, endDate, sortBy, sortOrder, toast],
   )
 
   useEffect(() => {
@@ -398,8 +425,22 @@ function OrdersPageContent() {
   }
 
   // POIN 2: filter tipe transaksi tersimpan di URL (diteruskan sebagai `kind`).
+  // DEPRECATED: dipertahankan untuk kompatibilitas.
   const handleKindChange = (value: string) => {
     setF({ kind: value, page: "1" })
+  }
+
+  // TX-UNIFIED-V2: filter 3 dimensi tersimpan di URL.
+  const handleFulfillmentChange = (value: string) => {
+    setF({ fulfillment: value, page: "1" })
+  }
+
+  const handleParticipantModeChange = (value: string) => {
+    setF({ participantMode: value, page: "1" })
+  }
+
+  const handleCategoryChange = (value: string) => {
+    setF({ category: value, page: "1" })
   }
 
   const handleEscrowChange = (value: string) => {
@@ -634,13 +675,30 @@ function OrdersPageContent() {
           </Badge>
         ),
       },
-      // POIN 2 (unifikasi transaksi escrow): badge tipe transaksi dari
-      // `orderKind` respons backend (tampil "—" sampai backend mengirimnya).
+      // TX-UNIFIED-V2: badge 3 dimensi (kategori/sistem/peserta) — fallback ke
+      // `orderKind` lama bila backend belum mengirim dimensi baru.
       {
         key: "kind",
         header: "Tipe",
         defaultVisible: true,
         render: (r) => {
+          const cat = typeof r.category === "string" ? r.category : ""
+          const ful = typeof r.fulfillment === "string" ? r.fulfillment : ""
+          const pm = typeof r.participantMode === "string" ? r.participantMode : ""
+          if (cat || ful || pm) {
+            const parts = [
+              cat ? orderCategoryLabel(cat) : null,
+              ful ? fulfillmentLabel(ful) : null,
+              pm ? participantModeLabel(pm) : null,
+            ].filter(Boolean)
+            return (
+              <span className="inline-flex flex-wrap gap-1">
+                {parts.map((p, i) => (
+                  <Badge key={i} tone={i === 0 ? "info" : i === 1 ? "accent" : "warning"}>{p}</Badge>
+                ))}
+              </span>
+            )
+          }
           const k = typeof r.orderKind === "string" ? r.orderKind : ""
           return k ? (
             <Badge tone={KIND_TONE[k] ?? "neutral"}>{orderKindLabel(k)}</Badge>
@@ -738,12 +796,40 @@ function OrdersPageContent() {
               onChange={(e) => handleStatusChange(e.target.value)}
               options={STATUS_FILTERS}
             />
-            {/* POIN 2: filter tipe transaksi → param `kind` backend. */}
+            {/* POIN 2: filter tipe transaksi → param `kind` backend. DEPRECATED. */}
             <Select
-              label="Tipe transaksi"
+              label="Tipe transaksi (lama)"
               value={kindFilter}
               onChange={(e) => handleKindChange(e.target.value)}
               options={KIND_FILTERS}
+            />
+            {/* TX-UNIFIED-V2: filter 3 dimensi. */}
+            <Select
+              label="Kategori"
+              value={categoryFilter}
+              onChange={(e) => handleCategoryChange(e.target.value)}
+              options={ORDER_CATEGORY_FILTER_OPTIONS.map((o) => ({
+                value: o.value === "ALL" ? "" : o.value,
+                label: o.label,
+              }))}
+            />
+            <Select
+              label="Sistem"
+              value={fulfillmentFilter}
+              onChange={(e) => handleFulfillmentChange(e.target.value)}
+              options={FULFILLMENT_FILTER_OPTIONS.map((o) => ({
+                value: o.value === "ALL" ? "" : o.value,
+                label: o.label,
+              }))}
+            />
+            <Select
+              label="Peserta"
+              value={participantModeFilter}
+              onChange={(e) => handleParticipantModeChange(e.target.value)}
+              options={PARTICIPANT_MODE_FILTER_OPTIONS.map((o) => ({
+                value: o.value === "ALL" ? "" : o.value,
+                label: o.label,
+              }))}
             />
             <Select
               label="Escrow"
