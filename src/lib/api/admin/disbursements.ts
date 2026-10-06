@@ -29,6 +29,7 @@
  */
 import { adminHttp } from "@/lib/api/admin-client"
 import { newIdempotencyKey } from "@/lib/api/admin/finance"
+import { STEP_UP_HEADER } from "@/lib/api/admin/step-up"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import type { BadgeTone } from "@/components/ui/badge"
 
@@ -220,17 +221,27 @@ export function recheckDisbursement(
  * BAI-044: review manual baris NEEDS_REVIEW — SUPER_ADMIN only (backend
  * menegakkan role). `reason` min 10 karakter; untuk FORCE_SUCCESS wajib
  * memuat bukti transfer nyata (mis. referensi DANA dashboard).
+ *
+ * SEC-501: backend mewajibkan `@RequireStepUp` — pemanggil wajib meminta
+ * token via `useStepUp().requestStepUp()` dan meneruskannya di opts.
  */
 export function reviewDisbursement(
   id: string,
   decision: DisbursementReviewDecision,
   reason: string,
   idempotencyKey?: string,
+  opts?: { stepUpToken?: string },
 ): Promise<DisbursementReviewResult> {
+  const headers: Record<string, string> = {
+    "Idempotency-Key": idempotencyKey ?? newIdempotencyKey(),
+  }
+  if (opts?.stepUpToken) {
+    headers[STEP_UP_HEADER] = opts.stepUpToken
+  }
   return adminHttp.post<DisbursementReviewResult>(
     `/v1/admin/finance/disbursements/${encodeURIComponent(id)}/review`,
     { decision, reason },
-    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
+    { headers },
   )
 }
 
@@ -238,15 +249,25 @@ export function reviewDisbursement(
  * BAI-045: cairkan ulang baris HELD_NO_BANK → PENDING (setelah seller
  * mendaftarkan rekening terverifikasi). Cron retryDue memprosesnya via
  * settle() yang fail-closed.
+ *
+ * SEC-501: backend mewajibkan `@RequireStepUp` — pemanggil wajib meminta
+ * token via `useStepUp().requestStepUp()` dan meneruskannya di opts.
  */
 export function requeueDisbursement(
   id: string,
   idempotencyKey?: string,
+  opts?: { stepUpToken?: string },
 ): Promise<{ id: string; idempotencyKey: string; status: DisbursementStatus }> {
+  const headers: Record<string, string> = {
+    "Idempotency-Key": idempotencyKey ?? newIdempotencyKey(),
+  }
+  if (opts?.stepUpToken) {
+    headers[STEP_UP_HEADER] = opts.stepUpToken
+  }
   return adminHttp.post(
     `/v1/admin/finance/disbursements/${encodeURIComponent(id)}/requeue`,
     {},
-    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
+    { headers },
   )
 }
 

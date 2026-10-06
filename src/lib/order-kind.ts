@@ -54,3 +54,67 @@ export function rowOrderKind(row: Record<string, unknown>): string {
   const nested = order?.orderKind
   return typeof nested === "string" ? nested : ""
 }
+
+// ---------------------------------------------------------------------------
+// TX-UNIFIED-V2: 3 dimensi independen pengganti OrderKind flat.
+// Backend: FulfillmentType + ParticipantMode + OrderCategory (prisma).
+// ---------------------------------------------------------------------------
+
+/** Kategori transaksi: Fisik / Digital / Jasa. */
+export type OrderCategory = "FISIK" | "DIGITAL" | "JASA" | (string & {})
+
+/** Sistem pemenuhan: Langsung (ready) / Preorder. Jasa pakai tanggal, bukan label ini. */
+export type FulfillmentType = "BIASA" | "PREORDER" | (string & {})
+
+/** Mode peserta: Sendiri (1-by-1) / Patungan (1-by-N). */
+export type ParticipantMode = "SINGLE" | "GROUP" | (string & {})
+
+export const ORDER_CATEGORY_LABEL: Record<string, string> = {
+  FISIK: "Fisik",
+  DIGITAL: "Digital",
+  JASA: "Jasa",
+}
+
+export const FULFILLMENT_LABEL: Record<string, string> = {
+  BIASA: "Langsung",
+  PREORDER: "Preorder",
+}
+
+export const PARTICIPANT_MODE_LABEL: Record<string, string> = {
+  SINGLE: "Sendiri",
+  GROUP: "Patungan",
+}
+
+export function orderCategoryLabel(v: unknown): string {
+  const k = typeof v === "string" ? v : ""
+  return ORDER_CATEGORY_LABEL[k] ?? (k || "—")
+}
+
+export function fulfillmentLabel(v: unknown): string {
+  const k = typeof v === "string" ? v : ""
+  return FULFILLMENT_LABEL[k] ?? (k || "—")
+}
+
+export function participantModeLabel(v: unknown): string {
+  const k = typeof v === "string" ? v : ""
+  return PARTICIPANT_MODE_LABEL[k] ?? (k || "—")
+}
+
+export const ORDER_CATEGORY_FILTER_OPTIONS = [
+  { value: "ALL", label: "Semua kategori" },
+  { value: "FISIK", label: "Fisik" },
+  { value: "DIGITAL", label: "Digital" },
+  { value: "JASA", label: "Jasa" },
+]
+
+export const FULFILLMENT_FILTER_OPTIONS = [
+  { value: "ALL", label: "Semua sistem" },
+  { value: "BIASA", label: "Langsung" },
+  { value: "PREORDER", label: "Preorder" },
+]
+
+export const PARTICIPANT_MODE_FILTER_OPTIONS = [
+  { value: "ALL", label: "Semua peserta" },
+  { value: "SINGLE", label: "Sendiri" },
+  { value: "GROUP", label: "Patungan" },
+]

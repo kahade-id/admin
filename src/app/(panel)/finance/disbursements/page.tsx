@@ -31,6 +31,7 @@ import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { useAuth } from "@/lib/auth-context"
 import {
   listDisbursements,
@@ -47,6 +48,7 @@ import {
   type DisbursementStatus,
 } from "@/lib/api/admin/disbursements"
 import { newIdempotencyKey } from "@/lib/api/admin/finance"
+import { StepUpNotSupportedError } from "@/lib/api/admin/step-up"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatIDR } from "@/lib/format"
 
@@ -109,6 +111,9 @@ export default function DisbursementsPage() {
   const [reviewReason, setReviewReason] = useState("")
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [requeueTarget, setRequeueTarget] = useState<DisbursementListItem | null>(null)
+  // SEC-501: verifikasi ulang server sebelum aksi uang (review/requeue) —
+  // backend mewajibkan @RequireStepUp, tanpa token → 403 STEP_UP_REQUIRED.
+  const { requestStepUp, stepUpDialog } = useStepUp()
 
   const load = useCallback(async (p: number) => {
     setLoading(true)
@@ -190,9 +195,27 @@ export default function DisbursementsPage() {
       setReviewError("FORCE_SUCCESS wajib memuat bukti transfer nyata (mis. referensi DANA dashboard).")
       return
     }
+    // SEC-501: verifikasi ulang server SEBELUM eksekusi — fail-closed.
+    let stepUpToken: string | null
+    try {
+      stepUpToken = await requestStepUp({
+        action: "disbursement.review",
+        targetId: reviewTarget.id,
+        title: "Verifikasi ulang",
+        description: `Review disbursement ${formatIDR(reviewTarget.amountIdr)} (${reviewDecision}) — aksi uang dan bersifat final.`,
+      })
+    } catch (e) {
+      if (e instanceof StepUpNotSupportedError) {
+        setReviewError("Backend belum mendukung verifikasi ulang server — aksi diblokir.")
+        return
+      }
+      setReviewError(userMessage(e))
+      return
+    }
+    if (stepUpToken === null) return // user membatalkan verifikasi
     setActing(reviewTarget.id)
     try {
-      const res = await reviewDisbursement(reviewTarget.id, reviewDecision, reason, newIdempotencyKey())
+      const res = await reviewDisbursement(reviewTarget.id, reviewDecision, reason, newIdempotencyKey(), { stepUpToken })
       show({
         title: `Review tercatat: ${res.decision}`,
         description: `${res.idempotencyKey} → ${STATUS_LABEL[res.status] ?? res.status}`,
@@ -212,9 +235,27 @@ export default function DisbursementsPage() {
 
   const handleRequeue = async () => {
     if (!requeueTarget) return
+    // SEC-501: verifikasi ulang server SEBELUM eksekusi — fail-closed.
+    let stepUpToken: string | null
+    try {
+      stepUpToken = await requestStepUp({
+        action: "disbursement.requeue",
+        targetId: requeueTarget.id,
+        title: "Verifikasi ulang",
+        description: `Cairkan ulang disbursement ${formatIDR(requeueTarget.amountIdr)} ke PENDING — memicu transfer DANA.`,
+      })
+    } catch (e) {
+      if (e instanceof StepUpNotSupportedError) {
+        show({ title: "Backend belum mendukung verifikasi ulang server — aksi diblokir", tone: "danger" })
+        return
+      }
+      show({ title: "Verifikasi ulang gagal", description: userMessage(e), tone: "danger" })
+      return
+    }
+    if (stepUpToken === null) return // user membatalkan verifikasi
     setActing(requeueTarget.id)
     try {
-      const res = await requeueDisbursement(requeueTarget.id, newIdempotencyKey())
+      const res = await requeueDisbursement(requeueTarget.id, newIdempotencyKey(), { stepUpToken })
       show({
         title: "Dicairkan ulang",
         description: `${res.idempotencyKey} → PENDING. Cron akan memproses setelah rekening terverifikasi.`,
@@ -549,6 +590,8 @@ export default function DisbursementsPage() {
         Role Anda: {role ?? "—"}. Review NEEDS_REVIEW hanya untuk SUPER_ADMIN;
         requeue HELD_NO_BANK untuk SUPER_ADMIN / FINANCE_ADMIN (ditegakkan backend).
       </p>
+
+      {stepUpDialog}
     </RoleGate>
   )
 }
