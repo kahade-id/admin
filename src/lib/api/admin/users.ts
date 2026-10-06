@@ -268,11 +268,23 @@ export type BanUserResult = {
   flaggedForReview: boolean
 }
 
-/** reason wajib, min 5 — divalidasi backend (BanUserDto). */
-export function banUser(userId: string, reason: string): Promise<BanUserResult> {
+/**
+ * P2-1 (audit integrasi 2026-10-06): backend mewajibkan
+ * @RequireStepUp('user.ban','userId') — kirim token step-up.
+ */
+export function banUser(
+  userId: string,
+  reason: string,
+  opts?: UserStepUpOpts,
+): Promise<BanUserResult> {
   return adminHttp.post<BanUserResult>(
     `/v1/admin/users/${encodeURIComponent(userId)}/ban`,
     { reason },
+    {
+      headers: {
+        ...(opts?.stepUpToken ? { [STEP_UP_HEADER]: opts.stepUpToken } : {}),
+      },
+    },
   )
 }
 
@@ -299,14 +311,23 @@ export type SuspendUserResult = {
  * diblokir sampai durasi habis (auto-unsuspend via TTL Redis). Alasan wajib
  * min 10 karakter (ditegakkan DTO backend); durasi 1–720 jam.
  * SENSITIF: SUPER_ADMIN saja + audit wajib.
+ *
+ * P2-1 (audit integrasi 2026-10-06): backend mewajibkan
+ * @RequireStepUp('user.suspend','userId') — kirim token step-up.
  */
 export function suspendUser(
   userId: string,
   input: { reason: string; durationHours: number },
+  opts?: UserStepUpOpts,
 ): Promise<SuspendUserResult> {
   return adminHttp.post<SuspendUserResult>(
     `/v1/admin/users/${encodeURIComponent(userId)}/suspend`,
     input,
+    {
+      headers: {
+        ...(opts?.stepUpToken ? { [STEP_UP_HEADER]: opts.stepUpToken } : {}),
+      },
+    },
   )
 }
 

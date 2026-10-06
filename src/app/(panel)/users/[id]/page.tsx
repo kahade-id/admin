@@ -413,8 +413,17 @@ export default function UserDetailPage() {
       return
     }
     setBanReasonError(null)
+    // P2-1 (audit integrasi 2026-10-06): backend mewajibkan step-up
+    // @RequireStepUp('user.ban','userId').
+    const token = await requestStepUp({
+      action: "user.ban",
+      targetId: userId,
+      title: "Blokir pengguna",
+      description: `Blokir ${displayName} secara permanen. Sesi aktif akan dicabut. Alasan: ${reason}`,
+    })
+    if (!token) return
     setBanOpen(false)
-    await runAction("ban", () => banUser(userId, reason), "Pengguna diblokir", reason)
+    await runAction("ban", () => banUser(userId, reason, { stepUpToken: token }), "Pengguna diblokir", reason)
     setBanReason("")
   }
 
@@ -431,10 +440,19 @@ export default function UserDetailPage() {
       return
     }
     setSuspendReasonError(null)
+    // P2-1 (audit integrasi 2026-10-06): backend mewajibkan step-up
+    // @RequireStepUp('user.suspend','userId').
+    const token = await requestStepUp({
+      action: "user.suspend",
+      targetId: userId,
+      title: "Tangguhkan pengguna",
+      description: `Tangguhkan ${displayName} selama ${hours} jam. Sesi aktif akan dicabut.`,
+    })
+    if (!token) return
     setSuspendOpen(false)
     await runAction(
       "suspend",
-      () => suspendUser(userId, { reason, durationHours: hours }),
+      () => suspendUser(userId, { reason, durationHours: hours }, { stepUpToken: token }),
       "Pengguna ditangguhkan",
       `Sesi aktif dicabut; login diblokir ${hours} jam (auto-buka).`,
     )
