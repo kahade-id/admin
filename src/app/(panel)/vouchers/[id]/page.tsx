@@ -325,7 +325,8 @@ function VoucherDetailContent() {
                         {maskEmail(u.user?.email)}
                       </td>
                       <td className="py-2 pr-4 font-mono text-[13px] text-text-primary">
-                        {maskPhone(u.user?.phone)}
+                        {/* P1-10: backend kirim user.phoneNumber (masked), bukan .phone */}
+                        {maskPhone(u.user?.phoneNumber ?? u.user?.phone)}
                       </td>
                       <td className="py-2 text-right text-text-primary">
                         {u.discountApplied != null ? formatIDR(u.discountApplied) : "—"}

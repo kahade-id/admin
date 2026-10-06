@@ -235,13 +235,27 @@ export function duplicateCampaign(
 function unwrapVersionList(
   raw: unknown,
 ): AdminCampaignVersion[] {
-  if (Array.isArray(raw)) return raw as AdminCampaignVersion[]
-  if (raw && typeof raw === "object") {
+  let list: unknown[] = []
+  if (Array.isArray(raw)) list = raw
+  else if (raw && typeof raw === "object") {
     const r = raw as Record<string, unknown>
-    if (Array.isArray(r.versions)) return r.versions as AdminCampaignVersion[]
-    if (Array.isArray(r.data)) return r.data as AdminCampaignVersion[]
+    if (Array.isArray(r.versions)) list = r.versions
+    else if (Array.isArray(r.data)) list = r.data
   }
-  return []
+  // P1-9 (audit integrasi 2026-10-06): backend kirim createdAt/changeReason/
+  // payload — normalisasi ke kunci UI (changedAt/note/changes).
+  return list.map((item) => {
+    if (!item || typeof item !== "object") return item as AdminCampaignVersion
+    const v = item as Record<string, unknown>
+    return {
+      ...v,
+      changedAt:
+        (v.changedAt as string) ?? (v.createdAt as string) ?? "",
+      note: (v.note as string | null) ?? (v.changeReason as string | null) ?? null,
+      changes:
+        (v.changes as unknown) ?? (v.payload as unknown) ?? null,
+    } as AdminCampaignVersion
+  })
 }
 
 /**

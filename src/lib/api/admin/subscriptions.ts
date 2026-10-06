@@ -63,6 +63,22 @@ export type SubscriptionFeeUsage = {
   [key: string]: unknown
 }
 
+/**
+ * Penggunaan kuota fee periode berjalan — kontrak backend
+ * `getSubscriptionDetail` (kunci: feeWaivedAmount/feeWaiverLimit/
+ * feeWaiverRemaining).
+ * P1-2 (audit integrasi 2026-10-06): mapping lama membaca `currentUsage`
+ * yang tidak dikirim backend → kartu periode berjalan tampil angka lifetime.
+ */
+export type SubscriptionCurrentPeriodUsage = {
+  periodStart?: string | null
+  periodEnd?: string | null
+  feeWaivedAmount?: number | null
+  feeWaiverLimit?: number | null
+  feeWaiverRemaining?: number | null
+  [key: string]: unknown
+}
+
 export type SubscriptionItem = {
   id: string
   userId?: string
@@ -85,6 +101,12 @@ export type SubscriptionDetail = SubscriptionItem & {
   feeSavingsLimit?: number | null
   /** Penggunaan kuota fee pada periode berjalan (kontrak baru). */
   currentUsage?: SubscriptionFeeUsage | null
+  /**
+   * Penggunaan kuota fee periode berjalan — kunci backend aktual.
+   * P1-2 (audit integrasi 2026-10-06): backend kirim `currentPeriodUsage`,
+   * bukan `currentUsage`.
+   */
+  currentPeriodUsage?: SubscriptionCurrentPeriodUsage | null
   paymentTx?: {
     txId?: string
     status?: string

@@ -564,10 +564,11 @@ export type UsersExportResult =
 
 export type UsersExportJobStatus = {
   jobId: string
-  status: "pending" | "done" | "failed"
+  /** P1-24: backend kirim 'ready' (bukan 'done') saat selesai. */
+  status: "pending" | "ready" | "done" | "failed"
   /** 0–100 untuk ekspor besar. */
   progress?: number | null
-  /** URL unduh saat status=done (relatif ke API_BASE_URL atau absolut). */
+  /** URL unduh saat status=ready/done (relatif ke API_BASE_URL atau absolut). */
   downloadUrl?: string | null
   error?: string | null
 }

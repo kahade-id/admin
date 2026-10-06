@@ -1,19 +1,16 @@
 /**
- * Kahade admin — moderasi komentar showcase (FAL-010, audit integrasi 2026-10-03).
+ * Kahade admin — moderasi komentar showcase (FAL-010).
  *
- * Kontrak backend (asumsi — tim backend membangun paralel; SEMUA fungsi
- * defensif 404 dengan pesan jelas "membutuhkan backend terbaru"):
- * - GET   /v1/admin/showcase/comments?{page,limit,search,hidden,itemId}
- *   → Paginated<ShowcaseComment>
- * - PATCH /v1/admin/showcase/comments/:id  { hidden: boolean, reason: string }
- *   → sembunyikan / tampilkan kembali komentar. `reason` wajib (audit).
- * - PATCH /v1/admin/showcase/comments/:id  { deleted: true, reason: string }
- *   → hapus komentar (soft/hard sesuai kebijakan backend). Wajib header
- *   `X-Step-Up-Token` (aksi step-up `showcase-comment.delete`) + `Idempotency-Key`.
+ * Kontrak backend AKTUAL (audit integrasi 2026-10-06):
+ * - GET  /v1/admin/showcase/comments?{status,search,page,limit}
+ *   → {data,total,page,limit,totalPages,status}; status = all|visible|hidden|deleted
+ *   item: {id,content,isHidden,hiddenReason,author:{...},showcase:{id},...}
+ * - PATCH /v1/admin/showcase/comments/:id  {action:'hide'|'unhide'|'delete', reason?}
+ *   → wajib header `Idempotency-Key` (@Idempotency).
+ *   reason untuk hide: SPAM|INAPPROPRIATE|HARASSMENT|OTHER.
  *
- * Bila backend menyelaraskan kontrak berbeda (mis. endpoint DELETE terpisah
- * atau body lain), sesuaikan fungsi ini — halaman hanya memakai signature
- * di bawah, bukan bentuk request mentah.
+ * P1-13 s.d. P1-18 (audit integrasi 2026-10-06): kontrak lama ({hidden},
+ * {deleted:true}, query hidden/itemId, baca flat authorName) → 422/blank.
  */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
@@ -33,31 +30,62 @@ function isNotFoundError(e: unknown): boolean {
   )
 }
 
+export type ShowcaseCommentAuthor = {
+  userId?: string
+  username?: string | null
+  fullName?: string | null
+  avatarUrl?: string | null
+  [key: string]: unknown
+}
+
 export type ShowcaseComment = {
   id: string
-  content: string
-  authorId?: string | null
-  authorName?: string | null
-  authorUsername?: string | null
-  itemId?: string | null
-  itemTitle?: string | null
+  content: string | null
+  showcaseId?: string | null
+  parentId?: string | null
   isHidden: boolean
   hiddenReason?: string | null
   hiddenAt?: string | null
+  hiddenBy?: string | null
+  isDeleted?: boolean
+  deletedAt?: string | null
+  deletedBy?: string | null
+  deleteReason?: string | null
   createdAt: string
+  updatedAt?: string
+  /** Relasi author (backend kirim nested, bukan flat). P1-18. */
+  author?: ShowcaseCommentAuthor | null
+  /** Relasi showcase (backend kirim {id}, bukan itemTitle flat). P1-18. */
+  showcase?: { id?: string; [key: string]: unknown } | null
+  // Alias lama (deprecated) — dipertahankan agar pemanggil lama tidak crash,
+  // diisi dari relasi bila ada.
+  authorName?: string | null
+  authorUsername?: string | null
+  itemTitle?: string | null
   [key: string]: unknown
 }
+
+export type ShowcaseCommentStatus = "all" | "visible" | "hidden" | "deleted"
 
 export type ShowcaseCommentFilters = {
   page?: number
   limit?: number
   /** Cari isi komentar / nama penulis. */
   search?: string
-  /** "hidden" | "visible" — filter status. */
-  hidden?: "hidden" | "visible"
-  /** Filter per item etalase. */
-  itemId?: string
+  /** P1-17: backend hanya kenal `status` (bukan `hidden`/`itemId`). */
+  status?: ShowcaseCommentStatus
 }
+
+/** Kategori alasan moderasi yang diterima backend untuk hide. P1-16. */
+export const SHOWCASE_HIDE_REASONS = [
+  "SPAM",
+  "INAPPROPRIATE",
+  "HARASSMENT",
+  "OTHER",
+] as const
+export type ShowcaseHideReason = (typeof SHOWCASE_HIDE_REASONS)[number]
+
+export type ModerateCommentAction = "hide" | "unhide" | "delete"
 
 function notSupported(fn: string, method: string, path: string): Error {
   return new Error(
@@ -65,14 +93,52 @@ function notSupported(fn: string, method: string, path: string): Error {
   )
 }
 
+function normalizeComment(raw: unknown): ShowcaseComment {
+  const c = (raw ?? {}) as Record<string, unknown>
+  const author = (c.author ?? null) as ShowcaseCommentAuthor | null
+  const showcase = (c.showcase ?? null) as { id?: string } | null
+  return {
+    ...(c as object),
+    id: String(c.id ?? ""),
+    content: typeof c.content === "string" ? c.content : null,
+    isHidden: c.isHidden === true,
+    createdAt: String(c.createdAt ?? ""),
+    author,
+    showcase,
+    // Alias lama dari relasi — P1-18.
+    authorName:
+      (c.authorName as string | null) ??
+      author?.fullName ??
+      author?.username ??
+      null,
+    authorUsername: (c.authorUsername as string | null) ?? author?.username ?? null,
+    itemTitle: (c.itemTitle as string | null) ?? showcase?.id ?? null,
+  } as ShowcaseComment
+}
+
 export async function listShowcaseComments(
   params?: ShowcaseCommentFilters,
 ): Promise<Paginated<ShowcaseComment>> {
   try {
-    return await adminHttp.get<Paginated<ShowcaseComment>>(
-      "/v1/admin/showcase/comments",
-      { query: params as Record<string, string | number | boolean | undefined> },
-    )
+    const raw = await adminHttp.get<unknown>("/v1/admin/showcase/comments", {
+      query: {
+        page: params?.page,
+        limit: params?.limit,
+        search: params?.search?.trim() || undefined,
+        status: params?.status ?? "all",
+      } as Record<string, string | number | undefined>,
+    })
+    const r = (raw ?? {}) as Record<string, unknown>
+    const data = Array.isArray(r.data)
+      ? (r.data as unknown[]).map(normalizeComment)
+      : []
+    return {
+      data,
+      total: typeof r.total === "number" ? r.total : data.length,
+      page: typeof r.page === "number" ? r.page : (params?.page ?? 1),
+      limit: typeof r.limit === "number" ? r.limit : (params?.limit ?? 20),
+      totalPages: typeof r.totalPages === "number" ? r.totalPages : 1,
+    } as Paginated<ShowcaseComment>
   } catch (e) {
     if (isNotFoundError(e)) {
       throw notSupported(
@@ -86,23 +152,39 @@ export async function listShowcaseComments(
 }
 
 /**
- * Sembunyikan (`hidden=true`) atau tampilkan kembali (`hidden=false`)
- * komentar. `reason` wajib — tercatat di audit.
+ * Moderasi komentar: hide / unhide / delete.
+ * P1-13/14: backend wajib {action}, bukan {hidden}/{deleted:true}.
+ * P1-15: endpoint @Idempotency() — Idempotency-Key wajib.
+ * P1-16: reason untuk hide harus SPAM|INAPPROPRIATE|HARASSMENT|OTHER.
  */
-export async function setShowcaseCommentHidden(
+export async function moderateShowcaseComment(
   id: string,
-  hidden: boolean,
-  reason: string,
+  action: ModerateCommentAction,
+  reason: string | undefined,
+  opts?: { stepUpToken?: string; idempotencyKey?: string },
 ): Promise<ShowcaseComment> {
   try {
-    return await adminHttp.patch<ShowcaseComment>(
+    const res = await adminHttp.patch<unknown>(
       `/v1/admin/showcase/comments/${encodeURIComponent(id)}`,
-      { hidden, reason },
+      { action, reason: reason?.trim() || undefined },
+      {
+        headers: {
+          "Idempotency-Key": opts?.idempotencyKey ?? newIdempotencyKey(),
+          ...(opts?.stepUpToken ? stepUpHeaders(opts.stepUpToken) : {}),
+        },
+      },
     )
+    // Backend kembalikan objek hasil moderasi — normalisasi seperti list.
+    const r = (res ?? {}) as Record<string, unknown>
+    const inner =
+      (r.data as Record<string, unknown> | undefined) ??
+      (r.comment as Record<string, unknown> | undefined) ??
+      r
+    return normalizeComment(inner)
   } catch (e) {
     if (isNotFoundError(e)) {
       throw notSupported(
-        "setShowcaseCommentHidden",
+        "moderateShowcaseComment",
         "PATCH",
         "/v1/admin/showcase/comments/:id",
       )
@@ -112,33 +194,26 @@ export async function setShowcaseCommentHidden(
 }
 
 /**
- * Hapus komentar. `reason` wajib. `stepUpToken` dari step-up gate
+ * Sembunyikan komentar. `reason` kategori: SPAM|INAPPROPRIATE|HARASSMENT|OTHER.
+ * (Kompatibilitas — delegasi ke moderateShowcaseComment.)
+ */
+export async function setShowcaseCommentHidden(
+  id: string,
+  hidden: boolean,
+  reason: string,
+): Promise<ShowcaseComment> {
+  return moderateShowcaseComment(id, hidden ? "hide" : "unhide", reason)
+}
+
+/**
+ * Hapus komentar (soft-delete). `stepUpToken` dari step-up gate
  * (aksi `showcase-comment.delete`) — jangan panggil tanpa token.
+ * (Kompatibilitas — delegasi ke moderateShowcaseComment.)
  */
 export async function deleteShowcaseComment(
   id: string,
   reason: string,
   stepUpToken: string,
 ): Promise<ShowcaseComment> {
-  try {
-    return await adminHttp.patch<ShowcaseComment>(
-      `/v1/admin/showcase/comments/${encodeURIComponent(id)}`,
-      { deleted: true, reason },
-      {
-        headers: {
-          "Idempotency-Key": newIdempotencyKey(),
-          ...stepUpHeaders(stepUpToken),
-        },
-      },
-    )
-  } catch (e) {
-    if (isNotFoundError(e)) {
-      throw notSupported(
-        "deleteShowcaseComment",
-        "PATCH",
-        "/v1/admin/showcase/comments/:id",
-      )
-    }
-    throw e
-  }
+  return moderateShowcaseComment(id, "delete", reason, { stepUpToken })
 }

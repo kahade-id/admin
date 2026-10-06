@@ -120,9 +120,31 @@ export async function updateOpsSetting(
     },
     { headers },
   )
-  // SEC-506: backend bisa menjawab 202 + { pendingApproval } (two-person
-  // rule) alih-alih { setting }. adminHttp meng-unwrap envelope backend.
-  const body = res as { pendingApproval?: PendingApproval; setting?: OpsSettingView }
+  // SEC-506: backend bisa menjawab {approvalId,status,expiresAt,message}
+  // (dual control untuk key finansial) alih-alih { setting }.
+  // P1-29 (audit integrasi 2026-10-06): cek approvalId, bukan pendingApproval.
+  const body = res as {
+    approvalId?: string
+    status?: string
+    expiresAt?: string
+    message?: string
+    pendingApproval?: PendingApproval
+    setting?: OpsSettingView
+  }
+  if (body && typeof body.approvalId === "string") {
+    // P1-29: backend kirim {approvalId,status,expiresAt,message} — petakan
+    // ke bentuk PendingApproval yang dipakai UI.
+    return {
+      pendingApproval: {
+        id: body.approvalId,
+        key: key,
+        proposedAt: body.expiresAt ?? null,
+        approvalId: body.approvalId,
+        approvalStatus: body.status ?? "PENDING",
+        message: body.message ?? "",
+      } as PendingApproval,
+    }
+  }
   if (body && typeof body.pendingApproval === "object" && body.pendingApproval !== null) {
     return { pendingApproval: body.pendingApproval }
   }

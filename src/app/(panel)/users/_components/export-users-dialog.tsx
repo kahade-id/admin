@@ -138,7 +138,7 @@ export function ExportUsersDialog({
       try {
         const st = await getUsersExportJob(jobId)
         setProgress(typeof st.progress === "number" ? st.progress : null)
-        if (st.status === "done") {
+        if (st.status === "done" || st.status === "ready") {
           if (pollRef.current) clearInterval(pollRef.current)
           pollRef.current = null
           if (!st.downloadUrl) {

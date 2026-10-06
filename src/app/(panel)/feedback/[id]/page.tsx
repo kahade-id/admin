@@ -83,6 +83,8 @@ export default function FeedbackDetailPage() {
 
   const [nextStatus, setNextStatus] = useState<FeedbackStatus>("IN_REVIEW")
   const [updating, setUpdating] = useState(false)
+  // P1-23: backend wajibkan reason saat status → CLOSED.
+  const [statusReason, setStatusReason] = useState("")
   const [noteDraft, setNoteDraft] = useState("")
   const [savingNote, setSavingNote] = useState(false)
   const [tagsDraft, setTagsDraft] = useState("")
@@ -167,9 +169,19 @@ export default function FeedbackDetailPage() {
   const actions = useMemo(
     () => ({
       status: async () => {
+        // P1-23: backend 400 bila CLOSED tanpa reason.
+        if (nextStatus === "CLOSED" && !statusReason.trim()) {
+          toast.show({
+            title: "Alasan wajib diisi",
+            description: "Menutup masukan via ubah status wajib disertai alasan.",
+            tone: "danger",
+          })
+          return
+        }
         setUpdating(true)
         try {
-          await updateFeedbackStatus(feedbackId, nextStatus)
+          await updateFeedbackStatus(feedbackId, nextStatus, statusReason.trim() || undefined)
+          setStatusReason("")
           await load()
           toast.show({ title: "Status diperbarui", tone: "success" })
         } catch (e) {
@@ -294,6 +306,7 @@ export default function FeedbackDetailPage() {
       closeReason,
       closeNote,
       closing,
+      statusReason,
       load,
       toast,
     ],
@@ -484,6 +497,16 @@ export default function FeedbackDetailPage() {
                     onChange={(e) => setNextStatus(e.target.value as FeedbackStatus)}
                     className="min-w-52 flex-1"
                   />
+                  {/* P1-23: alasan wajib bila tutup via ubah status. */}
+                  {nextStatus === "CLOSED" ? (
+                    <Input
+                      label="Alasan penutupan (wajib)"
+                      value={statusReason}
+                      onChange={(e) => setStatusReason(e.target.value)}
+                      placeholder="cth: Sudah ditindaklanjuti…"
+                      className="min-w-52 flex-1"
+                    />
+                  ) : null}
                   <Button variant="primary" fullWidth={false} loading={updating} disabled={nextStatus === detail.status} onClick={actions.status}>
                     Simpan status
                   </Button>

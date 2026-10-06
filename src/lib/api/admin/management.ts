@@ -213,17 +213,49 @@ export type AdminManagementSession = {
   createdAt: string
   /** true bila ini sesi yang sedang dipakai admin ini. */
   isCurrent?: boolean | null
+  /**
+   * P1-26 (audit integrasi 2026-10-06): kunci backend aktual.
+   * Backend kirim {id,ipAddress,userAgent,createdAt,lastSeenAt,revokedAt}.
+   */
+  userAgent?: string | null
+  lastSeenAt?: string | null
+  revokedAt?: string | null
 }
 
 /** GET /v1/admin/management/:id/sessions — sesi aktif akun admin. */
-export function listAdminSessions(
+export async function listAdminSessions(
   id: string,
   opts: { page?: number; limit?: number } = {},
 ): Promise<Paginated<AdminManagementSession>> {
-  return adminHttp.get<Paginated<AdminManagementSession>>(
+  // P1-26: backend kembalikan {data,total} (bukan paginated penuh) dengan
+  // kunci berbeda — normalisasi ke bentuk UI.
+  const raw = await adminHttp.get<{ data?: unknown[]; total?: number }>(
     `/v1/admin/management/${encodeURIComponent(id)}/sessions`,
     { query: opts },
   )
+  const rows = Array.isArray(raw?.data) ? raw.data : []
+  const data: AdminManagementSession[] = rows.map((r) => {
+    const s = (r ?? {}) as Record<string, unknown>
+    return {
+      id: String(s.id ?? ""),
+      deviceInfo: (s.deviceInfo as string | null) ?? (s.userAgent as string | null) ?? null,
+      ipAddress: (s.ipAddress as string | null) ?? null,
+      lastActiveAt: String(s.lastActiveAt ?? s.lastSeenAt ?? s.createdAt ?? ""),
+      expiresAt: String(s.expiresAt ?? ""),
+      createdAt: String(s.createdAt ?? ""),
+      isCurrent: (s.isCurrent as boolean | null) ?? null,
+      userAgent: (s.userAgent as string | null) ?? null,
+      lastSeenAt: (s.lastSeenAt as string | null) ?? null,
+      revokedAt: (s.revokedAt as string | null) ?? null,
+    }
+  })
+  return {
+    data,
+    total: typeof raw?.total === "number" ? raw.total : data.length,
+    page: opts.page ?? 1,
+    limit: opts.limit ?? data.length,
+    totalPages: 1,
+  } as Paginated<AdminManagementSession>
 }
 
 /** DELETE /v1/admin/management/:id/sessions/:sessionId — cabut satu sesi. */
@@ -330,11 +362,42 @@ export type CreateEmergencyGrantInput = {
 }
 
 /** GET /v1/admin/emergency-grants — daftar grant akses darurat. */
-export function listEmergencyGrants(opts: { activeOnly?: boolean } = {}): Promise<EmergencyGrant[]> {
-  return adminHttp.get<{ data: EmergencyGrant[] } | EmergencyGrant[]>(
+export async function listEmergencyGrants(opts: { activeOnly?: boolean } = {}): Promise<EmergencyGrant[]> {
+  const res = await adminHttp.get<{ data: unknown[] } | unknown[]>(
     "/v1/admin/emergency-grants",
     { query: { activeOnly: opts.activeOnly ?? true } },
-  ).then((res) => (Array.isArray(res) ? res : (res.data ?? [])))
+  )
+  const raw = Array.isArray(res) ? res : (res.data ?? [])
+  // P1-27 (audit integrasi 2026-10-06): backend kirim relasi `admin` nested
+  // (bukan adminName flat) dan tanpa field `isActive` — hitung dari
+  // revokedAt/expiresAt agar filter UI tidak selalu kosong.
+  const now = Date.now()
+  return raw.map((g) => {
+    const grant = (g ?? {}) as Record<string, unknown>
+    const admin = (grant.admin ?? {}) as Record<string, unknown>
+    const revokedAt = grant.revokedAt as string | null
+    const expiresAt = grant.expiresAt as string | null
+    const isActive =
+      !revokedAt && !!expiresAt && new Date(expiresAt).getTime() > now
+    return {
+      ...(grant as object),
+      id: String(grant.id ?? ""),
+      adminId: String(grant.adminId ?? admin.adminId ?? admin.id ?? ""),
+      adminName:
+        (grant.adminName as string | null) ??
+        (admin.fullName as string | null) ??
+        null,
+      grantedBy: (grant.grantedBy as string | null) ?? null,
+      grantedByName: (grant.grantedByName as string | null) ?? null,
+      reason: String(grant.reason ?? ""),
+      scope: String(grant.scope ?? ""),
+      durationMinutes: Number(grant.durationMinutes ?? 0),
+      expiresAt: expiresAt ?? "",
+      createdAt: String(grant.createdAt ?? ""),
+      revokedAt,
+      isActive,
+    } as EmergencyGrant
+  })
 }
 
 /**
@@ -458,13 +521,36 @@ export type HandoffWorkload = {
   adminId: string
   fullName: string
   openCount: number
+  /**
+   * P1-28 (audit integrasi 2026-10-06): kunci backend aktual.
+   * Backend kirim handoffsReceived30d + activeAssignedDisputes.
+   */
+  handoffsReceived30d?: number
+  activeAssignedDisputes?: number
 }
 
 /** GET /v1/admin/handoffs/workload — beban kasus per petugas. */
-export function getHandoffWorkload(): Promise<HandoffWorkload[]> {
-  return adminHttp.get<{ data: HandoffWorkload[] } | HandoffWorkload[]>(
+export async function getHandoffWorkload(): Promise<HandoffWorkload[]> {
+  const res = await adminHttp.get<{ data: unknown[] } | unknown[]>(
     "/v1/admin/handoffs/workload",
-  ).then((res) => (Array.isArray(res) ? res : (res.data ?? [])))
+  )
+  const raw = Array.isArray(res) ? res : (res.data ?? [])
+  // P1-28: backend kirim {adminId,admin,handoffsReceived30d,activeAssignedDisputes}
+  // — bukan openCount. Hitung openCount dari jumlah keduanya.
+  return raw.map((w) => {
+    const row = (w ?? {}) as Record<string, unknown>
+    const admin = (row.admin ?? {}) as Record<string, unknown>
+    const handoffs = Number(row.handoffsReceived30d ?? 0)
+    const disputes = Number(row.activeAssignedDisputes ?? 0)
+    return {
+      adminId: String(row.adminId ?? admin.id ?? ""),
+      fullName:
+        String(row.fullName ?? admin.fullName ?? ""),
+      openCount: Number(row.openCount ?? handoffs + disputes),
+      handoffsReceived30d: handoffs,
+      activeAssignedDisputes: disputes,
+    } as HandoffWorkload
+  })
 }
 
 /* ------------------------- Log aktivitas admin ------------------------- */

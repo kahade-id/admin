@@ -288,6 +288,14 @@ export type DisbursementReviewResult = {
   idempotencyKey: string
   status: DisbursementStatus
   decision: DisbursementReviewDecision
+  /**
+   * P1-11 (audit integrasi 2026-10-06): untuk FORCE_SUCCESS, backend via dual
+   * control mengembalikan {approvalId,status,expiresAt,message} — bukan
+   * {id,idempotencyKey,decision}. UI wajib tampilkan pesan dual-control.
+   */
+  approvalId?: string
+  expiresAt?: string
+  message?: string
 }
 
 /** Label ringkas scope (tanpa jargon enum backend) — MFE-015. */

@@ -152,18 +152,26 @@ export function listFeedback(
   })
 }
 
-export function getFeedbackDetail(feedbackId: string): Promise<FeedbackDetail> {
-  return adminHttp.get<FeedbackDetail>(
+export async function getFeedbackDetail(
+  feedbackId: string,
+): Promise<FeedbackDetail> {
+  // P1-19 (audit integrasi 2026-10-06): backend bungkus {success:true,data:{...}}.
+  const res = await adminHttp.get<{ success?: boolean; data?: FeedbackDetail } & FeedbackDetail>(
     `/v1/admin/feedback/${encodeURIComponent(feedbackId)}`,
   )
+  return (res?.data ?? res) as FeedbackDetail
 }
 
 export function updateFeedbackStatus(
   feedbackId: string,
   status: FeedbackStatus,
+  reason?: string,
 ): Promise<unknown> {
+  // P1-23: backend wajibkan reason saat status → CLOSED
+  // (FEEDBACK_CLOSE_REASON_REQUIRED → 400).
   return adminHttp.patch(`/v1/admin/feedback/${encodeURIComponent(feedbackId)}/status`, {
     status,
+    ...(reason?.trim() ? { reason: reason.trim() } : {}),
   })
 }
 
@@ -211,10 +219,26 @@ export type FeedbackContact = {
   visibleToRole: boolean
 }
 
-export function getFeedbackContact(feedbackId: string): Promise<FeedbackContact> {
-  return adminHttp.post<FeedbackContact>(
+export async function getFeedbackContact(feedbackId: string): Promise<FeedbackContact> {
+  // P1-20 (audit integrasi 2026-10-06): backend kembalikan
+  // {success,data:{contact,contactMasked}} — bukan {contact,maskedContact,consent}.
+  const res = await adminHttp.post<{
+    success?: boolean
+    data?: { contact?: string | null; contactMasked?: boolean }
+  }>(
     `/v1/admin/feedback/${encodeURIComponent(feedbackId)}/contact`,
   )
+  const d = res?.data ?? {}
+  const contact = d.contact ?? null
+  const isMasked = d.contactMasked === true
+  return {
+    contact: isMasked ? null : contact,
+    maskedContact: isMasked ? contact : null,
+    // Backend tidak kirim consent terpisah — endpoint 400 bila tidak ada
+    // persetujuan, jadi sukses = ada persetujuan.
+    consent: true,
+    visibleToRole: !isMasked,
+  }
 }
 
 export function escalateFeedback(
@@ -246,21 +270,56 @@ export type FeedbackDuplicate = {
   similarity?: number
 }
 
-export function findDuplicateFeedback(feedbackId: string): Promise<{ items: FeedbackDuplicate[] }> {
-  return adminHttp.get<{ items: FeedbackDuplicate[] }>(
+export async function findDuplicateFeedback(
+  feedbackId: string,
+): Promise<{ items: FeedbackDuplicate[] }> {
+  // P1-21 (audit integrasi 2026-10-06): backend kembalikan
+  // {success,data:{candidates}} — bukan {items}.
+  const res = await adminHttp.get<{
+    success?: boolean
+    data?: { candidates?: Array<FeedbackDuplicate & { score?: number }> }
+  }>(
     `/v1/admin/feedback/${encodeURIComponent(feedbackId)}/duplicates`,
   )
+  const candidates = res?.data?.candidates ?? []
+  return {
+    items: candidates.map((c) => ({
+      id: c.id,
+      category: c.category,
+      messagePreview: c.messagePreview ?? "",
+      status: c.status,
+      createdAt: c.createdAt,
+      similarity: c.score ?? c.similarity,
+    })),
+  }
 }
 
 /**
- * Ekspor feedback: backend memproses dan mengembalikan URL unduhan bertanda.
- * BAD-011: `AdminFeedbackExportDto` HANYA kenal `{ format }` — jangan kirim
- * filter lain (ValidationPipe forbidNonWhitelisted → 422).
+ * Ekspor feedback: backend kembalikan data inline {success,format,data}
+ * (bukan URL). P1-22: unduh sebagai file, bukan window.open(undefined).
  */
-export function exportFeedback(params?: { format?: "csv" | "json" }): Promise<{
-  url: string
-}> {
-  return adminHttp.get<{ url: string }>("/v1/admin/feedback/export", { query: params })
+export async function exportFeedback(params?: { format?: "csv" | "json" }): Promise<void> {
+  const format = params?.format ?? "json"
+  const res = await adminHttp.get<{ success?: boolean; format?: string; data?: unknown }>(
+    "/v1/admin/feedback/export",
+    { query: { format } },
+  )
+  const data = res?.data
+  const blob =
+    format === "csv" && typeof data === "string"
+      ? new Blob([data], { type: "text/csv;charset=utf-8" })
+      : new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `feedback-export.${format}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 export type FeedbackSummary = {

@@ -95,15 +95,23 @@ type FeeUsage = {
 }
 
 function feeUsage(d: SubscriptionDetail): FeeUsage | null {
-  const u = d.currentUsage ?? d.feeUsage
-  const usedRaw = u?.used ?? d.feeSavingsUsed
+  // P1-2 (audit integrasi 2026-10-06): backend kirim `currentPeriodUsage`
+  // dengan kunci feeWaivedAmount/feeWaiverLimit/feeWaiverRemaining.
+  // `currentUsage` lama tidak dikirim backend — baca kontrak aktual dulu,
+  // lalu fallback ke bentuk lama bila ada.
+  const cpu = d.currentPeriodUsage
+  const usedRaw =
+    cpu?.feeWaivedAmount ?? d.currentUsage?.used ?? d.feeUsage?.used ?? d.feeSavingsUsed
   const used = typeof usedRaw === "number" ? usedRaw : null
-  const limitRaw = u?.limit ?? d.feeSavingsLimit
+  const limitRaw =
+    cpu?.feeWaiverLimit ?? d.currentUsage?.limit ?? d.feeUsage?.limit ?? d.feeSavingsLimit
   const limit = typeof limitRaw === "number" ? limitRaw : null
   if (used == null && limit == null) return null
+  const remainingRaw =
+    cpu?.feeWaiverRemaining ?? d.currentUsage?.remaining ?? d.feeUsage?.remaining
   const remaining =
-    typeof u?.remaining === "number"
-      ? u.remaining
+    typeof remainingRaw === "number"
+      ? remainingRaw
       : used != null && limit != null
         ? Math.max(0, limit - used)
         : null

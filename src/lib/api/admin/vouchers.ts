@@ -66,6 +66,8 @@ export interface AdminVoucherUsage {
     email?: string | null
     /** Nomor HP — bila dikembalikan backend, ditampilkan termasking. */
     phone?: string | null
+    /** P1-10: kunci backend aktual (masked). */
+    phoneNumber?: string | null
   } | null
 }
 

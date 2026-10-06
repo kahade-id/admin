@@ -30,7 +30,9 @@ import {
   deleteShowcaseComment,
   listShowcaseComments,
   setShowcaseCommentHidden,
+  SHOWCASE_HIDE_REASONS,
   type ShowcaseComment,
+  type ShowcaseCommentStatus,
 } from "@/lib/api/admin/showcase-comments"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
@@ -38,9 +40,10 @@ import { formatDateTimeWIB } from "@/lib/format"
 const PAGE_SIZE = 20
 
 const STATUS_OPTIONS = [
-  { value: "ALL", label: "Semua status" },
+  { value: "all", label: "Semua status" },
   { value: "visible", label: "Terlihat" },
   { value: "hidden", label: "Disembunyikan" },
+  { value: "deleted", label: "Dihapus" },
 ]
 
 type PendingAction =
@@ -53,7 +56,7 @@ export default function ShowcaseCommentsPage() {
   const stepUp = useStepUp()
 
   const [search, setSearch] = useState("")
-  const [statusFilter, setStatusFilter] = useState("ALL")
+  const [statusFilter, setStatusFilter] = useState<ShowcaseCommentStatus>("all")
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -76,12 +79,8 @@ export default function ShowcaseCommentsPage() {
           page: targetPage,
           limit: PAGE_SIZE,
           search: search.trim() || undefined,
-          hidden:
-            statusFilter === "hidden"
-              ? "hidden"
-              : statusFilter === "visible"
-                ? "visible"
-                : undefined,
+          // P1-17: backend hanya kenal `status` (all|visible|hidden|deleted).
+          status: statusFilter,
         })
         setRows(res.data ?? [])
         const t = res.total ?? res.data?.length ?? 0
@@ -129,7 +128,7 @@ export default function ShowcaseCommentsPage() {
         action: "showcase-comment.delete",
         targetId: comment.id,
         title: "Hapus komentar",
-        description: `Menghapus komentar "${comment.content.slice(0, 80)}…". Aksi ini dicatat di audit.`,
+        description: `Menghapus komentar "${(comment.content ?? "").slice(0, 80)}…". Aksi ini dicatat di audit.`,
       })
       if (!stepUpToken) return
     }
@@ -202,7 +201,9 @@ export default function ShowcaseCommentsPage() {
           label="Status"
           options={STATUS_OPTIONS}
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) =>
+            setStatusFilter(e.target.value as ShowcaseCommentStatus)
+          }
           className="w-52"
         />
         <Button variant="secondary" size="sm" fullWidth={false} onClick={applyFilter}>
@@ -337,16 +338,40 @@ export default function ShowcaseCommentsPage() {
         {pending ? (
           <div className="space-y-4">
             <p className="rounded-sm bg-surface px-3 py-2 text-body text-text-primary">
-              “{pending.comment.content}”
+              “{pending.comment.content ?? "(komentar dihapus)"}”
             </p>
-            <TextArea
-              label="Alasan (wajib)"
-              rows={3}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="cth: Mengandung kata kasar / spam…"
-              maxLength={500}
-            />
+            {/* P1-16: backend hanya terima SPAM|INAPPROPRIATE|HARASSMENT|OTHER
+                untuk hide — pakai dropdown, bukan teks bebas. */}
+            {pending.kind === "hide" ? (
+              <Select
+                label="Kategori alasan (wajib)"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                options={[
+                  { value: "", label: "— Pilih kategori —" },
+                  ...SHOWCASE_HIDE_REASONS.map((r) => ({
+                    value: r,
+                    label:
+                      r === "SPAM"
+                        ? "Spam"
+                        : r === "INAPPROPRIATE"
+                          ? "Tidak pantas"
+                          : r === "HARASSMENT"
+                            ? "Pelecehan"
+                            : "Lainnya",
+                  })),
+                ]}
+              />
+            ) : (
+              <TextArea
+                label="Alasan (wajib)"
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="cth: Mengandung kata kasar / spam…"
+                maxLength={500}
+              />
+            )}
           </div>
         ) : null}
       </Dialog>

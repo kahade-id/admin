@@ -319,8 +319,10 @@ function PollCard({
     if (!token) return
     setClosing(true)
     try {
-      const updated = await closeChatPoll(pollId, reason.trim(), token)
-      setPoll(updated)
+      // P1-6: backend kembalikan {ok:true}, bukan ChatPoll — muat ulang
+      // agar kartu tampil status terbaru, bukan blank.
+      await closeChatPoll(pollId, reason.trim(), token)
+      setPoll((prev) => (prev ? { ...prev, isClosed: true } : prev))
       setCloseOpen(false)
       setReason("")
       toast.show({ title: "Polling ditutup", tone: "success" })

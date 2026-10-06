@@ -216,11 +216,21 @@ export default function DisbursementsPage() {
     setActing(reviewTarget.id)
     try {
       const res = await reviewDisbursement(reviewTarget.id, reviewDecision, reason, newIdempotencyKey(), { stepUpToken })
-      show({
-        title: `Review tercatat: ${res.decision}`,
-        description: `${res.idempotencyKey} → ${STATUS_LABEL[res.status] ?? res.status}`,
-        tone: reviewDecision === "FORCE_SUCCESS" ? "danger" : "success",
-      })
+      // P1-11: FORCE_SUCCESS via dual control — backend kembalikan
+      // {approvalId,status,expiresAt,message}, bukan {decision,idempotencyKey}.
+      if (res.approvalId) {
+        show({
+          title: "Menunggu persetujuan kedua",
+          description: res.message ?? `Usulan ${reviewDecision} dibuat — butuh persetujuan admin kedua.`,
+          tone: "info",
+        })
+      } else {
+        show({
+          title: `Review tercatat: ${res.decision}`,
+          description: `${res.idempotencyKey} → ${STATUS_LABEL[res.status] ?? res.status}`,
+          tone: reviewDecision === "FORCE_SUCCESS" ? "danger" : "success",
+        })
+      }
       setReviewTarget(null)
       setReviewReason("")
       setReviewError(null)

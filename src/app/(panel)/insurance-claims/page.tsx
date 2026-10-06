@@ -286,13 +286,15 @@ export default function InsuranceClaimsPage() {
         },
         { idempotencyKey: reviewKey ?? undefined, stepUpToken },
       )
-      // SEC-502: nominal besar — backend bisa menahan payout menunggu
-      // persetujuan admin kedua. Jangan toast sukses buta.
-      if (res?.pendingSecondApproval) {
+      // SEC-502 / P1-3: PAID SELALU via dual control — backend mengembalikan
+      // {approvalId,status,expiresAt,message} (usulan PENDING), bukan payout
+      // langsung. Jangan toast sukses buta.
+      if (res?.approvalId || res?.pendingSecondApproval) {
         toast.show({
           title: "Menunggu persetujuan kedua",
           description:
-            "Klaim disetujui untuk dibayar, tetapi payout ditahan — nominal besar sehingga dibutuhkan persetujuan admin kedua.",
+            res?.message ||
+            "Klaim disetujui untuk dibayar, tetapi payout ditahan — dibutuhkan persetujuan admin kedua.",
           tone: "info",
         })
         setSelected(null)

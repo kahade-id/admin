@@ -104,7 +104,10 @@ export default function DetailPelamarPage() {
         status: targetStatus,
         note: note.trim() || undefined,
       })
-      setDetail(updated)
+      // P1-4 (audit integrasi 2026-10-06): backend kembalikan `updatedApp`
+      // mentah tanpa `history[]`/`cvDownloadUrl` → setDetail langsung bikin
+      // crash TypeError di detail.history.length. Pertahankan field lama.
+      setDetail((prev) => ({ ...prev, ...updated, history: updated.history ?? prev?.history ?? [] }))
       setTargetStatus("")
       setNote("")
       toast.show({
@@ -227,11 +230,11 @@ export default function DetailPelamarPage() {
             <Card>
               <CardHeader title="Riwayat Status" />
               <CardBody>
-                {detail.history.length === 0 ? (
+                {(detail.history?.length ?? 0) === 0 ? (
                   <p className="text-body text-text-secondary">Belum ada riwayat.</p>
                 ) : (
                   <ol className="space-y-0">
-                    {detail.history.map((h) => (
+                    {(detail.history ?? []).map((h) => (
                       <li key={h.id} className="relative flex gap-3 pb-5 last:pb-0">
                         <div className="flex flex-col items-center">
                           <span className="mt-1 h-2.5 w-2.5 rounded-full bg-text-tertiary" aria-hidden />

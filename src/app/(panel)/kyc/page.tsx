@@ -68,9 +68,10 @@ const PAGE_SIZE = 20
 
 const STATUS_OPTIONS = [
   { value: "ALL", label: "Semua" },
-  // BAI-065: UNVERIFIED = status awal pengajuan — bisa difilter eksplisit
-  // (nilai enum backend KycStatus yang valid; jangan dibuang).
-  { value: "UNVERIFIED", label: "Belum verifikasi" },
+  // P1-25 (audit integrasi 2026-10-06): UNVERIFIED dihapus sementara —
+  // DTO backend KycQueueQueryDto @IsIn hanya izinkan
+  // PENDING|APPROVED|REJECTED|REVOKED → 400. Service mendukung UNVERIFIED,
+  // tapi DTO memblokir; backend perlu tambah ke @IsIn bila ingin diaktifkan.
   { value: "PENDING", label: "Sedang ditinjau" },
   { value: "APPROVED", label: "Terverifikasi" },
   { value: "REJECTED", label: "Ditolak" },

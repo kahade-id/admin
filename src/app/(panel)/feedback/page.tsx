@@ -305,8 +305,10 @@ export default function FeedbackListPage() {
             fullWidth={false}
             onClick={async () => {
               try {
-                const { url } = await exportFeedback({ format: "csv" })
-                window.open(url, "_blank", "noopener,noreferrer")
+                // P1-22: exportFeedback langsung unduh file (backend kirim
+                // data inline, bukan URL).
+                await exportFeedback({ format: "csv" })
+                toast.show({ title: "Ekspor berhasil", description: "File CSV telah diunduh.", tone: "success" })
               } catch (e) {
                 toast.show({ title: "Gagal mengekspor", description: userMessage(e), tone: "danger" })
               }

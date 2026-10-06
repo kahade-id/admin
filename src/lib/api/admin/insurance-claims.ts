@@ -85,11 +85,19 @@ export type UpdateInsuranceClaimResult = {
   claimId: string
   status: string
   /**
-   * SEC-502: true bila backend menahan payout menunggu persetujuan admin
-   * kedua (nominal besar) — UI wajib menampilkan "Menunggu persetujuan
-   * kedua", bukan sukses.
+   * SEC-502: backend untuk PAID SELALU via dual control — endpoint hanya
+   * membuat usulan PENDING (tidak mengeksekusi payout). Respons berisi
+   * approvalId/status/expiresAt/message, BUKAN pendingSecondApproval.
+   * P1-3 (audit integrasi 2026-10-06): UI lama cek `pendingSecondApproval`
+   * yang tidak pernah dikirim → toast "Dibayar" padahal baru usulan.
    */
   pendingSecondApproval?: boolean
+  /** ID usulan dual-control (ada bila PAID via dual control). */
+  approvalId?: string
+  /** Status usulan dual-control (mis. "PENDING"). */
+  approvalStatus?: string
+  /** Kapan usulan kedaluwarsa. */
+  expiresAt?: string
 }
 
 export type UpdateInsuranceClaimOpts = {

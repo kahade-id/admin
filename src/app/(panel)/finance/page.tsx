@@ -597,11 +597,19 @@ function FinancePageInner() {
                 {
                   key: "bankAccount",
                   header: "Rekening tujuan",
+                  // P1-12 (audit integrasi 2026-10-06): backend listTransactions
+                  // hanya select bankAccount:{id,bankCode} — accountNumber/
+                  // accountName tidak dikirim (PII). Tampilkan yang ada.
                   render: (r) => (
                     <div>
                       <p>
-                        {r.bankAccount?.bankCode ?? "—"} ·{" "}
-                        {maskAccountNumber(r.bankAccount?.accountNumber)}
+                        {r.bankAccount?.bankCode ?? "—"}
+                        {r.bankAccount?.accountNumber ? (
+                          <>
+                            {" "}·{" "}
+                            {maskAccountNumber(r.bankAccount.accountNumber)}
+                          </>
+                        ) : null}
                       </p>
                       {r.bankAccount?.accountName ? (
                         <p className="text-caption text-text-secondary">

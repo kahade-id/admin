@@ -189,13 +189,16 @@ export type ChatPoll = {
 
 export async function getChatPoll(pollId: string): Promise<ChatPoll> {
   try {
-    const res = await adminHttp.get<ChatPoll>(
+    // P1-5 (audit integrasi 2026-10-06): backend bungkus dalam `{poll:{...}}`,
+    // bukan top-level. Unwrap dulu.
+    const res = await adminHttp.get<{ poll?: ChatPoll } & ChatPoll>(
       `/v1/admin/chat/polls/${encodeURIComponent(pollId)}`,
     )
+    const poll = res?.poll ?? res
     return {
-      ...res,
-      options: Array.isArray(res?.options) ? res.options : [],
-      totalVotes: typeof res?.totalVotes === "number" ? res.totalVotes : 0,
+      ...poll,
+      options: Array.isArray(poll?.options) ? poll.options : [],
+      totalVotes: typeof poll?.totalVotes === "number" ? poll.totalVotes : 0,
     }
   } catch (e) {
     if (isNotFoundError(e)) {
@@ -208,16 +211,19 @@ export async function getChatPoll(pollId: string): Promise<ChatPoll> {
 }
 
 /**
- * Tutup polling. `reason` wajib (dicatat di audit). `stepUpToken` dari
- * step-up gate (aksi `chat.poll.close`) — jangan panggil tanpa token.
+ * Tutup polling. `reason` wajib di UI (dicatat di audit) — catatan: backend
+ * saat ini tidak membaca body dan tidak memverifikasi step-up untuk endpoint
+ * ini, serta mengembalikan `{ok:true}` (bukan ChatPoll).
+ * P1-6 (audit integrasi 2026-10-06): sesuaikan dengan respons aktual agar
+ * kartu tidak blank setelah tutup.
  */
 export async function closeChatPoll(
   pollId: string,
   reason: string,
   stepUpToken: string,
-): Promise<ChatPoll> {
+): Promise<{ ok: boolean }> {
   try {
-    return await adminHttp.post<ChatPoll>(
+    return await adminHttp.post<{ ok: boolean }>(
       `/v1/admin/chat/polls/${encodeURIComponent(pollId)}/close`,
       { reason },
       {

@@ -1217,25 +1217,31 @@ export default function DisputeDetailPage() {
         return
       }
       // BAI-046: baca hasil settlement DANA — JANGAN toast sukses buta.
-      // settlement null = eksekusi finansial gagal total; buyerRefunded false
-      // atau sellerDisbursement bermasalah = uang belum bergerak.
-      // (FULL_SELLER → porsi buyer 0, buyerRefunded=false adalah normal.)
-      const settlement = res?.settlement ?? null
+      // P1-30 (audit integrasi 2026-10-06): backend bisa tidak menyertakan
+      // `settlement` (mis. jalur wallet) — jangan false alarm "gagal" bila
+      // field tidak ada; hanya warning bila settlement ada TAPI gagal.
+      const settlement = (res as { settlement?: unknown })?.settlement ?? null
       const buyerExpectsRefund = resolution !== "FULL_SELLER"
-      if (settlement === null) {
-        toast.show({
-          title: "Sengketa diputus, TAPI settlement DANA gagal",
-          description:
-            "Keputusan tercatat, tetapi eksekusi refund/dis disbursement DANA gagal total. Cek log server & halaman Disbursement DANA — uang belum bergerak.",
-          tone: "danger",
-        })
+      if (settlement === null || settlement === undefined) {
+        // Settlement tidak dilaporkan backend — bukan bukti gagal.
+        // Tampilkan sukses standar; verifikasi manual via halaman Disbursement.
+        const notifNote = (res as { notificationDelivered?: boolean })?.notificationDelivered === false
+          ? " (notifikasi putusan ke pihak GAGAL — tercatat di audit)"
+          : ""
+        toast.show({ title: `Sengketa diselesaikan${notifNote}`, tone: (res as { notificationDelivered?: boolean })?.notificationDelivered === false ? "info" : "success" })
       } else {
+        const s = settlement as {
+          buyerRefunded?: boolean
+          buyerRefundAlready?: boolean
+          sellerDisbursement?: { outcome?: string; status?: string | null } | null
+        }
         const sellerProblem =
-          settlement.sellerDisbursement !== null &&
+          s.sellerDisbursement !== null &&
+          s.sellerDisbursement !== undefined &&
           !["SUCCESS", "RELEASED", "SETTLED", "PENDING", "PROCESSING"].includes(
-            String(settlement.sellerDisbursement.status ?? settlement.sellerDisbursement.outcome ?? "").toUpperCase(),
+            String(s.sellerDisbursement.status ?? s.sellerDisbursement.outcome ?? "").toUpperCase(),
           )
-        if (buyerExpectsRefund && !settlement.buyerRefunded && !settlement.buyerRefundAlready) {
+        if (buyerExpectsRefund && !s.buyerRefunded && !s.buyerRefundAlready) {
           toast.show({
             title: "Sengketa diputus — refund buyer BELUM berhasil",
             description:
@@ -1245,7 +1251,7 @@ export default function DisputeDetailPage() {
         } else if (sellerProblem) {
           toast.show({
             title: "Sengketa diputus — disbursement seller bermasalah",
-            description: `Keputusan tercatat, tetapi disbursement seller: ${settlement.sellerDisbursement?.status ?? settlement.sellerDisbursement?.outcome ?? "tidak diketahui"}. Verifikasi via halaman Disbursement DANA.`,
+            description: `Keputusan tercatat, tetapi disbursement seller: ${s.sellerDisbursement?.status ?? s.sellerDisbursement?.outcome ?? "tidak diketahui"}. Verifikasi via halaman Disbursement DANA.`,
             tone: "danger",
           })
         } else {

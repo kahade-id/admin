@@ -243,8 +243,11 @@ export type DisputeSettlementResult = {
 
 export type ResolveDisputeResult = {
   decision?: string
-  /** null = eksekusi settlement DANA gagal total (cek log server). */
-  settlement: DisputeSettlementResult | null
+  /**
+   * P1-30: backend bisa tidak menyertakan settlement (mis. jalur wallet) —
+   * undefined bukan bukti gagal. null = eksekusi settlement DANA gagal total.
+   */
+  settlement?: DisputeSettlementResult | null
   /**
    * SEC-501: true bila backend menahan eksekusi menunggu persetujuan admin
    * kedua (nominal besar) — UI wajib menampilkan status "Menunggu
