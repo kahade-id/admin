@@ -16,8 +16,6 @@ export * from "@/lib/api/admin/vouchers"
 /** Batch 43 (AD-43): modul baru — kontrak asumsi, lihat header tiap modul. */
 export * from "@/lib/api/admin/banners"
 export * from "@/lib/api/admin/seller-vouchers"
-export * from "@/lib/api/admin/group-buying"
-export * from "@/lib/api/admin/jastip"
 export * from "@/lib/api/admin/campaigns"
 export * from "@/lib/api/admin/system"
 export * from "@/lib/api/admin/management"
