@@ -107,6 +107,8 @@ export const MENU: MenuItem[] = [
   // dihapus — pemantauan via /orders + filter tipe transaksi.
   { label: "Kampanye", href: "/campaigns", roles: ["SUPER_ADMIN"] },
   { label: "Ulasan", href: "/ratings", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  // Moderasi Story (admin-stories.controller.ts: SUPER_ADMIN, CUSTOMER_SUPPORT, class-level).
+  { label: "Story", href: "/stories", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Referral", href: "/referral", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Langganan", href: "/subscriptions", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   { label: "Klaim Asuransi", href: "/insurance-claims", roles: ["SUPER_ADMIN", "FINANCE_ADMIN", "CUSTOMER_SUPPORT"] },

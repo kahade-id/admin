@@ -452,3 +452,81 @@ export function adminSubmitDisputeEvidence(
     { headers: idempotencyHeaders() },
   )
 }
+
+/**
+ * K6 (audit transaksi 2026-10-10) — jejak pergerakan dana sengketa
+ * (no-wallet) dari baris durable backend, dikirim di
+ * `GET /v1/admin/disputes/:id` sebagai `moneyTrail` (+ alias `settlementIntent`).
+ */
+export type DisputeMoneyTrail = {
+  settlementIntent: {
+    /** PENDING | CLAIMED | DONE | FAILED | ESCALATED */
+    status: string
+    buyerAmountSen: string
+    sellerAmountSen: string
+    buyerAmount: number
+    sellerAmount: number
+    attemptCount: number
+    lastError: string | null
+    claimedAt: string | null
+    doneAt: string | null
+    updatedAt: string
+  } | null
+  buyerRefund: {
+    status: string
+    amountSen: string
+    amount: number
+    danaReferenceNo: string | null
+    partnerRefundNo: string
+    providerStatus: string | null
+    settledAt: string | null
+    updatedAt: string
+  } | null
+  sellerDisbursement: {
+    id: string
+    status: string
+    amountSen: string
+    amount: number
+    danaReferenceNo: string | null
+    heldReason: string | null
+    lastError: string | null
+    attemptCount: number
+    releasedAt: string | null
+    updatedAt: string
+  } | null
+  orderRelease: {
+    id: string
+    status: string
+    amountSen: string
+    amount: number
+    danaReferenceNo: string | null
+    releasedAt: string | null
+    updatedAt: string
+  } | null
+}
+
+export type RetryDisputeSettlementResult = {
+  disputeId: string
+  intent: { status: string; attemptCount: number; lastError: string | null; doneAt: string | null } | null
+  settlement: DisputeSettlementResult | null
+  error: string | null
+}
+
+/**
+ * K6 — `POST /v1/admin/disputes/:id/settlement/retry`: jalankan ulang
+ * settlement sengketa no-wallet yang FAILED/ESCALATED. Aksi uang:
+ * SUPER_ADMIN + step-up (`dispute.settlement-retry`, target disputeId) +
+ * Idempotency-Key. Idempoten di backend (key DISPUTE:<id>:BUYER/:SELLER).
+ */
+export const DISPUTE_SETTLEMENT_RETRY_STEP_UP_ACTION = "dispute.settlement-retry"
+
+export function retryDisputeSettlement(
+  disputeId: string,
+  opts: { stepUpToken: string },
+): Promise<RetryDisputeSettlementResult> {
+  return adminHttp.post<RetryDisputeSettlementResult>(
+    `/v1/admin/disputes/${encodeURIComponent(disputeId)}/settlement/retry`,
+    {},
+    { headers: { ...idempotencyHeaders(), [STEP_UP_HEADER]: opts.stepUpToken } },
+  )
+}

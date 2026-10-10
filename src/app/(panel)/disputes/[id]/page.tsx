@@ -53,7 +53,10 @@ import {
   adminSubmitDisputeEvidence,
   DISPUTE_EVIDENCE_ACCEPT,
   validateDisputeEvidenceFiles,
+  retryDisputeSettlement,
+  DISPUTE_SETTLEMENT_RETRY_STEP_UP_ACTION,
   type AdminDisputeItem,
+  type DisputeMoneyTrail,
   type DisputeDecision,
   type DisputeInternalNote,
   type DisputeMessage,
@@ -772,6 +775,8 @@ export default function DisputeDetailPage() {
   // idempotency per sesi dialog (dibuat saat dialog dibuka, dibuang saat
   // ditutup; retry memakai kunci yang sama).
   const { requestStepUp, stepUpDialog } = useStepUp()
+  // K6 (audit 2026-10-10): retry settlement sengketa no-wallet (FAILED/ESCALATED).
+  const [retryingSettlement, setRetryingSettlement] = useState(false)
   const resolveKey = useMemo(
     () => (resolveOpen ? newIdempotencyKey() : null),
     [resolveOpen],
@@ -1320,6 +1325,42 @@ export default function DisputeDetailPage() {
   // ADM-110: sengketa yang sudah punya keputusan → tampilkan kartu putusan,
   // tombol resolve disembunyikan.
   const decision = dispute ? asRecord(dispute.decision) : null
+  // K6: jejak pergerakan dana (baris durable backend) — null bila backend lama.
+  const moneyTrail = dispute && dispute.moneyTrail && typeof dispute.moneyTrail === "object"
+    ? (dispute.moneyTrail as DisputeMoneyTrail)
+    : null
+  const settlementIntent = moneyTrail?.settlementIntent ?? null
+  const canRetrySettlement =
+    isSuperAdmin && settlementIntent !== null && ["FAILED", "ESCALATED", "PENDING"].includes(settlementIntent.status)
+
+  const handleRetrySettlement = async () => {
+    if (!dispute || retryingSettlement) return
+    const token = await requestStepUp({
+      action: DISPUTE_SETTLEMENT_RETRY_STEP_UP_ACTION,
+      targetId: disputeId,
+      title: "Ulangi settlement sengketa",
+      description: "Menjalankan ulang refund DANA ke pembeli / pencairan ke penjual sesuai putusan (idempoten).",
+    })
+    if (!token) return
+    setRetryingSettlement(true)
+    try {
+      const res = await retryDisputeSettlement(disputeId, { stepUpToken: token })
+      if (res.intent?.status === "DONE") {
+        toast.show({ title: "Settlement selesai", description: "Dana sudah dieksekusi sesuai putusan.", tone: "success" })
+      } else {
+        toast.show({
+          title: `Settlement ${res.intent?.status ?? "belum selesai"}`,
+          description: res.error ?? res.intent?.lastError ?? "Periksa jejak pergerakan dana.",
+          tone: "info",
+        })
+      }
+      void load()
+    } catch (e) {
+      fail("Gagal mengulang settlement", e)
+    } finally {
+      setRetryingSettlement(false)
+    }
+  }
   const isResolved = status === "RESOLVED" || decision !== null
   // Batch 43 item #33: eskalasi 1 ketuk tersedia selama sengketa belum
   // diputus dan belum berstatus ESCALATED.
@@ -1559,6 +1600,66 @@ export default function DisputeDetailPage() {
                     <KeyValue label="Diputus" value={formatDateTimeWIB(String(decision.decidedAt))} />
                   ) : null}
                 </dl>
+              </CardBody>
+            </Card>
+          ) : null}
+
+          {/* K6 (audit 2026-10-10): jejak pergerakan dana putusan (no-wallet)
+              dari baris durable — admin melihat di mana uang berada, dan
+              SUPER_ADMIN bisa mengulang settlement yang FAILED/ESCALATED. */}
+          {moneyTrail ? (
+            <Card padded={false}>
+              <CardHeader title="Pergerakan dana" />
+              <CardBody>
+                <dl>
+                  <KeyValue
+                    label="Settlement"
+                    value={
+                      settlementIntent
+                        ? `${settlementIntent.status} · pembeli ${formatIdrSen(settlementIntent.buyerAmountSen)} · penjual ${formatIdrSen(settlementIntent.sellerAmountSen)} · percobaan ${settlementIntent.attemptCount}`
+                        : "— (belum ada putusan no-wallet)"
+                    }
+                  />
+                  {settlementIntent?.lastError ? (
+                    <KeyValue label="Error terakhir" value={settlementIntent.lastError} />
+                  ) : null}
+                  <KeyValue
+                    label="Refund pembeli (DANA)"
+                    value={
+                      moneyTrail.buyerRefund
+                        ? `${moneyTrail.buyerRefund.status} · ${formatIdrSen(moneyTrail.buyerRefund.amountSen)}${moneyTrail.buyerRefund.danaReferenceNo ? ` · ref ${moneyTrail.buyerRefund.danaReferenceNo}` : ""}`
+                        : "—"
+                    }
+                  />
+                  <KeyValue
+                    label="Pencairan penjual"
+                    value={
+                      moneyTrail.sellerDisbursement
+                        ? `${moneyTrail.sellerDisbursement.status} · ${formatIdrSen(moneyTrail.sellerDisbursement.amountSen)}${moneyTrail.sellerDisbursement.heldReason ? ` · ${moneyTrail.sellerDisbursement.heldReason}` : ""}${moneyTrail.sellerDisbursement.lastError ? ` · ${moneyTrail.sellerDisbursement.lastError}` : ""}`
+                        : "—"
+                    }
+                  />
+                  <KeyValue
+                    label="Pencairan escrow order"
+                    value={
+                      moneyTrail.orderRelease
+                        ? `${moneyTrail.orderRelease.status} · ${formatIdrSen(moneyTrail.orderRelease.amountSen)}${moneyTrail.orderRelease.releasedAt ? ` · ${formatDateTimeWIB(moneyTrail.orderRelease.releasedAt)}` : ""}`
+                        : "— (dana masih di Kahade)"
+                    }
+                  />
+                </dl>
+                {canRetrySettlement ? (
+                  <div className="mt-3">
+                    <Button
+                      variant="secondary"
+                      fullWidth={false}
+                      loading={retryingSettlement}
+                      onClick={() => void handleRetrySettlement()}
+                    >
+                      Ulangi settlement
+                    </Button>
+                  </div>
+                ) : null}
               </CardBody>
             </Card>
           ) : null}

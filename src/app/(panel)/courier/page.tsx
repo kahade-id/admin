@@ -32,9 +32,18 @@ import {
   type ShippingReconciliationRow,
 } from "@/lib/api/admin/courier"
 import { userMessage } from "@/lib/api/response"
-import { formatDateTimeWIB, formatIdrSen } from "@/lib/format"
+import { formatDateTimeWIB, formatIDR } from "@/lib/format"
 
 const PAGE_SIZE = 20
+/** F04: ambang "tracking basi" — sama dengan STALE_EVENT_THRESHOLD_HOURS backend. */
+const STALE_HOURS = 48
+
+/** F01/F02: biaya ongkir = RUPIAH utuh (string BigInt) — jangan formatIdrSen (÷100). */
+function formatCost(value: string | number | null | undefined): string {
+  if (value == null || value === "") return "—"
+  const n = Number(value)
+  return Number.isFinite(n) ? formatIDR(n) : "—"
+}
 
 type Tab = "shipments" | "providers" | "reconciliation"
 
@@ -43,6 +52,8 @@ function ShipmentsTab() {
   const [bookingState, setBookingState] = useState("")
   const [searchInput, setSearchInput] = useState("")
   const [search, setSearch] = useState("")
+  // F04: filter tracking basi (API `staleHours` sudah ada, UI-nya belum).
+  const [staleOnly, setStaleOnly] = useState(false)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -50,11 +61,17 @@ function ShipmentsTab() {
   const [totalPages, setTotalPages] = useState(1)
 
   const load = useCallback(
-    async (p = page, bs = bookingState, s = search) => {
+    async (p = page, bs = bookingState, s = search, stale = staleOnly) => {
       setLoading(true)
       setError(null)
       try {
-        const res = await listAdminShipments({ page: p, limit: PAGE_SIZE, bookingState: bs || undefined, search: s || undefined })
+        const res = await listAdminShipments({
+          page: p,
+          limit: PAGE_SIZE,
+          bookingState: bs || undefined,
+          search: s || undefined,
+          staleHours: stale ? STALE_HOURS : undefined,
+        })
         setRows(res.data ?? [])
         setTotalPages(res.totalPages ?? 1)
       } catch (e) {
@@ -63,7 +80,7 @@ function ShipmentsTab() {
         setLoading(false)
       }
     },
-    [page, bookingState, search],
+    [page, bookingState, search, staleOnly],
   )
 
   useEffect(() => { void load() }, [load])
@@ -95,6 +112,14 @@ function ShipmentsTab() {
           <Input label="Cari pengiriman" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="ID / resi / order…" className="min-w-52 flex-1" />
           <Button type="submit" variant="secondary" size="md" fullWidth={false}>Cari</Button>
         </form>
+        <label className="flex items-center gap-2 pb-2 text-body">
+          <input
+            type="checkbox"
+            checked={staleOnly}
+            onChange={(e) => { setStaleOnly(e.target.checked); setPage(1); void load(1, bookingState, search, e.target.checked) }}
+          />
+          Hanya tracking basi (&gt;{STALE_HOURS} jam)
+        </label>
       </div>
       {loading ? (
         <div className="flex min-h-[30vh] items-center justify-center gap-2"><Spinner size="md" /><p className="text-body text-text-secondary">Memuat…</p></div>
@@ -106,11 +131,16 @@ function ShipmentsTab() {
             columns={[
               { key: "id", header: "Pengiriman", render: (r) => (
                 <div><div className="font-semibold">{String(r.trackingNumber ?? r.id).slice(0, 24)}</div>
-                <div className="text-small text-text-secondary">{String(r.providerCode).toUpperCase()} · Order {String(r.orderId).slice(0, 8)}…</div></div>) },
+                {/* F05: orderId kini kode publik ORD-… (bukan cuid internal). */}
+                <div className="text-small text-text-secondary">{String(r.providerCode).toUpperCase()} · Order {String(r.orderId)}</div></div>) },
               { key: "bookingState", header: "Booking", render: (r) => <Badge>{String(r.bookingState)}</Badge> },
-              { key: "status", header: "Status", render: (r) => <Badge>{String(r.status)}</Badge> },
+              { key: "status", header: "Status", render: (r) => (
+                <div className="flex flex-wrap gap-1">
+                  <Badge>{String(r.status)}</Badge>
+                  {r.slaBreached ? <Badge tone="danger">Terlambat</Badge> : null}
+                </div>) },
               { key: "cost", header: "Estimasi → Aktual", render: (r) => (
-                <span>{r.estimatedCost != null ? formatIdrSen(r.estimatedCost as string | number) : "—"} → {r.actualCost != null ? formatIdrSen(r.actualCost as string | number) : "—"}</span>) },
+                <span>{formatCost(r.estimatedCost)} → {formatCost(r.actualCost)}</span>) },
               { key: "lastEventAt", header: "Event terakhir", render: (r) => <span>{r.lastEventAt ? formatDateTimeWIB(String(r.lastEventAt)) : "—"}</span> },
               { key: "actions", header: "Aksi", render: (r) => (
                 <div className="flex flex-wrap gap-1">
@@ -222,16 +252,27 @@ function ReconciliationTab() {
 
   useEffect(() => { void load() }, [load])
 
+  /**
+   * F03: refund ongkir hanya bila pembayar KELEBIHAN bayar — estimasi
+   * (yang ditagih) lebih besar dari aktual. `diff` backend = aktual −
+   * estimasi, jadi kelebihan = −diff. Logika lama terbalik (refund saat
+   * aktual > estimasi) dan nominalnya dianggap sen.
+   */
+  function overcharge(r: ShippingReconciliationRow): number {
+    const diff = Number(r.diff ?? 0)
+    return Number.isFinite(diff) && diff < 0 ? -diff : 0
+  }
+
   async function refund(r: ShippingReconciliationRow) {
-    const amount = Number(r.diffSen ?? 0)
+    const amount = overcharge(r)
     if (!(amount > 0)) {
-      toast.show({ title: "Tidak ada selisih positif", tone: "danger" })
+      toast.show({ title: "Tidak ada kelebihan bayar ongkir", tone: "danger" })
       return
     }
-    const reason = window.prompt("Alasan refund ongkir:", "Selisih ongkir aktual < estimasi")
+    const reason = window.prompt("Alasan refund ongkir:", "Ongkir aktual lebih rendah dari estimasi yang ditagih")
     if (!reason) return
     try {
-      await approveShippingRefund(r.shipmentId, { amountSen: amount, reason })
+      await approveShippingRefund(r.shipmentId, { amount, reason })
       toast.show({ title: "Refund ongkir disetujui", tone: "success" })
       await load()
     } catch (e) {
@@ -255,12 +296,13 @@ function ReconciliationTab() {
             columns={[
               { key: "shipmentId", header: "Pengiriman", render: (r) => <span className="font-semibold">{String(r.shipmentId).slice(0, 16)}…</span> },
               { key: "providerCode", header: "Kurir", render: (r) => <span>{String(r.providerCode).toUpperCase()}</span> },
-              { key: "estimated", header: "Estimasi", render: (r) => <span>{r.estimatedCostSen != null ? formatIdrSen(r.estimatedCostSen as string | number) : "—"}</span> },
-              { key: "actual", header: "Aktual", render: (r) => <span>{r.actualCostSen != null ? formatIdrSen(r.actualCostSen as string | number) : "—"}</span> },
-              { key: "diff", header: "Selisih", render: (r) => <span className={Number(r.diffSen ?? 0) > 0 ? "font-bold text-text-danger" : ""}>{r.diffSen != null ? formatIdrSen(r.diffSen as string | number) : "—"}</span> },
+              { key: "orderId", header: "Order", render: (r) => <span className="text-small">{String(r.orderId)}</span> },
+              { key: "estimated", header: "Estimasi", render: (r) => <span>{formatCost(r.estimatedCost)}</span> },
+              { key: "actual", header: "Aktual", render: (r) => <span>{formatCost(r.actualCost)}</span> },
+              { key: "diff", header: "Aktual − Estimasi", render: (r) => <span className={overcharge(r) > 0 ? "font-bold text-text-danger" : ""}>{formatCost(r.diff)}</span> },
               { key: "actions", header: "Aksi", render: (r) => (
-                Number(r.diffSen ?? 0) > 0 ? (
-                  <Button size="sm" variant="secondary" fullWidth={false} onClick={() => refund(r)}>Refund ongkir</Button>
+                overcharge(r) > 0 ? (
+                  <Button size="sm" variant="secondary" fullWidth={false} onClick={() => refund(r)}>Refund {formatIDR(overcharge(r))}</Button>
                 ) : <span className="text-small text-text-secondary">—</span>) },
             ]}
             rows={rows}

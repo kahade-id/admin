@@ -19,10 +19,12 @@ import { Spinner } from "@/components/ui/spinner"
 import { useToast } from "@/components/ui/toast"
 import { RoleGate } from "@/components/admin/role-gate"
 import { useAuth } from "@/lib/auth-context"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import {
   getAdminReturnDetail,
   adminEscalateReturn,
   adminApproveReturnRefund,
+  RETURN_MONEY_STEP_UP_ACTION,
   adminRejectReturn,
   adminExtendSellerDeadline,
   adminForceResolveReturn,
@@ -70,6 +72,8 @@ function countDeadlineExtensions(timeline?: TimelineEntry[]): number {
 export default function ReturnDetailPage({ params }: { params: { id: string } }) {
   const toast = useToast()
   const { role } = useAuth()
+  // Audit 2026-10-10: aksi uang retur wajib step-up server-side.
+  const { requestStepUp, stepUpDialog } = useStepUp()
   const id = params.id
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -104,6 +108,19 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
 
   const confirmAction = async (input: ReturnActionConfirmInput) => {
     if (!actionKind) return
+    // Audit 2026-10-10: aksi UANG (approve/force-resolve/extend) wajib token
+    // step-up server-side (return.money-action, target id retur).
+    let stepUpToken: string | undefined
+    if (actionKind === "approve" || actionKind === "force-resolve" || actionKind === "extend") {
+      const token = await requestStepUp({
+        action: RETURN_MONEY_STEP_UP_ACTION,
+        targetId: id,
+        title: "Verifikasi aksi keuangan retur",
+        description: `Aksi ini menggerakkan dana untuk retur ${detail ? String(detail.returnId ?? id) : id}.`,
+      })
+      if (!token) return
+      stepUpToken = token
+    }
     setConfirming(true)
     try {
       switch (actionKind) {
@@ -116,7 +133,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           break
         }
         case "approve": {
-          const res = await adminApproveReturnRefund(id, { refundAmountSen: input.refundAmountSen, note: input.note || undefined })
+          const res = await adminApproveReturnRefund(id, { refundAmountSen: input.refundAmountSen, note: input.note || undefined }, { stepUpToken })
           setLastNotifStatus(typeof (res as { notificationDelivered?: boolean }).notificationDelivered === "boolean" ? (res as { notificationDelivered?: boolean }).notificationDelivered! : null)
           break
         }
@@ -126,10 +143,10 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           break
         }
         case "force-resolve":
-          await adminForceResolveReturn(id, input.resolution ?? "REFUND", input.note)
+          await adminForceResolveReturn(id, input.resolution ?? "REFUND", input.note, { stepUpToken })
           break
         case "extend":
-          await adminExtendSellerDeadline(id)
+          await adminExtendSellerDeadline(id, { stepUpToken })
           break
       }
       toast.show({ title: "Berhasil", tone: "success" })
@@ -262,15 +279,24 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                   <p className="mt-1 text-small text-amber-700">
                     Buat sengketa baru dari retur ini agar ada mediator yang menangani.
                   </p>
-                  <Button
-                    variant="primary"
-                    fullWidth={false}
-                    loading={converting}
-                    onClick={() => void handleConvert()}
-                    className="mt-2"
-                  >
-                    Buat sengketa dari retur
-                  </Button>
+                  {/* Audit 2026-10-10: backend convert-to-dispute hanya SUPER_ADMIN /
+                      DISPUTE_ADMIN — tombol disembunyikan untuk CS (dulu tampil
+                      lalu 403), diganti petunjuk eskalasi internal. */}
+                  {canMoneyAction ? (
+                    <Button
+                      variant="primary"
+                      fullWidth={false}
+                      loading={converting}
+                      onClick={() => void handleConvert()}
+                      className="mt-2"
+                    >
+                      Buat sengketa dari retur
+                    </Button>
+                  ) : (
+                    <p className="mt-2 text-small text-amber-700">
+                      Konversi ke sengketa hanya dapat dilakukan Admin Sengketa / Super Admin — teruskan kasus ini ke mereka.
+                    </p>
+                  )}
                 </div>
               ) : null}
               {/* BAI-098: status kirim notifikasi aksi terakhir. */}
@@ -351,6 +377,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
         onClose={() => { if (!confirming) setActionKind(null) }}
         onConfirm={(input) => void confirmAction(input)}
       />
+      {stepUpDialog}
     </RoleGate>
   )
 }

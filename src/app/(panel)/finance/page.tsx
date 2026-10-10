@@ -39,7 +39,6 @@ import { Select } from "@/components/admin/select"
 // SEC-503: step-up server-side per aksi sebelum approve/tolak penarikan —
 // tiap aksi meminta kata sandi baru; server menerbitkan token sekali pakai
 // via header X-Step-Up-Token (fail-closed, tanpa jendela waktu client-side).
-import { ReauthDialog, useReauthGate } from "@/components/admin/batch139/reauth-gate"
 // H01: filter transaksi di URL. H02: preferensi kolom per admin.
 import { parsePage, useUrlFilters } from "@/components/admin/batch139/use-url-filters"
 import {
@@ -318,7 +317,6 @@ function FinancePageInner() {
   const [noteError, setNoteError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   // H05: re-auth gate untuk aksi penarikan kritis.
-  const reauth = useReauthGate()
   // Satu Idempotency-Key per sesi dialog (kind+txId): retry setelah timeout
   // memakai kunci yang sama sehingga proteksi double-submit tetap berlaku.
   // Kunci dihapus setelah sukses agar sesi berikutnya selalu dapat kunci baru.
@@ -365,7 +363,19 @@ function FinancePageInner() {
         // JANGAN pernah mengeksekusi Midtrans dari sini. Respons sukses
         // dual-approval (AWAITING_SECOND_APPROVAL dsb.) tidak lagi dikirim
         // backend — jangan baca field fiktif (pelajaran BAI-061).
-        await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind))
+        // K13 (audit 2026-10-10): backend mewajibkan step-up server-side
+        // (withdrawal.approve, target txId) SEBELUM service — tanpa token
+        // request selalu 403 STEP_UP_REQUIRED, 410 jujur tidak pernah tampil.
+        const approveToken = await requestStepUp({
+          action: "withdrawal.approve",
+          targetId: actionTx.txId,
+          title: "Setujui penarikan",
+          description: `Setujui penarikan ${formatIDR(actionTx.amount)}.`,
+        })
+        if (!approveToken) return
+        await approveWithdrawal(actionTx.txId, trimmed || undefined, actionKeyFor(actionTx.txId, actionKind), {
+          stepUpToken: approveToken,
+        })
         toast.show({
           title: "Penarikan disetujui",
           description: formatIDR(actionTx.amount),
@@ -523,7 +533,15 @@ function FinancePageInner() {
   const handleCsvExport = async () => {
     setCsvLoading(true)
     try {
-      await downloadFinanceCsv(range.start, range.end)
+      // Audit 2026-10-10: param backend = startDate/endDate (+ filter aktif
+      // type/status/q), bukan from/to.
+      await downloadFinanceCsv({
+        startDate: range.start,
+        endDate: range.end,
+        type: typeFilter || undefined,
+        status: f.status || undefined,
+        q: debouncedSearch.trim() || undefined,
+      })
       toast.show({
         title: "CSV diunduh",
         description: "Export ledger untuk rentang tanggal terpilih.",
@@ -1202,14 +1220,10 @@ function FinancePageInner() {
               variant={actionKind === "reject" ? "destructive" : "primary"}
               fullWidth={false}
               loading={submitting}
-              onClick={() =>
-                reauth.require(
-                  () => void handleSubmitAction(),
-                  actionKind === "reject"
-                    ? `Tolak penarikan ${actionTx ? formatIDR(actionTx.amount) : ""}`
-                    : `Setujui penarikan ${actionTx ? formatIDR(actionTx.amount) : ""}`,
-                )
-              }
+              // Audit 2026-10-10: dulu dibungkus reauth.require (kata sandi #1,
+              // token legacy dibuang) lalu handleSubmitAction meminta step-up
+              // lagi (kata sandi #2). Satu step-up per aksi di handleSubmitAction.
+              onClick={() => void handleSubmitAction()}
             >
               {actionKind === "reject" ? "Tolak penarikan" : "Setujui penarikan"}
             </Button>
@@ -1255,7 +1269,6 @@ function FinancePageInner() {
         </div>
       </Dialog>
       {/* H05: dialog verifikasi ulang untuk aksi penarikan kritis. */}
-      <ReauthDialog {...reauth.dialog} />
       {/* H02: dialog kustomisasi kolom */}
       <ColumnCustomizer prefs={pendingCols} />
       <ColumnCustomizer prefs={txCols} />
