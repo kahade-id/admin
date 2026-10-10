@@ -168,7 +168,7 @@ export function TransactionDetailDialog({
                   return (
                     <li key={`${ev.at}-${i}`} className="flex gap-3">
                       <div className="flex flex-col items-center">
-                        <span className="mt-1.5 h-2.5 w-2.5 rounded-full bg-border-strong" aria-hidden />
+                        <span className="mt-1.5 h-2.5 w-2.5 rounded-full bg-border" aria-hidden />
                         {i < timeline.length - 1 ? <span className="w-px flex-1 bg-border" aria-hidden /> : null}
                       </div>
                       <div className="pb-1">

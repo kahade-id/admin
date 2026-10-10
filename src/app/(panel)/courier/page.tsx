@@ -132,7 +132,7 @@ function ShipmentsTab() {
               { key: "id", header: "Pengiriman", render: (r) => (
                 <div><div className="font-semibold">{String(r.trackingNumber ?? r.id).slice(0, 24)}</div>
                 {/* F05: orderId kini kode publik ORD-… (bukan cuid internal). */}
-                <div className="text-small text-text-secondary">{String(r.providerCode).toUpperCase()} · Order {String(r.orderId)}</div></div>) },
+                <div className="text-caption text-text-secondary">{String(r.providerCode).toUpperCase()} · Order {String(r.orderId)}</div></div>) },
               { key: "bookingState", header: "Booking", render: (r) => <Badge>{String(r.bookingState)}</Badge> },
               { key: "status", header: "Status", render: (r) => (
                 <div className="flex flex-wrap gap-1">
@@ -207,7 +207,7 @@ function ProvidersTab() {
             { key: "enabled", header: "Status", render: (r) => <Badge>{r.enabled ? "Aktif" : "Mati"}</Badge> },
             { key: "priority", header: "Prioritas", render: (r) => <span>{r.priority ?? "—"}</span> },
             { key: "regions", header: "Wilayah", render: (r) => (
-              <span className="text-small">{(r.regionWhitelist ?? []).length > 0 ? `Allowlist: ${(r.regionWhitelist ?? []).join(", ")}` : (r.regionBlacklist ?? []).length > 0 ? `Blocklist: ${(r.regionBlacklist ?? []).join(", ")}` : "Semua"}</span>) },
+              <span className="text-caption">{(r.regionWhitelist ?? []).length > 0 ? `Allowlist: ${(r.regionWhitelist ?? []).join(", ")}` : (r.regionBlacklist ?? []).length > 0 ? `Blocklist: ${(r.regionBlacklist ?? []).join(", ")}` : "Semua"}</span>) },
             { key: "actions", header: "Aksi", render: (r) => (
               // BAI-011: PATCH providers/:providerCode SUPER_ADMIN-only
               // (backend @AdminRoles) — sembunyikan toggle dari
@@ -296,14 +296,14 @@ function ReconciliationTab() {
             columns={[
               { key: "shipmentId", header: "Pengiriman", render: (r) => <span className="font-semibold">{String(r.shipmentId).slice(0, 16)}…</span> },
               { key: "providerCode", header: "Kurir", render: (r) => <span>{String(r.providerCode).toUpperCase()}</span> },
-              { key: "orderId", header: "Order", render: (r) => <span className="text-small">{String(r.orderId)}</span> },
+              { key: "orderId", header: "Order", render: (r) => <span className="text-caption">{String(r.orderId)}</span> },
               { key: "estimated", header: "Estimasi", render: (r) => <span>{formatCost(r.estimatedCost)}</span> },
               { key: "actual", header: "Aktual", render: (r) => <span>{formatCost(r.actualCost)}</span> },
-              { key: "diff", header: "Aktual − Estimasi", render: (r) => <span className={overcharge(r) > 0 ? "font-bold text-text-danger" : ""}>{formatCost(r.diff)}</span> },
+              { key: "diff", header: "Aktual − Estimasi", render: (r) => <span className={overcharge(r) > 0 ? "font-bold text-danger-text" : ""}>{formatCost(r.diff)}</span> },
               { key: "actions", header: "Aksi", render: (r) => (
                 overcharge(r) > 0 ? (
                   <Button size="sm" variant="secondary" fullWidth={false} onClick={() => refund(r)}>Refund {formatIDR(overcharge(r))}</Button>
-                ) : <span className="text-small text-text-secondary">—</span>) },
+                ) : <span className="text-caption text-text-secondary">—</span>) },
             ]}
             rows={rows}
             emptyText="Tidak ada data rekonsiliasi."

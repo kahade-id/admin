@@ -133,7 +133,7 @@ function BannerDetailContent() {
                   label="Tautan"
                   value={
                     banner.linkUrl ? (
-                      <span className="break-all font-mono text-small">{banner.linkUrl}</span>
+                      <span className="break-all font-mono text-caption">{banner.linkUrl}</span>
                     ) : (
                       "—"
                     )

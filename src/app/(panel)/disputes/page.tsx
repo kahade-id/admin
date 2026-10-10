@@ -16,7 +16,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { EmptyState } from "@/components/ui/empty-state"
-import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
 import { useToast } from "@/components/ui/toast"
 import { Pagination } from "@/components/admin/pagination"
@@ -443,7 +442,7 @@ function DisputesListInner() {
             !String(r.status).startsWith("RESOLVED")
           return (
             <div className="flex flex-col gap-1">
-              <span className="tabular-nums text-[13px]">{formatAge(r.createdAt)}</span>
+              <span className="tabular-nums text-label">{formatAge(r.createdAt)}</span>
               {breached ? <Badge tone="danger">Lewat SLA</Badge> : null}
             </div>
           )
@@ -458,7 +457,7 @@ function DisputesListInner() {
           const name = assignedAdminName(r)
           if (name) return <span className="font-medium">{name}</span>
           return (
-            <span className="break-all font-mono text-[13px]">
+            <span className="break-all font-mono text-label">
               {r.assignedAdminId ?? "—"}
             </span>
           )
@@ -494,7 +493,7 @@ function DisputesListInner() {
         checked={bulk.isSelected(r.id)}
         onChange={() => bulk.toggle(r.id)}
         aria-label={`Pilih sengketa order ${r.orderId}`}
-        className="h-4 w-4 accent-[var(--color-primary)]"
+        className="h-4 w-4 accent-primary"
       />
     ),
   }
@@ -505,7 +504,7 @@ function DisputesListInner() {
         <div className="min-w-0">
           <h1 className="text-h2 font-bold text-text-primary">Sengketa</h1>
           <p className="mt-1 text-body text-text-secondary">
-            Sengketa escrow yang perlu putusan admin.
+            Sengketa yang perlu putusan admin.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -607,12 +606,7 @@ function DisputesListInner() {
         <kbd className="rounded-sm border border-border bg-surface px-1">Enter</kbd> buka detail
       </p>
 
-      {loading ? (
-        <div className="flex min-h-[40vh] items-center justify-center gap-2">
-          <Spinner size="md" />
-          <p className="text-body text-text-secondary">Memuat sengketa…</p>
-        </div>
-      ) : error ? (
+      {error ? (
         <Card>
           <EmptyState
             title="Gagal memuat sengketa"
@@ -626,33 +620,38 @@ function DisputesListInner() {
         </Card>
       ) : (
         <>
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              fullWidth={false}
-              onClick={() => (bulk.allPageSelected ? bulk.deselectPage() : bulk.selectPage())}
-            >
-              {bulk.allPageSelected ? "Batalkan pilih halaman ini" : "Pilih halaman ini"}
-            </Button>
-            {bulk.selectedCount > 0 ? (
-              <span className="text-caption text-text-secondary">
-                {bulk.selectedCount} dipilih
-              </span>
-            ) : null}
-          </div>
-          {/* H03: bar scope bulk — jumlah ID eksplisit + penjelasan scope */}
-          <BulkScopeBar
-            selection={bulk}
-            pageSize={rows.length}
-            totalResults={total}
-            scope="selected-page"
-            actions={
-              <Button variant="secondary" size="sm" fullWidth={false} onClick={openBulkReview}>
-                Masukkan ke review
-              </Button>
-            }
-          />
+          {/* Loading awal: skeleton di dalam tabel (filter tetap terlihat). */}
+          {!loading ? (
+            <>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  fullWidth={false}
+                  onClick={() => (bulk.allPageSelected ? bulk.deselectPage() : bulk.selectPage())}
+                >
+                  {bulk.allPageSelected ? "Batalkan pilih halaman ini" : "Pilih halaman ini"}
+                </Button>
+                {bulk.selectedCount > 0 ? (
+                  <span className="text-caption text-text-secondary">
+                    {bulk.selectedCount} dipilih
+                  </span>
+                ) : null}
+              </div>
+              {/* H03: bar scope bulk — jumlah ID eksplisit + penjelasan scope */}
+              <BulkScopeBar
+                selection={bulk}
+                pageSize={rows.length}
+                totalResults={total}
+                scope="selected-page"
+                actions={
+                  <Button variant="secondary" size="sm" fullWidth={false} onClick={openBulkReview}>
+                    Masukkan ke review
+                  </Button>
+                }
+              />
+            </>
+          ) : null}
           <DataTable<AdminDisputeItem>
             columns={[selectColumn, ...cols.visible]}
             rows={rows}
@@ -660,14 +659,16 @@ function DisputesListInner() {
             loading={loading}
             emptyText="Tidak ada sengketa pada filter ini."
           />
-          <Pagination
-            page={page}
-            totalPages={totalPages}
-            total={total}
-            pageSize={PAGE_SIZE}
-            onPageChange={handlePageChange}
-            className="mt-4"
-          />
+          {!loading ? (
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={total}
+              pageSize={PAGE_SIZE}
+              onPageChange={handlePageChange}
+              className="mt-4"
+            />
+          ) : null}
         </>
       )}
 

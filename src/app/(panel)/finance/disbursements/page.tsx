@@ -75,7 +75,7 @@ const STATUS_LABEL: Record<DisbursementStatus, string> = {
 }
 
 const SCOPE_LABEL: Record<DisbursementScope, string> = {
-  ORDER_ESCROW: "Escrow order",
+  ORDER_ESCROW: "Dana order",
   MILESTONE: "Milestone",
   LEGACY_WALLET_PAYOUT: "Payout legacy",
   CASHBACK: "Cashback",

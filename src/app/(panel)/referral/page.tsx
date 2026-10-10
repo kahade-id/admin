@@ -32,6 +32,7 @@ import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB, formatIDR, formatNumber, num } from "@/lib/format"
 // ADM-405: email pengguna di-mask secara default (mask-only, tanpa unmask).
 import { maskEmail } from "@/lib/pii"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
 
 const PAGE_SIZE = 20
 const SEARCH_DEBOUNCE_MS = 400
@@ -43,15 +44,6 @@ const ACTIVE_OPTIONS = [
   { value: "active", label: "Aktif" },
   { value: "inactive", label: "Nonaktif" },
 ]
-
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs)
-    return () => clearTimeout(timer)
-  }, [value, delayMs])
-  return debounced
-}
 
 /** "Rp1.234.567" — non-finite → "—". */
 function ownerName(c: ReferralCodeItem): string {

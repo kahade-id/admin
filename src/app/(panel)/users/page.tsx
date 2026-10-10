@@ -32,11 +32,12 @@ import {
   type KycStatus,
 } from "@/lib/api/admin/users"
 import { userMessage } from "@/lib/api/response"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
 import { formatDateTimeWIB, formatIDR } from "@/lib/format"
 // ADM-405: PII (nama, email) di-mask secara default — tanpa tombol unmask (mask-only).
 import { maskEmail, maskName } from "@/lib/pii"
 
-import { ErrorBlock, LoadingBlock, PageHeader } from "../_components/admin-ui"
+import { ErrorBlock, PageHeader } from "../_components/admin-ui"
 import { ExportUsersDialog } from "./_components/export-users-dialog"
 
 const PAGE_SIZE = 20
@@ -74,15 +75,6 @@ const SORT_OPTIONS: Array<{ value: SortOption; label: string }> = [
   { value: "fullName-asc", label: "Nama A–Z" },
   { value: "email-asc", label: "Email A–Z" },
 ]
-
-function useDebouncedValue(value: string, delayMs: number): string {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs)
-    return () => clearTimeout(timer)
-  }, [value, delayMs])
-  return debounced
-}
 
 function KycBadge({ status }: { status: KycStatus }) {
   if (!status) return <Badge tone="neutral">—</Badge>
@@ -366,9 +358,7 @@ function UsersListInner() {
         </div>
       </div>
 
-      {loading ? (
-        <LoadingBlock message="Memuat pengguna…" />
-      ) : error && rows.length === 0 ? (
+      {error && rows.length === 0 ? (
         <ErrorBlock
           title="Gagal memuat pengguna"
           message={error}
@@ -376,10 +366,12 @@ function UsersListInner() {
         />
       ) : (
         <>
+          {/* Loading awal: skeleton di dalam tabel (filter tetap terlihat). */}
           <DataTable<AdminUserSummary>
             columns={cols.visible}
             rows={rows}
             rowKey={(r) => r.id}
+            loading={loading}
             emptyText={
               debouncedQuery
                 ? `Tidak ditemukan untuk "${debouncedQuery}".`

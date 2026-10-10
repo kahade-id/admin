@@ -75,18 +75,9 @@ import {
   orderCategoryLabel,
   participantModeLabel,
 } from "@/lib/order-kind"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
 
 const PAGE_SIZE = 20
-
-/** "Rp1.234.567" — non-finite → "—". */
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs)
-    return () => clearTimeout(timer)
-  }, [value, delayMs])
-  return debounced
-}
 
 const STATUS_LABEL: Record<string, string> = {
   WAITING_CONFIRMATION: "Menunggu konfirmasi penjual",
@@ -166,9 +157,9 @@ function escrowStateOf(detail: AdminOrderDetail): {
   if (dana) {
     switch (dana.status) {
       case "SUCCESS":
-        return { label: "Escrow DANA terkunci", tone: "warning" }
+        return { label: "Dana dipegang DANA", tone: "warning" }
       case "REFUNDED":
-        return { label: "Escrow DANA refund", tone: "info" }
+        return { label: "Dana dikembalikan DANA", tone: "info" }
       case "PENDING":
         return { label: "Bayar DANA pending", tone: "neutral" }
       case "PROCESSING":
@@ -185,15 +176,15 @@ function escrowStateOf(detail: AdminOrderDetail): {
   )
   switch (String(relevant?.type)) {
     case "ORDER_LOCK":
-      return { label: "Escrow (rekening bersama) terkunci", tone: "warning" }
+      return { label: "Dana (rekening bersama) dipegang", tone: "warning" }
     case "ORDER_RELEASE":
       return { label: "Dana dicairkan ke penjual", tone: "success" }
     case "ORDER_REFUND":
-      return { label: "Dana escrow dikembalikan", tone: "info" }
+      return { label: "Dana dikembalikan ke pembeli", tone: "info" }
     case "DISPUTE_RELEASE":
       return { label: "Cair via sengketa", tone: "info" }
     default:
-      return { label: "Tanpa escrow", tone: "neutral" }
+      return { label: "Tanpa dana dipegang", tone: "neutral" }
   }
 }
 
@@ -277,7 +268,7 @@ function OrdersPageContent() {
   const participantModeFilter = f.participantMode || ""
   const categoryFilter = f.category || ""
   // AW-016: backend hanya menerapkan filter saat hasEscrow === true
-  // (admin-orders.service.ts) — UI berupa pilihan "Dengan escrow" saja.
+  // (admin-orders.service.ts) — UI berupa pilihan "Dana dipegang" saja.
   const escrowOnly = f.escrow === "yes"
   // ADM-117: rentang tanggal + pengurutan (didukung backend).
   const startDate = f.start
@@ -736,7 +727,7 @@ function OrdersPageContent() {
         <div>
           <h1 className="text-h2 font-bold text-text-primary">Order</h1>
           <p className="mt-1 text-body text-text-secondary">
-            Daftar semua order dan intervensi darurat escrow.
+            Daftar semua order dan intervensi darurat.
           </p>
         </div>
         <Button
@@ -762,7 +753,7 @@ function OrdersPageContent() {
       <Card>
         <CardHeader
           title="Daftar order"
-          subtitle="Klik Detail untuk melihat pihak, nominal, status escrow, dan timeline."
+          subtitle="Klik Detail untuk melihat pihak, nominal, status dana, dan timeline."
           action={
             <Button
               variant="secondary"
@@ -828,12 +819,12 @@ function OrdersPageContent() {
               }))}
             />
             <Select
-              label="Escrow"
+              label="Dana"
               value={escrowOnly ? "yes" : ""}
               onChange={(e) => handleEscrowChange(e.target.value)}
               options={[
                 { value: "", label: "Semua order" },
-                { value: "yes", label: "Dengan escrow" },
+                { value: "yes", label: "Dana dipegang" },
               ]}
             />
           </div>
@@ -1003,7 +994,7 @@ function OrdersPageContent() {
                       {p.danaReferenceNo ? (
                         <KeyValue label="Referensi DANA" value={p.danaReferenceNo} />
                       ) : null}
-                      <KeyValue label="Escrow" value={formatIDR(p.amount)} />
+                      <KeyValue label="Dana dipegang" value={formatIDR(p.amount)} />
                       <KeyValue label="Fee provider" value={formatIDR(p.providerFee)} />
                       <KeyValue label="Total tagihan" value={formatIDR(p.grossAmount)} />
                       {p.refundedAmount > 0 ? (

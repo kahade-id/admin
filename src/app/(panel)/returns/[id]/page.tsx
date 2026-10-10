@@ -221,48 +221,48 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                 <Badge>{ADMIN_RETURN_STATUS_LABEL[detail.status as AdminReturnStatus] ?? status}</Badge>
               </div>
               <dl className="mt-3 grid gap-2 text-body">
-                <div><dt className="text-small text-text-secondary">Order</dt><dd>{String(detail.orderId ?? "—")}</dd></div>
-                <div><dt className="text-small text-text-secondary">Alasan</dt><dd>{String(detail.reasonCode ?? "—")}{detail.reasonDetail ? ` — ${String(detail.reasonDetail)}` : ""}</dd></div>
-                <div><dt className="text-small text-text-secondary">Resolusi</dt><dd>{String(detail.resolutionType ?? "—")}</dd></div>
+                <div><dt className="text-caption text-text-secondary">Order</dt><dd>{String(detail.orderId ?? "—")}</dd></div>
+                <div><dt className="text-caption text-text-secondary">Alasan</dt><dd>{String(detail.reasonCode ?? "—")}{detail.reasonDetail ? ` — ${String(detail.reasonDetail)}` : ""}</dd></div>
+                <div><dt className="text-caption text-text-secondary">Resolusi</dt><dd>{String(detail.resolutionType ?? "—")}</dd></div>
                 <div>
-                  <dt className="text-small text-text-secondary">Refund</dt>
+                  <dt className="text-caption text-text-secondary">Refund</dt>
                   <dd>
                     {detail.refundAmount != null ? formatIdrSen(detail.refundAmount as string | number) : "—"}
                     {detail.order?.buyerPayAmount != null ? (
-                      <span className="text-small text-text-secondary"> (dibayar pembeli: {formatIdrSen(detail.order.buyerPayAmount as string | number)})</span>
+                      <span className="text-caption text-text-secondary"> (dibayar pembeli: {formatIdrSen(detail.order.buyerPayAmount as string | number)})</span>
                     ) : null}
                   </dd>
                 </div>
                 {/* BAI-049: hasil refund DANA (admin only) — diekspos backend dari refundDana map/lookup. */}
                 {detail.refundDana ? (
                   <div>
-                    <dt className="text-small text-text-secondary">Refund DANA</dt>
+                    <dt className="text-caption text-text-secondary">Refund DANA</dt>
                     <dd>
                       <Badge tone={detail.refundDana.status === "REFUNDED" ? "success" : detail.refundDana.status === "REFUND_FAILED" ? "danger" : "neutral"}>
                         {detail.refundDana.status}
                       </Badge>
                       {detail.refundDana.danaReferenceNo ? (
-                        <span className="ml-2 font-mono text-small text-text-secondary">{detail.refundDana.danaReferenceNo}</span>
+                        <span className="ml-2 font-mono text-caption text-text-secondary">{detail.refundDana.danaReferenceNo}</span>
                       ) : null}
                       {detail.refundDana.partnerRefundNo ? (
-                        <span className="ml-2 font-mono text-small text-text-secondary">({detail.refundDana.partnerRefundNo})</span>
+                        <span className="ml-2 font-mono text-caption text-text-secondary">({detail.refundDana.partnerRefundNo})</span>
                       ) : null}
                       {detail.refundDana.amountSen != null ? (
-                        <span className="ml-2 text-small text-text-secondary">{formatIdrSen(detail.refundDana.amountSen as string | number)}</span>
+                        <span className="ml-2 text-caption text-text-secondary">{formatIdrSen(detail.refundDana.amountSen as string | number)}</span>
                       ) : null}
                       {detail.refundDana.updatedAt ? (
-                        <span className="ml-2 text-small text-text-secondary">· {formatDateTimeWIB(String(detail.refundDana.updatedAt))}</span>
+                        <span className="ml-2 text-caption text-text-secondary">· {formatDateTimeWIB(String(detail.refundDana.updatedAt))}</span>
                       ) : null}
                     </dd>
                   </div>
                 ) : null}
-                <div><dt className="text-small text-text-secondary">Diajukan</dt><dd>{formatDateTimeWIB(String(detail.createdAt))}</dd></div>
+                <div><dt className="text-caption text-text-secondary">Diajukan</dt><dd>{formatDateTimeWIB(String(detail.createdAt))}</dd></div>
                 {detail.sellerRespondBy ? (
                   <div>
-                    <dt className="text-small text-text-secondary">Deadline penjual</dt>
+                    <dt className="text-caption text-text-secondary">Deadline penjual</dt>
                     <dd>
                       {formatDateTimeWIB(String(detail.sellerRespondBy))}
-                      {extensionsUsed > 0 ? <span className="text-small text-text-secondary"> · sudah diperpanjang {extensionsUsed}x dari maks 3x</span> : null}
+                      {extensionsUsed > 0 ? <span className="text-caption text-text-secondary"> · sudah diperpanjang {extensionsUsed}x dari maks 3x</span> : null}
                     </dd>
                   </div>
                 ) : null}
@@ -276,7 +276,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                   <p className="text-body font-medium text-amber-800">
                     Eskalasi tidak menemukan sengketa aktif — retur ini belum punya pemilik.
                   </p>
-                  <p className="mt-1 text-small text-amber-700">
+                  <p className="mt-1 text-caption text-amber-700">
                     Buat sengketa baru dari retur ini agar ada mediator yang menangani.
                   </p>
                   {/* Audit 2026-10-10: backend convert-to-dispute hanya SUPER_ADMIN /
@@ -293,7 +293,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                       Buat sengketa dari retur
                     </Button>
                   ) : (
-                    <p className="mt-2 text-small text-amber-700">
+                    <p className="mt-2 text-caption text-amber-700">
                       Konversi ke sengketa hanya dapat dilakukan Admin Sengketa / Super Admin — teruskan kasus ini ke mereka.
                     </p>
                   )}
@@ -301,7 +301,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
               ) : null}
               {/* BAI-098: status kirim notifikasi aksi terakhir. */}
               {lastNotifStatus !== null ? (
-                <p className={`mt-2 text-small ${lastNotifStatus ? "text-green-700" : "text-red-700"}`}>
+                <p className={`mt-2 text-caption ${lastNotifStatus ? "text-green-700" : "text-red-700"}`}>
                   {lastNotifStatus
                     ? "Notifikasi ke pembeli & penjual terkirim."
                     : "Notifikasi ke pembeli/penjual GAGAL — kegagalan tercatat di timeline."}
@@ -342,7 +342,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                   </Button>
                 ) : null}
                 {!canEarly && !canApprove && !canForce && !needsConversion ? (
-                  <p className="text-small text-text-secondary">Tidak ada aksi tersedia untuk status ini.</p>
+                  <p className="text-caption text-text-secondary">Tidak ada aksi tersedia untuk status ini.</p>
                 ) : null}
               </div>
             </Card>

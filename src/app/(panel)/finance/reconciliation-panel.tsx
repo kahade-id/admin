@@ -545,7 +545,7 @@ function ReconcileAllSection() {
                     </p>
                   ) : null}
                   {job.status === "completed" && job.result != null ? (
-                    <pre className="mt-2 max-h-48 overflow-auto rounded bg-surface-sunken p-2 font-mono text-caption">
+                    <pre className="mt-2 max-h-48 overflow-auto rounded bg-surface p-2 font-mono text-caption">
                       {JSON.stringify(job.result, null, 2)}
                     </pre>
                   ) : null}

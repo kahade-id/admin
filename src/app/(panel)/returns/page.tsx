@@ -287,10 +287,10 @@ export default function ReturnsListPage() {
                 header: "Retur",
                 render: (r) => (
                   <div>
-                    <Link href={`/returns/${encodeURIComponent(r.id)}`} className="font-semibold text-text-link hover:underline">
+                    <Link href={`/returns/${encodeURIComponent(r.id)}`} className="font-semibold text-info-text hover:underline">
                       {String(r.returnId ?? r.id)}
                     </Link>
-                    <div className="text-small text-text-secondary">Order {String(r.orderId ?? "—")}</div>
+                    <div className="text-caption text-text-secondary">Order {String(r.orderId ?? "—")}</div>
                   </div>
                 ),
               },
@@ -306,7 +306,7 @@ export default function ReturnsListPage() {
                   const h = ageHours(String(r.createdAt))
                   const slaBreach = isPastSellerSla(r)
                   return (
-                    <span className={slaBreach ? "font-bold text-text-danger" : ""}>
+                    <span className={slaBreach ? "font-bold text-danger-text" : ""}>
                       {h} jam{slaBreach ? " (lewat SLA)" : ""}
                     </span>
                   )
@@ -369,7 +369,7 @@ export default function ReturnsListPage() {
             emptyText="Tidak ada retur."
           />
           <div className="mt-4 flex items-center justify-between">
-            <p className="text-small text-text-secondary">Total {total} retur</p>
+            <p className="text-caption text-text-secondary">Total {total} retur</p>
             <Pagination page={page} totalPages={totalPages} onPageChange={(p) => { setPage(p); void load(p) }} />
           </div>
         </>

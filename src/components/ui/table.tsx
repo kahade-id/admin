@@ -16,7 +16,7 @@
 
 import type { ReactNode, TableHTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react"
 import { cn } from "@/lib/cn"
-import { Spinner } from "./spinner"
+import { Skeleton } from "./skeleton"
 
 // ------------------------------------------------------------------
 // Primitif
@@ -186,12 +186,25 @@ export function DataTable<Row extends Record<string, unknown>>({
       </THead>
       <TBody>
         {loading ? (
+          // Shimmer per baris (bukan spinner tengah): layout tabel tetap
+          // terlihat saat data dimuat. Teks sr-only menjaga SR tetap
+          // mendapat status loading.
           <TR>
-            <TD colSpan={columns.length} className="py-8">
-              <span className="flex items-center justify-center gap-2 text-text-secondary">
-                <Spinner size="sm" />
-                <span className="text-body">Memuat…</span>
-              </span>
+            <TD colSpan={columns.length} className="p-0">
+              <div role="status" aria-label="Memuat…">
+                {Array.from({ length: 8 }, (_, r) => (
+                  <div
+                    key={r}
+                    aria-hidden="true"
+                    className="flex items-center gap-4 border-b border-border px-4 py-3 last:border-b-0"
+                  >
+                    {columns.map((col) => (
+                      <Skeleton key={col.key} className="h-3.5 min-w-0 flex-1" />
+                    ))}
+                  </div>
+                ))}
+                <span className="sr-only">Memuat…</span>
+              </div>
             </TD>
           </TR>
         ) : rows.length === 0 ? (

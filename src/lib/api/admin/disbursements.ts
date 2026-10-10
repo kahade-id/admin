@@ -302,7 +302,7 @@ export type DisbursementReviewResult = {
 export function disbursementScopeLabel(scope: string): string {
   switch (scope) {
     case "ORDER_ESCROW":
-      return "Escrow order"
+      return "Dana order"
     case "MILESTONE":
       return "Milestone"
     case "DISPUTE_RELEASE":

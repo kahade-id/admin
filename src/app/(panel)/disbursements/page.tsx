@@ -55,7 +55,7 @@ const STATUS_OPTIONS = [
 
 const SCOPE_OPTIONS = [
   { value: "", label: "Semua scope" },
-  { value: "ORDER_ESCROW", label: "Escrow order" },
+  { value: "ORDER_ESCROW", label: "Dana order" },
   { value: "MILESTONE", label: "Milestone" },
   { value: "DISPUTE_RELEASE", label: "Lepas sengketa" },
   { value: "CASHBACK", label: "Cashback" },
@@ -188,7 +188,7 @@ export default function DisbursementsPage() {
         <div>
           <h1 className="text-h2 font-bold text-text-primary">Disbursement</h1>
           <p className="mt-1 text-body text-text-secondary">
-            Antrean pencairan escrow DANA ke rekening bank seller — read-only.
+            Antrean pencairan dana DANA ke rekening bank seller — read-only.
             Filter{" "}
             <strong>Tertahan — tanpa rekening</strong> dan{" "}
             <strong>Perlu review</strong> menandai kasus yang butuh tindak
@@ -238,7 +238,7 @@ export default function DisbursementsPage() {
                   }
                 }}
                 placeholder="orderId / userId / referensi DANA"
-                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-body text-text-primary placeholder:text-text-tertiary"
+                className="min-h-12 w-full rounded-sm border border-border-control bg-surface px-4 text-body text-text-primary placeholder:text-text-tertiary"
               />
               <Button
                 variant="secondary"
@@ -266,7 +266,7 @@ export default function DisbursementsPage() {
       {needsAttention && !loading && rows.length > 0 ? (
         <div
           role="note"
-          className="mb-4 rounded-lg border border-warning-border bg-warning-surface px-4 py-3 text-body text-text-primary"
+          className="mb-4 rounded-md border border-warning/40 bg-warning/5 px-4 py-3 text-body text-text-primary"
         >
           {rows.length} disbursement berstatus{" "}
           <strong>{DISBURSEMENT_STATUS_LABEL[status as AdminDisbursementStatus]}</strong>{" "}
@@ -292,11 +292,11 @@ export default function DisbursementsPage() {
               rows={rows as unknown as Record<string, unknown>[]}
               rowKey={(r) => String(r.id)}
               emptyText="Belum ada disbursement."
-              caption="Antrean disbursement escrow DANA"
+              caption="Antrean disbursement DANA"
               rowClassName={(r) => {
                 const st = String(r.status)
                 return st === "HELD_NO_BANK" || st === "NEEDS_REVIEW"
-                  ? "bg-warning-surface/40"
+                  ? "bg-warning-soft"
                   : undefined
               }}
             />

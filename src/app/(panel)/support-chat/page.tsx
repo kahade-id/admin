@@ -475,7 +475,7 @@ function SupportChatConsole() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-h2 font-bold text-text-primary">Livechat Support</h1>
-          <p className="text-body-sm text-text-secondary">
+          <p className="text-body text-text-secondary">
             Konsol agen — antrean, chat realtime, eskalasi ke tiket.
           </p>
         </div>
@@ -553,7 +553,7 @@ function SupportChatConsole() {
                           </span>
                         </div>
                         {conv.subject ? (
-                          <span className="truncate text-body-sm text-text-secondary">{conv.subject}</span>
+                          <span className="truncate text-body text-text-secondary">{conv.subject}</span>
                         ) : null}
                         {conv.lastMessage?.content ? (
                           <span className="truncate text-caption text-text-tertiary">
@@ -633,7 +633,7 @@ function SupportChatConsole() {
                     ) : null}
                   </div>
                   {conversation?.subject ? (
-                    <p className="truncate text-body-sm text-text-secondary">{conversation.subject}</p>
+                    <p className="truncate text-body text-text-secondary">{conversation.subject}</p>
                   ) : null}
                 </div>
                 <div className="flex items-center gap-2">
@@ -683,7 +683,7 @@ function SupportChatConsole() {
                           <div className="mb-0.5 text-caption font-semibold opacity-80">{m.senderName}</div>
                         ) : null}
                         {m.content ? (
-                          <div className="whitespace-pre-wrap break-words text-body-sm">{m.content}</div>
+                          <div className="whitespace-pre-wrap break-words text-body">{m.content}</div>
                         ) : null}
                         {m.attachments.length > 0 ? (
                           <div className="mt-1 text-caption opacity-80">

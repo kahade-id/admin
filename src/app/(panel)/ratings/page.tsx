@@ -33,6 +33,7 @@ import {
 } from "@/lib/api/admin/ratings"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
 
 const PAGE_SIZE = 20
 const SEARCH_DEBOUNCE_MS = 400
@@ -54,15 +55,6 @@ const STAR_OPTIONS = [
   { value: "2", label: "2 bintang" },
   { value: "1", label: "1 bintang" },
 ]
-
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs)
-    return () => clearTimeout(timer)
-  }, [value, delayMs])
-  return debounced
-}
 
 function personName(u: AdminRatingUser | null | undefined): string {
   return u?.fullName ?? u?.username ?? "—"

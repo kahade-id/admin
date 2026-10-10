@@ -442,7 +442,7 @@ export default function OpsSettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold">Pengaturan Operasional</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-sm text-text-secondary">
           Token integrasi & konfigurasi operasional. Nilai yang diubah di halaman ini
           berlaku untuk request berikutnya (maks ~60 detik) <strong>tanpa restart</strong>.
           Secret tersimpan terenkripsi dan tidak pernah ditampilkan utuh.
@@ -458,7 +458,7 @@ export default function OpsSettingsPage() {
         <div className="flex items-start justify-between gap-2">
           <div>
             <div className="font-medium">Mode Maintenance</div>
-            <div className="text-xs text-muted-foreground font-mono">MAINTENANCE_MODE / MAINTENANCE_MESSAGE</div>
+            <div className="text-xs text-text-secondary font-mono">MAINTENANCE_MODE / MAINTENANCE_MESSAGE</div>
           </div>
           {maintenanceLoading ? (
             <Spinner />
@@ -468,7 +468,7 @@ export default function OpsSettingsPage() {
             </Badge>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-text-secondary">
           Saat aktif, aplikasi mobile & semua request non-admin menerima 503
           (coba lagi nanti). Splash screen membaca status via{" "}
           <code className="font-mono text-xs">GET /v1/public/maintenance</code> tanpa auth.
@@ -530,7 +530,7 @@ export default function OpsSettingsPage() {
               </Button>
               {/* SEC-503: tiap aksi kritis meminta verifikasi ulang kata sandi —
                   server menerbitkan token sekali pakai khusus aksi tersebut. */}
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-1 text-xs text-text-secondary">
                 Setiap aksi kritis meminta verifikasi ulang kata sandi; server
                 menerbitkan token sekali pakai khusus untuk aksi tersebut.
               </p>
@@ -553,7 +553,7 @@ export default function OpsSettingsPage() {
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="font-medium">Menunggu persetujuan</div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-text-secondary">
                 Perubahan key finansial/kritis memerlukan persetujuan admin kedua.
                 Pengusul tidak boleh menyetujui usulannya sendiri (ditegakkan di UI
                 dan wajib di backend).
@@ -568,7 +568,7 @@ export default function OpsSettingsPage() {
           {pendingLoading ? (
             <Spinner />
           ) : pendingApprovals.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-text-secondary">
               Tidak ada perubahan yang menunggu persetujuan.
             </p>
           ) : (
@@ -580,16 +580,16 @@ export default function OpsSettingsPage() {
                   <div key={a.id} className="border rounded p-3 text-sm space-y-1">
                     <div className="flex items-center justify-between gap-2">
                       <code className="font-mono text-xs font-semibold">{a.key}</code>
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-xs text-text-secondary">
                         {a.proposedAt ? formatDateTimeWIB(a.proposedAt) : ""}
                       </span>
                     </div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="text-xs text-text-secondary">
                       Nilai lama: <code className="font-mono">{a.oldValue ?? "—"}</code>
                       {" → "}
                       Nilai baru: <code className="font-mono">{a.newValue ?? "—"}</code>
                     </div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="text-xs text-text-secondary">
                       Diusulkan oleh <code className="font-mono">{a.proposedBy ?? "—"}</code>
                       {own ? " (Anda)" : ""}
                     </div>
@@ -624,7 +624,7 @@ export default function OpsSettingsPage() {
         <div className="flex items-start justify-between gap-2">
           <div>
             <div className="font-medium">Terjemahan Chat</div>
-            <div className="text-xs text-muted-foreground font-mono">CHAT_TRANSLATION_*</div>
+            <div className="text-xs text-text-secondary font-mono">CHAT_TRANSLATION_*</div>
           </div>
           {!translationHealth ? (
             <Spinner />
@@ -636,7 +636,7 @@ export default function OpsSettingsPage() {
             <Badge variant="outline">Belum diset</Badge>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-text-secondary">
           {!translationHealth
             ? "Memuat status…"
             : !translationHealth.supported
@@ -656,7 +656,7 @@ export default function OpsSettingsPage() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="font-medium">{s.label}</div>
-                  <div className="text-xs text-muted-foreground font-mono">{s.key}</div>
+                  <div className="text-xs text-text-secondary font-mono">{s.key}</div>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   {/* BAI-117: bedakan "belum diset" dari "gagal didekripsi". */}
@@ -686,7 +686,7 @@ export default function OpsSettingsPage() {
                   )}
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground">{s.description}</p>
+              <p className="text-sm text-text-secondary">{s.description}</p>
               {/* BAD-026: peringatan inline bila IP kosong sementara secret terisi. */}
               {s.key === "FONNTE_WEBHOOK_IPS" && !s.configured && fonnteSecretConfigured && (
                 <p className="text-xs text-yellow-700">
@@ -701,13 +701,13 @@ export default function OpsSettingsPage() {
                 </p>
               )}
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Nilai saat ini:</span>
+                <span className="text-text-secondary">Nilai saat ini:</span>
                 <code className="font-mono bg-muted px-2 py-0.5 rounded">
                   {s.displayValue ?? "—"}
                 </code>
               </div>
               {s.updatedAt && (
-                <div className="text-xs text-muted-foreground">
+                <div className="text-xs text-text-secondary">
                   Diubah {formatDateTimeWIB(s.updatedAt)}
                   {s.updatedBy ? ` oleh ${s.updatedBy}` : ""} · v{s.version}
                 </div>
@@ -802,7 +802,7 @@ export default function OpsSettingsPage() {
               </Field>
             )}
             {editing.isSecret && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-text-secondary">
                 Nilai saat ini: <code className="font-mono">{editing.displayValue ?? "—"}</code>.
                 Secret lama tidak bisa dilihat kembali — hanya bisa diganti.
               </p>
@@ -842,7 +842,7 @@ export default function OpsSettingsPage() {
               <div key={h.id} className="border rounded p-3 text-sm space-y-1">
                 <div className="flex items-center justify-between">
                   <Badge variant={h.action === "TEST" ? "outline" : "soft"}>{h.action}</Badge>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-xs text-text-secondary">
                     {formatDateTimeWIB(h.createdAt)}
                   </span>
                 </div>
@@ -855,11 +855,11 @@ export default function OpsSettingsPage() {
                   )}
                 </div>
                 {h.valueHint && (
-                  <div className="text-xs text-muted-foreground">
+                  <div className="text-xs text-text-secondary">
                     Nilai: <code className="font-mono">{h.valueHint}</code>
                   </div>
                 )}
-                {h.detail && <div className="text-xs text-muted-foreground">{h.detail}</div>}
+                {h.detail && <div className="text-xs text-text-secondary">{h.detail}</div>}
               </div>
             ))}
           </div>
@@ -883,7 +883,7 @@ export default function OpsSettingsPage() {
         }
       >
         {conflict && (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-text-secondary">
             <code className="font-mono text-xs">{conflict.key}</code>: {conflict.detail}
           </p>
         )}

@@ -29,6 +29,7 @@ import { Dialog } from "@/components/ui/dialog"
 import { Input, TextArea } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { DataTable } from "@/components/ui/table"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/toast"
 import { useAuth } from "@/lib/auth-context"
 
@@ -71,6 +72,7 @@ import {
   downloadFinanceCsv,
 } from "@/lib/api/admin/finance"
 import { userMessage } from "@/lib/api/response"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
 import { TX_META, txLabel } from "@/lib/tx-labels"
 import { formatDateTimeWIB, formatIDR, formatNumber, wibDayRangeToIso } from "@/lib/format"
 // ADM-405: PII (nama, email, rekening) di-mask secara default — mask-only, tanpa unmask.
@@ -80,17 +82,6 @@ const PAGE_SIZE = 20
 const PENDING_PAGE_SIZE = 20
 const MAX_RANGE_DAYS = 90
 const DEFAULT_RANGE_DAYS = 30
-
-/** "Rp1.234.567" — non-finite → "—". */
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value)
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs)
-    return () => clearTimeout(timer)
-  }, [value, delayMs])
-  return debounced
-}
-
 
 const TX_STATUS_TONE: Record<string, BadgeTone> = {
   SUCCESS: "success",
@@ -879,9 +870,21 @@ function FinancePageInner() {
       <section aria-label="Ringkasan keuangan">
         <h2 className="mb-3 text-h3 font-semibold text-text-primary">Ringkasan</h2>
         {summaryLoading && !summary ? (
-          <div className="flex items-center gap-2 py-6 text-body text-text-secondary">
-            <Spinner size="sm" />
-            Memuat ringkasan…
+          <div
+            role="status"
+            aria-label="Memuat ringkasan…"
+            className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
+          >
+            {Array.from({ length: 4 }, (_, i) => (
+              <Card key={i}>
+                <CardBody>
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="mt-2 h-7 w-40" />
+                  <Skeleton className="mt-2 h-3 w-32" />
+                </CardBody>
+              </Card>
+            ))}
+            <span className="sr-only">Memuat ringkasan…</span>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -1015,11 +1018,11 @@ function FinancePageInner() {
           <CardBody>
             {/* BAI-041: jalur payout legacy di-sunset (backend 410 GONE). Pencairan
                 dana aktual kini via halaman Disbursement DANA. */}
-            <div className="mb-4 rounded-md border border-warning-border bg-warning-bg p-3">
+            <div className="mb-4 rounded-md border border-warning/40 bg-warning/5 p-3">
               <p className="text-body text-text-primary">
                 <span className="font-semibold">Antrean legacy dinonaktifkan.</span>{" "}
                 Tombol persetujuan penarikan dihapus — payout kini berjalan via{" "}
-                <a href="/finance/disbursements" className="font-semibold text-primary-text underline">
+                <a href="/finance/disbursements" className="font-semibold text-info-text underline">
                   Disbursement DANA
                 </a>
                 . Hanya penolakan (refund saldo) yang masih tersedia di sini.
