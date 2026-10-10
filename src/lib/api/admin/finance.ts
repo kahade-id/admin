@@ -419,11 +419,20 @@ export function approveWithdrawal(
   txId: string,
   note?: string,
   idempotencyKey?: string,
+  opts?: FinanceStepUpOpts,
 ): Promise<WithdrawalApproveResponse> {
+  // K13 (audit 2026-10-10): backend @RequireStepUp('withdrawal.approve','txId')
+  // berjalan SEBELUM service — tanpa X-Step-Up-Token request selalu 403
+  // STEP_UP_REQUIRED (bukan 410 jujur yang diharapkan UI).
   return adminHttp.post<WithdrawalApproveResponse>(
     `/v1/admin/finance/withdrawals/${encodeURIComponent(txId)}/approve`,
     note ? { adminNote: note } : {},
-    { headers: { "Idempotency-Key": idempotencyKey ?? newIdempotencyKey() } },
+    {
+      headers: {
+        "Idempotency-Key": idempotencyKey ?? newIdempotencyKey(),
+        ...stepUpHeader(opts),
+      },
+    },
   )
 }
 
@@ -611,11 +620,28 @@ export function acknowledgeFinding(
   )
 }
 
+/**
+ * Query export CSV ledger — SAMA dengan FinanceTransactionQueryDto backend
+ * (BAD-033): `startDate`/`endDate` wajib + filter aktif `type`/`status`/`q`.
+ * Audit 2026-10-10: builder lama mengirim `from`/`to` yang tidak dikenal
+ * backend → 400 (startDate wajib) dan filter tabel tidak ikut ke CSV.
+ */
+export type FinanceCsvQuery = {
+  startDate?: string
+  endDate?: string
+  type?: string
+  status?: string
+  q?: string
+}
+
 /** URL export CSV ledger (GET /v1/admin/finance/export/csv). */
-export function buildFinanceCsvUrl(from?: string, to?: string): string {
+export function buildFinanceCsvUrl(query: FinanceCsvQuery = {}): string {
   const params = new URLSearchParams()
-  if (from) params.set("from", from)
-  if (to) params.set("to", to)
+  if (query.startDate) params.set("startDate", query.startDate)
+  if (query.endDate) params.set("endDate", query.endDate)
+  if (query.type) params.set("type", query.type)
+  if (query.status) params.set("status", query.status)
+  if (query.q && query.q.trim()) params.set("q", query.q.trim())
   const qs = params.toString()
   return `${API_BASE_URL}/v1/admin/finance/export/csv${qs ? `?${qs}` : ""}`
 }
@@ -625,9 +651,10 @@ export function buildFinanceCsvUrl(from?: string, to?: string): string {
  * ke SUPER_ADMIN/FINANCE_ADMIN; rentang maks 365 hari, default 30 hari
  * terakhir). Menggantikan builder URL publik tanpa auth (ADM-216).
  */
-export async function downloadFinanceCsv(from?: string, to?: string): Promise<void> {
+export async function downloadFinanceCsv(query: FinanceCsvQuery = {}): Promise<void> {
+  const { startDate: from, endDate: to } = query
   const token = getAdminAccessToken()
-  const res = await fetch(buildFinanceCsvUrl(from, to), {
+  const res = await fetch(buildFinanceCsvUrl(query), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) {
