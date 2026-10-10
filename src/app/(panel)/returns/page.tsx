@@ -24,11 +24,13 @@ import { Pagination } from "@/components/admin/pagination"
 import { RoleGate } from "@/components/admin/role-gate"
 import { Select } from "@/components/admin/select"
 import { useAuth } from "@/lib/auth-context"
+import { useStepUp } from "@/components/admin/step-up-gate"
 import { Input } from "@/components/ui/input"
 import {
   listAdminReturns,
   adminEscalateReturn,
   adminApproveReturnRefund,
+  RETURN_MONEY_STEP_UP_ACTION,
   adminRejectReturn,
   adminExtendSellerDeadline,
   adminForceResolveReturn,
@@ -92,6 +94,8 @@ function senOf(v: unknown): number | null {
 export default function ReturnsListPage() {
   const toast = useToast()
   const { role } = useAuth()
+  // Audit 2026-10-10: aksi uang retur wajib step-up server-side.
+  const { requestStepUp, stepUpDialog } = useStepUp()
   // BAD-023: cermin halaman detail — Eskalasi/Tolak boleh untuk semua role
   // pengakses halaman (backend mengizinkan CUSTOMER_SUPPORT); hanya aksi
   // uang (extend deadline, approve, tutup paksa) yang butuh
@@ -127,12 +131,12 @@ export default function ReturnsListPage() {
           status: targetStatus === "ALL" ? undefined : targetStatus,
           minAgeHours: Number(targetAge) > 0 ? Number(targetAge) : undefined,
           search: targetSearch.trim() || undefined,
+          // Audit 2026-10-10: filter tipe kini server-side (`kind`). Filter
+          // client-side lama membaca `orderKind` yang tidak pernah dikirim →
+          // memilih tipe apa pun mengosongkan tabel.
+          kind: targetKind === "ALL" ? undefined : targetKind,
         })
-        // POIN 2: filter tipe diterapkan client-side pada halaman ini —
-        // backend /v1/admin/returns belum mendukung filter `kind`.
-        const items = (res.data ?? []).filter(
-          (r) => targetKind === "ALL" || rowOrderKind(r) === targetKind,
-        )
+        const items = res.data ?? []
         setRows(items)
         const t = res.total ?? res.data?.length ?? 0
         setTotal(t)
@@ -167,6 +171,19 @@ export default function ReturnsListPage() {
     if (!actionTarget || !actionKind) return
     const id = actionTarget.id
     const label = String(actionTarget.returnId ?? id)
+    // Audit 2026-10-10: aksi UANG (approve/force-resolve/extend) wajib token
+    // step-up server-side (return.money-action, target id retur).
+    let stepUpToken: string | undefined
+    if (actionKind === "approve" || actionKind === "force-resolve" || actionKind === "extend") {
+      const token = await requestStepUp({
+        action: RETURN_MONEY_STEP_UP_ACTION,
+        targetId: id,
+        title: "Verifikasi aksi keuangan retur",
+        description: `Aksi ini menggerakkan dana untuk retur ${label}.`,
+      })
+      if (!token) return
+      stepUpToken = token
+    }
     setConfirming(true)
     try {
       switch (actionKind) {
@@ -177,7 +194,7 @@ export default function ReturnsListPage() {
           await adminApproveReturnRefund(id, {
             refundAmountSen: input.refundAmountSen,
             note: input.note || undefined,
-          })
+          }, { stepUpToken })
           break
         case "reject":
           await adminRejectReturn(id, {
@@ -186,10 +203,10 @@ export default function ReturnsListPage() {
           })
           break
         case "force-resolve":
-          await adminForceResolveReturn(id, input.resolution ?? "REFUND", input.note)
+          await adminForceResolveReturn(id, input.resolution ?? "REFUND", input.note, { stepUpToken })
           break
         case "extend":
-          await adminExtendSellerDeadline(id)
+          await adminExtendSellerDeadline(id, { stepUpToken })
           break
       }
       toast.show({ title: `Berhasil: ${label}`, tone: "success" })
@@ -255,12 +272,6 @@ export default function ReturnsListPage() {
           <Button type="submit" variant="secondary" size="md" fullWidth={false}>Cari</Button>
         </form>
       </div>
-      {kindFilter !== "ALL" ? (
-        <p className="mb-4 -mt-2 text-caption text-text-secondary">
-          Filter tipe diterapkan pada data halaman ini — backend retur belum mendukung filter tipe server-side.
-        </p>
-      ) : null}
-
       {loading ? (
         <div className="flex min-h-[40vh] items-center justify-center gap-2">
           <Spinner size="md" /><p className="text-body text-text-secondary">Memuat retur…</p>
@@ -375,6 +386,7 @@ export default function ReturnsListPage() {
         onClose={closeAction}
         onConfirm={(input) => void confirmAction(input)}
       />
+      {stepUpDialog}
     </RoleGate>
   )
 }

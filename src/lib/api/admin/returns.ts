@@ -15,6 +15,7 @@
  */
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
+import { stepUpHeaders } from "@/lib/api/admin/step-up"
 
 function newIdempotencyKey(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -119,6 +120,11 @@ export async function listAdminReturns(params?: {
   search?: string
   /** Filter umur pengajuan (jam) untuk menyorot SLA. */
   minAgeHours?: number
+  /**
+   * Audit 2026-10-10: filter tipe transaksi (OrderKind) kini SERVER-SIDE
+   * (`?kind=`); tiap item juga membawa `orderKind` + ringkasan `order`.
+   */
+  kind?: string
 }): Promise<Paginated<AdminReturnItem>> {
   const res = await adminHttp.get<ReturnQueueResponse>("/v1/admin/returns/queue", {
     query: params,
@@ -152,14 +158,23 @@ export type AdminReturnActionInput = {
  * Satu pintu aksi admin retur → POST /v1/admin/returns/:id/action.
  * Selalu membawa Idempotency-Key (backend @Idempotency()).
  */
+/**
+ * Audit 2026-10-10: aksi UANG (APPROVE / FORCE_RESOLVE_* / EXTEND_DEADLINE)
+ * wajib step-up server-side — action `return.money-action`, targetId = id
+ * retur — dikirim via header X-Step-Up-Token. REJECT/ESCALATE tanpa step-up.
+ */
+export const RETURN_MONEY_STEP_UP_ACTION = "return.money-action"
+export type ReturnStepUpOpts = { stepUpToken?: string }
+
 export function adminReturnAction(
   returnId: string,
   input: AdminReturnActionInput,
+  opts?: ReturnStepUpOpts,
 ): Promise<AdminReturnItem> {
   return adminHttp.post<AdminReturnItem>(
     `/v1/admin/returns/${encodeURIComponent(returnId)}/action`,
     input,
-    { headers: idempotencyHeaders() },
+    { headers: { ...idempotencyHeaders(), ...(opts?.stepUpToken ? stepUpHeaders(opts.stepUpToken) : {}) } },
   )
 }
 
@@ -167,8 +182,9 @@ export function adminReturnAction(
 export function adminApproveReturnRefund(
   returnId: string,
   opts?: { refundAmountSen?: number; resolutionType?: "REFUND" | "EXCHANGE" | "REPAIR"; note?: string },
+  stepUp?: ReturnStepUpOpts,
 ): Promise<AdminReturnItem> {
-  return adminReturnAction(returnId, { action: "APPROVE", ...opts })
+  return adminReturnAction(returnId, { action: "APPROVE", ...opts }, stepUp)
 }
 
 /** Tolak pengajuan retur dengan alasan terstruktur. */
@@ -184,16 +200,17 @@ export function adminForceResolveReturn(
   returnId: string,
   outcome: "REFUND" | "EXCHANGE" | "REPAIR",
   note: string,
+  stepUp?: ReturnStepUpOpts,
 ): Promise<AdminReturnItem> {
   return adminReturnAction(returnId, {
     action: `FORCE_RESOLVE_${outcome}` as AdminReturnAction,
     note,
-  })
+  }, stepUp)
 }
 
 /** Perpanjang deadline respons seller +24 jam (ADM-114; backend cap 3x per case). */
-export function adminExtendSellerDeadline(returnId: string): Promise<AdminReturnItem> {
-  return adminReturnAction(returnId, { action: "EXTEND_DEADLINE" })
+export function adminExtendSellerDeadline(returnId: string, stepUp?: ReturnStepUpOpts): Promise<AdminReturnItem> {
+  return adminReturnAction(returnId, { action: "EXTEND_DEADLINE" }, stepUp)
 }
 
 /** BAI-098: flag status kirim notifikasi dari respons aksi admin. */
