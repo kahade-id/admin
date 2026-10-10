@@ -159,3 +159,22 @@ describe("roleLabel", () => {
     expect(roleLabel("ROBOT")).toBe("ROBOT")
   })
 })
+
+/**
+ * ADM-03 (audit etalase 2026-10-10): /showcase-comments selaras backend
+ * admin-showcase-comments.controller (class-level SUPER_ADMIN, DISPUTE_ADMIN,
+ * CUSTOMER_SUPPORT). DISPUTE_ADMIN sebelumnya tidak melihat menu.
+ */
+describe("ADM-03 — Komentar Etalase", () => {
+  it("SUPER_ADMIN, DISPUTE_ADMIN, CUSTOMER_SUPPORT boleh; KYC/FINANCE tidak", () => {
+    expect(canAccess("SUPER_ADMIN", "/showcase-comments")).toBe(true)
+    expect(canAccess("DISPUTE_ADMIN", "/showcase-comments")).toBe(true)
+    expect(canAccess("CUSTOMER_SUPPORT", "/showcase-comments")).toBe(true)
+    expect(canAccess("KYC_ADMIN", "/showcase-comments")).toBe(false)
+    expect(canAccess("FINANCE_ADMIN", "/showcase-comments")).toBe(false)
+  })
+
+  it("menu DISPUTE_ADMIN memuat Komentar Etalase", () => {
+    expect(menuForRole("DISPUTE_ADMIN").some((m) => m.href === "/showcase-comments")).toBe(true)
+  })
+})

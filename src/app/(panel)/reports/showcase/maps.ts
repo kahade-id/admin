@@ -36,9 +36,25 @@ export const MODERATION_EVENT_ACTION_LABEL: Record<string, string> = {
   ASSIGNED: "Laporan ditugaskan",
   NOTE_ADDED: "Catatan ditambahkan",
   APPEAL_SUBMITTED: "Banding diajukan",
+  // ADM-08 (audit etalase 2026-10-10): nilai enum ModerationEventAction
+  // backend yang belum terpetakan — tampil mentah di histori.
+  APPEAL_FILED: "Banding diajukan",
+  ESCALATED: "Dieskalasi (SLA terlewati)",
   APPEAL_DECIDED: "Banding diputus",
   RESTORED: "Item dipulihkan",
   EXPORTED: "Data diekspor",
+}
+
+/**
+ * ADM-05 (audit etalase 2026-10-10): `activeAssignment` dari backend hanya
+ * membawa `riskScore` (model ReportAssignment tidak menyimpan tier), sehingga
+ * UI detail tidak pernah menampilkan tier. Ambang sama persis dengan backend
+ * `riskTier()` di moderation-lifecycle.constants.ts: ≥70 HIGH, ≥40 MEDIUM.
+ */
+export function riskTierFromScore(score: number): "HIGH" | "MEDIUM" | "LOW" {
+  if (score >= 70) return "HIGH"
+  if (score >= 40) return "MEDIUM"
+  return "LOW"
 }
 
 /** Label Indonesia untuk tier risiko antrean prioritas (G419). */

@@ -8,6 +8,10 @@
  * - PATCH /v1/admin/showcase/comments/:id  {action:'hide'|'unhide'|'delete', reason?}
  *   → wajib header `Idempotency-Key` (@Idempotency).
  *   reason untuk hide: SPAM|INAPPROPRIATE|HARASSMENT|OTHER.
+ *   action=delete: wajib `X-Step-Up-Token` (aksi `showcase-comment.delete`,
+ *   targetId = id komentar) — ditegakkan server (403 STEP_UP_REQUIRED) sejak
+ *   ADM-09 (audit etalase 2026-10-10); sebelumnya hanya UI yang meminta.
+ *   Item list: `showcase: {id, title}`, `isDeleted`, `deletedAt`, `deleteReason`.
  *
  * P1-13 s.d. P1-18 (audit integrasi 2026-10-06): kontrak lama ({hidden},
  * {deleted:true}, query hidden/itemId, baca flat authorName) → 422/blank.
@@ -15,6 +19,7 @@
 import { adminHttp } from "@/lib/api/admin-client"
 import type { Paginated } from "@/lib/api/admin/kyc"
 import { stepUpHeaders } from "@/lib/api/admin/step-up"
+import { errorCode } from "@/lib/api/response"
 
 function newIdempotencyKey(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
@@ -55,13 +60,16 @@ export type ShowcaseComment = {
   updatedAt?: string
   /** Relasi author (backend kirim nested, bukan flat). P1-18. */
   author?: ShowcaseCommentAuthor | null
-  /** Relasi showcase (backend kirim {id}, bukan itemTitle flat). P1-18. */
-  showcase?: { id?: string; [key: string]: unknown } | null
+  /** Relasi showcase (backend kirim {id, title}). P1-18 / ADM-07. */
+  showcase?: { id?: string; title?: string | null; [key: string]: unknown } | null
   // Alias lama (deprecated) — dipertahankan agar pemanggil lama tidak crash,
   // diisi dari relasi bila ada.
   authorName?: string | null
   authorUsername?: string | null
+  /** Judul etalase dari relasi (ADM-07) — sebelumnya diisi id mentah. */
   itemTitle?: string | null
+  /** Id etalase (relasi/showcaseId) untuk fallback tampilan. */
+  itemId?: string | null
   [key: string]: unknown
 }
 
@@ -96,12 +104,14 @@ function notSupported(fn: string, method: string, path: string): Error {
 function normalizeComment(raw: unknown): ShowcaseComment {
   const c = (raw ?? {}) as Record<string, unknown>
   const author = (c.author ?? null) as ShowcaseCommentAuthor | null
-  const showcase = (c.showcase ?? null) as { id?: string } | null
+  const showcase = (c.showcase ?? null) as { id?: string; title?: string | null } | null
   return {
     ...(c as object),
     id: String(c.id ?? ""),
     content: typeof c.content === "string" ? c.content : null,
     isHidden: c.isHidden === true,
+    // ADM-07: baris terhapus (soft-delete) — backend kirim isDeleted + deletedAt.
+    isDeleted: c.isDeleted === true || (c.deletedAt != null && c.deletedAt !== ""),
     createdAt: String(c.createdAt ?? ""),
     author,
     showcase,
@@ -112,7 +122,12 @@ function normalizeComment(raw: unknown): ShowcaseComment {
       author?.username ??
       null,
     authorUsername: (c.authorUsername as string | null) ?? author?.username ?? null,
-    itemTitle: (c.itemTitle as string | null) ?? showcase?.id ?? null,
+    itemTitle:
+      (c.itemTitle as string | null) ?? (typeof showcase?.title === "string" ? showcase.title : null),
+    itemId:
+      (c.itemId as string | null) ??
+      showcase?.id ??
+      (typeof c.showcaseId === "string" ? c.showcaseId : null),
   } as ShowcaseComment
 }
 
@@ -183,6 +198,13 @@ export async function moderateShowcaseComment(
     return normalizeComment(inner)
   } catch (e) {
     if (isNotFoundError(e)) {
+      // 404 KOMENTAR (SHOWCASE_COMMENT_NOT_FOUND) ≠ 404 rute belum ada —
+      // sebelumnya keduanya dibaca "backend belum mendukung" (menyesatkan).
+      if (errorCode(e) === "SHOWCASE_COMMENT_NOT_FOUND") {
+        const notFound = e as Error
+        notFound.message = "Komentar tidak ditemukan — mungkin sudah dihapus. Muat ulang daftar."
+        throw notFound
+      }
       throw notSupported(
         "moderateShowcaseComment",
         "PATCH",

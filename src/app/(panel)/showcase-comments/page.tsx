@@ -36,8 +36,17 @@ import {
 } from "@/lib/api/admin/showcase-comments"
 import { userMessage } from "@/lib/api/response"
 import { formatDateTimeWIB } from "@/lib/format"
+import type { AdminRole } from "@/lib/rbac"
 
 const PAGE_SIZE = 20
+
+/**
+ * ADM-03 (audit etalase 2026-10-10): PATCH /v1/admin/showcase/comments/:id
+ * (hide/unhide/delete) = @AdminRoles(SUPER_ADMIN, DISPUTE_ADMIN) di backend.
+ * CUSTOMER_SUPPORT hanya boleh melihat daftar — tombol aksi sebelumnya tampil
+ * untuknya lalu ditolak 403; DISPUTE_ADMIN sebaliknya tidak melihat tombol.
+ */
+const MODERATE_ROLES: AdminRole[] = ["SUPER_ADMIN", "DISPUTE_ADMIN"]
 
 const STATUS_OPTIONS = [
   { value: "all", label: "Semua status" },
@@ -237,7 +246,12 @@ export default function ShowcaseCommentsPage() {
                 header: "Komentar",
                 render: (r) => (
                   <div>
-                    <p className="font-medium">{r.content}</p>
+                    {/* ADM-07: baris soft-delete — backend mengirim content null. */}
+                    {r.isDeleted ? (
+                      <p className="italic text-text-tertiary">(komentar dihapus)</p>
+                    ) : (
+                      <p className="font-medium">{r.content}</p>
+                    )}
                     <p className="text-caption text-text-secondary">
                       {r.authorName ?? r.authorUsername ?? (r.authorId ? `Penulis ${String(r.authorId).slice(0, 12)}` : "Penulis tidak diketahui")}
                       {r.itemTitle ? ` · ${r.itemTitle}` : r.itemId ? ` · item ${String(r.itemId).slice(0, 12)}` : ""}
@@ -245,10 +259,16 @@ export default function ShowcaseCommentsPage() {
                     <p className="text-caption text-text-tertiary">
                       {formatDateTimeWIB(r.createdAt)}
                       {r.isHidden && r.hiddenAt ? ` · disembunyikan ${formatDateTimeWIB(r.hiddenAt)}` : ""}
+                      {r.isDeleted && r.deletedAt ? ` · dihapus ${formatDateTimeWIB(r.deletedAt)}` : ""}
                     </p>
                     {r.isHidden && r.hiddenReason ? (
                       <p className="text-caption italic text-text-tertiary">
                         Alasan: {r.hiddenReason}
+                      </p>
+                    ) : null}
+                    {r.isDeleted && r.deleteReason ? (
+                      <p className="text-caption italic text-text-tertiary">
+                        Alasan hapus: {r.deleteReason}
                       </p>
                     ) : null}
                   </div>
@@ -258,8 +278,9 @@ export default function ShowcaseCommentsPage() {
                 key: "status",
                 header: "Status",
                 render: (r) => (
-                  <Badge tone={r.isHidden ? "warning" : "success"}>
-                    {r.isHidden ? "Disembunyikan" : "Terlihat"}
+                  // ADM-07: komentar terhapus sebelumnya berbadge "Terlihat".
+                  <Badge tone={r.isDeleted ? "neutral" : r.isHidden ? "warning" : "success"}>
+                    {r.isDeleted ? "Dihapus" : r.isHidden ? "Disembunyikan" : "Terlihat"}
                   </Badge>
                 ),
               },
@@ -267,9 +288,11 @@ export default function ShowcaseCommentsPage() {
                 key: "action",
                 header: "",
                 align: "right",
-                render: (r) => (
+                render: (r) =>
+                  // ADM-07: tidak ada aksi untuk baris terhapus (backend 400/409).
+                  r.isDeleted ? null : (
                   <div className="flex justify-end gap-2">
-                    <RoleGate roles={["SUPER_ADMIN", "CUSTOMER_SUPPORT"]}>
+                    <RoleGate roles={MODERATE_ROLES}>
                       <button
                         type="button"
                         onClick={() => openAction(r.isHidden ? "unhide" : "hide", r)}
@@ -278,7 +301,7 @@ export default function ShowcaseCommentsPage() {
                         {r.isHidden ? "Tampilkan" : "Sembunyikan"}
                       </button>
                     </RoleGate>
-                    <RoleGate roles={["SUPER_ADMIN"]}>
+                    <RoleGate roles={MODERATE_ROLES}>
                       <button
                         type="button"
                         onClick={() => openAction("delete", r)}
@@ -288,7 +311,7 @@ export default function ShowcaseCommentsPage() {
                       </button>
                     </RoleGate>
                   </div>
-                ),
+                  ),
               },
             ]}
             rows={rows}

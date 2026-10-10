@@ -252,15 +252,17 @@ function ReportsListSection() {
     void load("initial")
   }, [load])
 
+  // ADM-10 (audit etalase 2026-10-10): `load` bergantung pada page/filter dan
+  // efek di atas memuat ulang setiap identitasnya berubah — memanggil `load`
+  // eksplisit di sini membuat DUA request per ganti filter/halaman (yang kedua
+  // bisa menimpa hasil pertama). Cukup ubah state; efek yang memuat.
   const handleFilterChange = (f: Filter) => {
     setFilter(f)
     setPage(1)
-    void load("initial", 1, f)
   }
 
   const handlePageChange = (p: number) => {
     setPage(p)
-    void load("initial", p, filter)
   }
 
   // SH-A-029 — empty state kontekstual.
@@ -828,8 +830,10 @@ function PriorityQueueSection() {
 function PendingAppealsSection() {
   const toast = useToast()
   // ADM-319: ID admin saat ini untuk deteksi konflik reviewer.
+  // ADM-04 (audit etalase 2026-10-10): `report.reviewedBy` = admin_users.id
+  // (JWT sub) — bandingkan dengan `profile.id`, bukan kode tampilan ADM-xxx.
   const { profile } = useAuth()
-  const myAdminId = profile?.adminId ?? null
+  const myAdminId = profile?.id ?? null
 
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)

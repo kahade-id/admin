@@ -83,7 +83,11 @@ export const MENU: MenuItem[] = [
   { label: "Moderasi Pesan", href: "/chat", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Moderasi Q&A", href: "/qa-moderation", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
   // FAL-010 (audit integrasi 2026-10-03): moderasi komentar showcase.
-  { label: "Komentar Etalase", href: "/showcase-comments", roles: ["SUPER_ADMIN", "CUSTOMER_SUPPORT"] },
+  // ADM-03 (audit etalase 2026-10-10): backend admin-showcase-comments.controller
+  // class-level = SUPER_ADMIN, DISPUTE_ADMIN, CUSTOMER_SUPPORT (list);
+  // PATCH (hide/unhide/delete) = SUPER_ADMIN, DISPUTE_ADMIN — DISPUTE_ADMIN
+  // sebelumnya tidak melihat menu padahal diizinkan backend.
+  { label: "Komentar Etalase", href: "/showcase-comments", roles: ["SUPER_ADMIN", "DISPUTE_ADMIN", "CUSTOMER_SUPPORT"] },
   { label: "Badge & Verifikasi", href: "/badges", roles: ["SUPER_ADMIN"] },
   { label: "Keuangan & Escrow", href: "/finance", roles: ["SUPER_ADMIN", "FINANCE_ADMIN"] },
   // BAI-043: antrean lifecycle EscrowDisbursement DANA (satu-satunya permukaan

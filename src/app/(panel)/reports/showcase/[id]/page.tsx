@@ -41,12 +41,13 @@ import {
   type ShowcaseReportDetailWithLifecycle,
   type SnapshotDiffResult,
 } from "@/lib/api/admin/showcase-reports"
-import { userMessage } from "@/lib/api/response"
+import { errorCode, userMessage } from "@/lib/api/response"
 import { formatAge, formatDateTimeWIB, formatNumber } from "@/lib/format"
 
 import {
   MODERATION_EVENT_ACTION_LABEL,
   RISK_TIER_LABEL,
+  riskTierFromScore,
   RISK_TIER_TONE,
   SHOWCASE_REPORT_STATUS_LABEL,
   SHOWCASE_REPORT_STATUS_TONE,
@@ -235,6 +236,7 @@ export default function ShowcaseReportDetailPage() {
       resetPanelCaches()
       await load()
     } catch (e) {
+      if (await recoverStaleReport(e)) return
       const msg = userMessage(e)
       toast.show({ title: "Aksi gagal", description: msg, tone: "danger" })
     } finally {
@@ -251,8 +253,35 @@ export default function ShowcaseReportDetailPage() {
   // SH-A-003 — restore hanya relevan bila item pernah di-takedown & masih nonaktif.
   const wasTakedown = events.some((e) => e.action === "TAKEDOWN")
   // SH-A-011 — reviewer banding tidak boleh = moderator keputusan awal.
-  const isOriginalReviewer = !!profile?.adminId && profile.adminId === report?.reviewedBy
+  // ADM-04 (audit etalase 2026-10-10): `reviewedBy` = admin_users.id (cuid,
+  // JWT sub) — bandingkan dengan `profile.id`, BUKAN kode tampilan
+  // `profile.adminId` ("ADM-001") yang tidak pernah cocok → peringatan
+  // konflik reviewer tidak pernah muncul dan backend menolak 422 belakangan.
+  const isOriginalReviewer = !!profile?.id && profile.id === report?.reviewedBy
   const assignmentOverdue = isOverdue(assignment?.slaDueAt)
+  // ADM-05: backend hanya mengirim riskScore pada activeAssignment.
+  const assignmentTier = assignment
+    ? (assignment.riskTier ??
+      (typeof assignment.riskScore === "number" ? riskTierFromScore(assignment.riskScore) : null))
+    : null
+  /**
+   * ADM-17: OCC backend — status laporan berubah sejak dimuat (admin lain
+   * sudah menindak) → 400 REPORT_ALREADY_RESOLVED. Muat ulang, jangan hanya
+   * menampilkan pesan Inggris mentah "Report state changed".
+   */
+  const recoverStaleReport = async (e: unknown): Promise<boolean> => {
+    if (errorCode(e) !== "REPORT_ALREADY_RESOLVED") return false
+    toast.show({
+      title: "Laporan sudah berubah",
+      description: "Status laporan berubah di server (ditinjau admin lain). Data dimuat ulang.",
+      tone: "danger",
+    })
+    setDialogAction(null)
+    setShowReopen(false)
+    resetPanelCaches()
+    await load()
+    return true
+  }
 
   const handleReopen = async () => {
     if (reopenReason.trim().length < 10) {
@@ -272,6 +301,7 @@ export default function ShowcaseReportDetailPage() {
       resetPanelCaches()
       await load()
     } catch (e) {
+      if (await recoverStaleReport(e)) return
       toast.show({ title: "Gagal membuka kembali", description: userMessage(e), tone: "danger" })
     } finally {
       setActing(false)
@@ -324,6 +354,7 @@ export default function ShowcaseReportDetailPage() {
       resetPanelCaches()
       await load()
     } catch (e) {
+      if (await recoverStaleReport(e)) return
       toast.show({ title: "Gagal memutus banding", description: userMessage(e), tone: "danger" })
     } finally {
       setDecidingAppeal(null)
@@ -808,10 +839,10 @@ export default function ShowcaseReportDetailPage() {
                   <KeyValue
                     label="Tingkat risiko"
                     value={
-                      assignment.riskTier ? (
+                      assignmentTier ? (
                         <span className="flex items-center justify-end gap-2">
-                          <Badge tone={RISK_TIER_TONE[assignment.riskTier] ?? "neutral"}>
-                            {RISK_TIER_LABEL[assignment.riskTier] ?? assignment.riskTier}
+                          <Badge tone={RISK_TIER_TONE[assignmentTier] ?? "neutral"}>
+                            {RISK_TIER_LABEL[assignmentTier] ?? assignmentTier}
                           </Badge>
                           {assignment.riskScore != null ? (
                             <span className="tabular-nums">skor {assignment.riskScore}</span>

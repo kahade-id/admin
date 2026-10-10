@@ -71,6 +71,41 @@ export async function ensureAdminSession(): Promise<boolean> {
   return token !== null
 }
 
+/**
+ * ADM-06 (audit etalase 2026-10-10): bentuk error yang dilempar `request()`
+ * untuk respons non-2xx. `code`/`fields`/`data` dibaca dari envelope backend
+ * `{ success:false, message, errors:{ code, message, fields?, data?, retryAfter? } }`
+ * (HttpExceptionFilter) — sebelumnya hanya `code` level atas yang dibaca
+ * sehingga `err.code` SELALU kosong dan semua branching UI berbasis kode mati.
+ */
+export type AdminHttpError = Error & {
+  status?: number
+  code?: string
+  retryAfter?: number
+  /** Error validasi per-field dari backend (errors.fields), bila ada. */
+  fields?: Record<string, unknown>
+  /** Data tambahan dari backend (errors.data), mis. state server pada 409. */
+  data?: Record<string, unknown>
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function pickString(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined
+}
+
+/**
+ * ADM-16: `fetch` yang reject = request TIDAK sampai ke server (offline, DNS,
+ * CORS, server mati). Sebelumnya "TypeError: Failed to fetch" (Inggris, mentah)
+ * sampai ke operator. AbortError diteruskan apa adanya (pembatalan disengaja).
+ */
+export const NETWORK_ERROR_MESSAGE =
+  "Tidak dapat terhubung ke server Kahade. Periksa koneksi internet lalu coba lagi."
+
 type AdminHttpOptions = {
   query?: Record<string, string | number | boolean | undefined | null>
   body?: unknown
@@ -153,13 +188,23 @@ async function request<T>(
         ? crypto.randomUUID()
         : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
   }
-  const res = await fetch(buildUrl(path, opts.query), {
-    method,
-    headers,
-    credentials: "include",
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    signal: opts.signal,
-  })
+  let res: Response
+  try {
+    res = await fetch(buildUrl(path, opts.query), {
+      method,
+      headers,
+      credentials: "include",
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal,
+    })
+  } catch (e) {
+    if ((e as { name?: string } | null)?.name === "AbortError") throw e
+    const netErr = new Error(NETWORK_ERROR_MESSAGE) as AdminHttpError
+    netErr.name = "AdminNetworkError"
+    netErr.status = 0
+    netErr.code = "NETWORK_ERROR"
+    throw netErr
+  }
 
   if (res.status === 401 && !retried) {
     const fresh = await refreshAdminToken()
@@ -168,30 +213,28 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const err = (await res.json().catch(() => null)) as {
-      code?: string
-      message?: string
-      error?: string
-      errors?: { retryAfter?: number }
-      retryAfter?: number
-    } | null
+    const err = asObject(await res.json().catch(() => null))
+    // ADM-06: envelope HttpExceptionFilter backend → errors.{code,message,fields,data}.
+    // Level atas (code/message/error) tetap dibaca sebagai fallback.
+    const envelope = asObject(err?.errors)
+    const code = pickString(err?.code) ?? pickString(envelope?.code)
+    const message =
+      pickString(envelope?.message) ?? pickString(err?.message) ?? pickString(err?.error)
     // SYS-A-001: kode kritis dipetakan ke copy spesifik (jangan mentah).
     // `code` mentah tetap dipertahankan untuk branching UI.
-    const specificCopy = errorCopyForCode(err?.code)
-    const apiErr = new Error(
-      specificCopy ?? err?.message ?? err?.error ?? `Admin API ${res.status}`,
-    ) as Error & {
-      status?: number
-      // AUT-003: kode error backend (mis. CAPTCHA_REQUIRED) agar UI bisa
-      // bereaksi spesifik — sebelumnya code dibuang dan UI buta.
-      code?: string
-      // ADM-426: durasi tunggu (detik) dari header Retry-After / body 429.
-      retryAfter?: number
-    }
+    const specificCopy = errorCopyForCode(code)
+    const apiErr = new Error(specificCopy ?? message ?? `Admin API ${res.status}`) as AdminHttpError
     apiErr.status = res.status
-    if (err?.code) apiErr.code = err.code
+    // AUT-003: kode error backend (mis. CAPTCHA_REQUIRED) agar UI bisa
+    // bereaksi spesifik — sebelumnya code dibuang dan UI buta.
+    if (code) apiErr.code = code
+    const fields = asObject(envelope?.fields)
+    if (fields) apiErr.fields = fields
+    const data = asObject(envelope?.data)
+    if (data) apiErr.data = data
+    // ADM-426: durasi tunggu (detik) dari header Retry-After / body 429.
     const headerRetryAfter = Number(res.headers.get("Retry-After"))
-    const bodyRetryAfter = Number(err?.retryAfter ?? err?.errors?.retryAfter)
+    const bodyRetryAfter = Number(err?.retryAfter ?? envelope?.retryAfter)
     const retryAfter = Number.isFinite(headerRetryAfter) && headerRetryAfter > 0
       ? headerRetryAfter
       : Number.isFinite(bodyRetryAfter) && bodyRetryAfter > 0

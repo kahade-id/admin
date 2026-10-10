@@ -67,6 +67,21 @@ export function unwrapResponse(value: unknown): unknown {
   return body.data ?? (typeof body.message === "string" ? { message: body.message } : null)
 }
 
+/**
+ * ADM-06 (audit etalase 2026-10-10): kode error backend dari error apa pun —
+ * `ApiError` (unwrapResponse) maupun error `adminHttp` (status !ok) yang
+ * membawa `code` dari envelope `errors.code`. Dipakai UI untuk branching
+ * (mis. REPORT_ALREADY_RESOLVED → muat ulang, SHOWCASE_COMMENT_NOT_FOUND).
+ */
+export function errorCode(err: unknown): string | undefined {
+  if (err instanceof ApiError) return err.backendCode ?? err.code
+  if (typeof err === "object" && err !== null) {
+    const c = (err as { code?: unknown }).code
+    if (typeof c === "string" && c) return c
+  }
+  return undefined
+}
+
 /** Ambil pesan yang layak tampil dari error tak dikenal. */
 export function userMessage(err: unknown): string {
   if (err instanceof ApiError) {
