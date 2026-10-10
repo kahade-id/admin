@@ -47,4 +47,6 @@ export {
  */
 export type { KycStatus } from "@/lib/api/admin/kyc"
 export * from "@/lib/api/admin/action-locations"
+/** Moderasi Story (admin-stories.controller.ts, 2026-10-10). */
+export * from "@/lib/api/admin/stories"
 export { AdminAuthError } from "@/lib/api/admin-client"
